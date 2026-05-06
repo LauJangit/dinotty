@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>term</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5/css/xterm.css" />
+  <link rel="stylesheet" href="/static/css/base.css" />
+  <link rel="stylesheet" href="/static/css/layout.css" />
+  <link rel="stylesheet" href="/static/css/mobile-keyboard.css" />
+</head>
+<body>
+
+<div id="app">
+  <div id="tab-bar">
+    <div id="tabs-list"></div>
+    <button id="tab-new-btn" title="New Tab (⌘T)">+</button>
+  </div>
+  <div id="tab-content"></div>
+</div>
+
+<!-- Command Palette -->
+<div id="palette-backdrop">
+  <div id="palette">
+    <div id="palette-input-wrap">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+        <circle cx="6.5" cy="6.5" r="5"/>
+        <line x1="10.5" y1="10.5" x2="14" y2="14"/>
+      </svg>
+      <input id="palette-input" type="text" placeholder="Search commands…" autocomplete="off" spellcheck="false" />
+    </div>
+    <div id="palette-list"></div>
+  </div>
+</div>
+
+<button id="kb-toggle-btn" title="Toggle Keyboard">⌨</button>
+
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5/lib/xterm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10/lib/addon-fit.js"></script>
+
+<script src="/static/js/terminal.js"></script>
+<script src="/static/js/tabs.js"></script>
+<script src="/static/js/palette.js"></script>
+<script src="/static/js/mobile-keyboard.js"></script>
+<script src="/static/js/app.js"></script>
+
+</body>
+</html>
