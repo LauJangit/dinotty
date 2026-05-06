@@ -1,5 +1,12 @@
 let _tabSeq = 0;
 
+function _genPaneId() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
 class TabManager {
   constructor(tabsList, content) {
     this._tabsList = tabsList;
@@ -8,7 +15,38 @@ class TabManager {
     this._active   = null;
   }
 
+  _persist() {
+    const state = this._tabs.map(t => ({
+      paneId: t.paneId,
+      title: t.labelEl.querySelector('.tab-title').textContent,
+    }));
+    const activeIdx = this._tabs.indexOf(this._active);
+    localStorage.setItem('xterm_tabs', JSON.stringify({ tabs: state, activeIdx }));
+  }
+
+  restore() {
+    const raw = localStorage.getItem('xterm_tabs');
+    if (!raw) return false;
+    try {
+      const { tabs, activeIdx } = JSON.parse(raw);
+      if (!tabs || !tabs.length) return false;
+      for (const t of tabs) {
+        this._createTab(t.paneId, t.title);
+      }
+      const idx = Math.min(activeIdx || 0, this._tabs.length - 1);
+      this.activateTab(this._tabs[idx]);
+      return true;
+    } catch { return false; }
+  }
+
   newTab() {
+    const paneId = _genPaneId();
+    const tab = this._createTab(paneId, 'Terminal');
+    this._persist();
+    return tab;
+  }
+
+  _createTab(paneId, title) {
     const id = `tab-${++_tabSeq}`;
 
     // Tab button
@@ -17,7 +55,7 @@ class TabManager {
 
     const titleSpan = document.createElement('span');
     titleSpan.className = 'tab-title';
-    titleSpan.textContent = 'Terminal';
+    titleSpan.textContent = title || 'Terminal';
 
     const closeBtn = document.createElement('button');
     closeBtn.className = 'tab-close';
@@ -34,10 +72,10 @@ class TabManager {
     this._content.append(pageEl);
 
     // Terminal instance
-    const term = new Terminal(id);
-    term.onTitleChange = (t) => { titleSpan.textContent = t || 'Terminal'; };
+    const term = new Terminal(paneId);
+    term.onTitleChange = (t) => { titleSpan.textContent = t || 'Terminal'; this._persist(); };
 
-    const tab = { id, labelEl, pageEl, term };
+    const tab = { id, paneId, labelEl, pageEl, term };
     this._tabs.push(tab);
     this.activateTab(tab);
 
@@ -51,16 +89,16 @@ class TabManager {
 
   closeTab(tab) {
     if (this._tabs.length === 1) {
-      // Last tab — replace with a fresh terminal using a new id
       tab.term.destroy();
       tab.pageEl.innerHTML = '';
-      const newId = `tab-${++_tabSeq}`;
-      const newTerm = new Terminal(newId);
-      tab.id   = newId;
+      const newPaneId = _genPaneId();
+      const newTerm = new Terminal(newPaneId);
+      tab.paneId = newPaneId;
       tab.term = newTerm;
       tab.labelEl.querySelector('.tab-title').textContent = 'Terminal';
-      newTerm.onTitleChange = (t) => { tab.labelEl.querySelector('.tab-title').textContent = t || 'Terminal'; };
+      newTerm.onTitleChange = (t) => { tab.labelEl.querySelector('.tab-title').textContent = t || 'Terminal'; this._persist(); };
       requestAnimationFrame(() => newTerm.attach(tab.pageEl));
+      this._persist();
       return;
     }
 
@@ -74,6 +112,7 @@ class TabManager {
       this._active = null;
       this.activateTab(this._tabs[Math.min(idx, this._tabs.length - 1)]);
     }
+    this._persist();
   }
 
   activateTab(tab) {
@@ -85,9 +124,8 @@ class TabManager {
     tab.labelEl.classList.add('active');
     tab.pageEl.classList.add('active');
     tab.term.focus();
-    // Page was hidden (display:none) while inactive, so fitAddon couldn't
-    // measure correctly. Refit now that the element is visible.
     requestAnimationFrame(() => tab.term.fit());
+    this._persist();
   }
 
   switchToIndex(idx) {

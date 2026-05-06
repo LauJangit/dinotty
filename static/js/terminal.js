@@ -1,12 +1,3 @@
-/**
- * Terminal — wraps a single xterm.js instance + WebSocket session.
- *
- * Usage:
- *   const t = new Terminal(paneId);
- *   t.attach(wrapperEl);   // open xterm inside element
- *   t.focus();
- *   t.destroy();
- */
 class Terminal {
   constructor(paneId) {
     this.paneId = paneId;
@@ -15,12 +6,14 @@ class Terminal {
     this.fitAddon = null;
     this.resizeObserver = null;
     this._wrapper = null;
+    this._destroyed = false;
+    this._reconnectAttempts = 0;
+    this._reconnectTimer = null;
 
-    // callbacks
-    this.onTitleChange = null;   // (title) => void
-    this.onShellInfo   = null;   // (shellType) => void
-    this.onConnect     = null;   // () => void
-    this.onDisconnect  = null;   // () => void
+    this.onTitleChange = null;
+    this.onShellInfo   = null;
+    this.onConnect     = null;
+    this.onDisconnect  = null;
   }
 
   attach(wrapper) {
@@ -63,25 +56,19 @@ class Terminal {
     this.xterm.loadAddon(this.fitAddon);
     this.xterm.open(wrapper);
 
-    // Wait for layout to settle before first fit
     requestAnimationFrame(() => {
       requestAnimationFrame(() => this.fitAddon.fit());
     });
 
-    // Forward title changes
     this.xterm.onTitleChange(title => {
       this.onTitleChange && this.onTitleChange(title);
     });
 
     this._connectWS();
 
-    // Auto-fit on container resize
     this.resizeObserver = new ResizeObserver(() => this._refit());
     this.resizeObserver.observe(wrapper);
 
-    // xterm-screen captures all touch events (touch-action:none), so native
-    // scroll on the xterm-viewport never fires on mobile. Forward touch deltas
-    // manually to keep scrollback working on touchscreens.
     requestAnimationFrame(() => {
       const screen   = wrapper.querySelector('.xterm-screen');
       const viewport = wrapper.querySelector('.xterm-viewport');
@@ -117,12 +104,16 @@ class Terminal {
   }
 
   destroy() {
+    this._destroyed = true;
+    if (this._reconnectTimer) clearTimeout(this._reconnectTimer);
     this.resizeObserver && this.resizeObserver.disconnect();
     this._touchCleanup && this._touchCleanup();
-    this.ws && this.ws.close();
+    if (this.ws) {
+      this.ws.close(1000);
+      this.ws = null;
+    }
     this.xterm && this.xterm.dispose();
     this.xterm = null;
-    this.ws = null;
   }
 
   // ── Private ──────────────────────────────────────────────
@@ -133,6 +124,8 @@ class Terminal {
     this.ws = new WebSocket(url);
 
     this.ws.onopen = () => {
+      this._reconnectAttempts = 0;
+      this._hideOverlay();
       this.onConnect && this.onConnect();
       this._refit();
     };
@@ -140,27 +133,58 @@ class Terminal {
     this.ws.onmessage = (e) => {
       let msg;
       try { msg = JSON.parse(e.data); } catch { return; }
-      if (msg.type === 'output') {
+      if (msg.type === 'reconnected') {
+        this.xterm.reset();
+        this._reconnectAttempts = 0;
+        this._hideOverlay();
+      } else if (msg.type === 'output') {
         this.xterm.write(msg.data);
       } else if (msg.type === 'shell_info') {
         this.onShellInfo && this.onShellInfo(msg.shell_type);
       }
     };
 
-    this.ws.onclose = () => {
+    this.ws.onclose = (e) => {
+      if (this._destroyed) return;
       this.onDisconnect && this.onDisconnect();
-      this.xterm && this.xterm.write('\r\n\x1b[2m[disconnected]\x1b[0m\r\n');
+      if (e.code === 1000) {
+        this.xterm && this.xterm.write('\r\n\x1b[2m[session ended]\x1b[0m\r\n');
+      } else {
+        this._scheduleReconnect();
+      }
     };
 
-    this.ws.onerror = () => {
-      this.onDisconnect && this.onDisconnect();
-    };
+    this.ws.onerror = () => {};
 
     this.xterm.onData(data => {
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
         this.ws.send(JSON.stringify({ type: 'input', data }));
       }
     });
+  }
+
+  _scheduleReconnect() {
+    if (this._destroyed) return;
+    const delay = Math.min(1000 * Math.pow(2, this._reconnectAttempts), 30000);
+    this._reconnectAttempts++;
+    this._showOverlay();
+    this._reconnectTimer = setTimeout(() => this._connectWS(), delay);
+  }
+
+  _showOverlay() {
+    if (!this._wrapper || this._overlay) return;
+    this._overlay = document.createElement('div');
+    this._overlay.className = 'reconnect-overlay';
+    this._overlay.textContent = 'Connection lost. Reconnecting...';
+    this._wrapper.style.position = 'relative';
+    this._wrapper.appendChild(this._overlay);
+  }
+
+  _hideOverlay() {
+    if (this._overlay) {
+      this._overlay.remove();
+      this._overlay = null;
+    }
   }
 
   _refit() {

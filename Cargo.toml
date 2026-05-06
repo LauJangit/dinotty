@@ -17,3 +17,4 @@ uuid = { version = "1", features = ["v4"] }
 dashmap = "5"
 rust-embed = { version = "8", features = ["axum"] }
 mime_guess = "2"
+vte = "0.13"

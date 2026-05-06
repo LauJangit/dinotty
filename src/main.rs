@@ -1,4 +1,5 @@
-mod terminal;
+mod session;
+mod vt_screen;
 mod ws;
 mod routes;
 
@@ -15,7 +16,7 @@ use std::net::SocketAddr;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::terminal::TerminalManager;
+use crate::session::SessionManager;
 use std::sync::Arc;
 
 #[derive(Embed)]
@@ -68,7 +69,8 @@ async fn main() {
         .init();
 
     let port = parse_port();
-    let manager = Arc::new(TerminalManager::new());
+    let manager = Arc::new(SessionManager::new());
+    manager.start_cleanup_task();
 
     let app = Router::new()
         .route("/ws", get(ws::ws_handler))

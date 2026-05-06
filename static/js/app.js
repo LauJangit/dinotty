@@ -44,7 +44,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  tabs.newTab();
+  if (!tabs.restore()) {
+    tabs.newTab();
+  }
 
   const mobileKb = new MobileKeyboard(() => tabs.activeTerminal());
   mobileKb.mount();
