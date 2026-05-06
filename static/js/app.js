@@ -44,9 +44,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  if (!tabs.restore()) {
-    tabs.newTab();
-  }
+  // Don't restore from localStorage — let sync WS provide the tab list
+  // tabs.newTab() will be called if server has no tabs
+  connectSyncWS(tabs);
 
   const mobileKb = new MobileKeyboard(() => tabs.activeTerminal());
   mobileKb.mount();
@@ -57,6 +57,58 @@ document.addEventListener('DOMContentLoaded', () => {
     makeDraggable(kbBtn);
   }
 });
+
+function connectSyncWS(tabs) {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const url = `${proto}//${location.host}/ws/sync`;
+  let ws = new WebSocket(url);
+
+  ws.onopen = () => {
+    tabs.setSyncWs(ws);
+  };
+
+  ws.onmessage = (e) => {
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
+
+    if (msg.type === 'tab_list') {
+      const localPaneIds = new Set(tabs.getAllPaneIds());
+      for (const tab of msg.tabs) {
+        if (!localPaneIds.has(tab.pane_id)) {
+          tabs.addRemoteTab(tab.pane_id);
+        }
+      }
+      tabs._persist();
+      for (const localId of localPaneIds) {
+        if (!msg.tabs.find(t => t.pane_id === localId)) {
+          tabs.removeByPaneId(localId);
+        }
+      }
+      if (msg.active_pane_id) {
+        tabs.activateByPaneId(msg.active_pane_id);
+      }
+      // If server has no tabs and we have none locally, create one
+      if (msg.tabs.length === 0 && tabs.getAllPaneIds().length === 0) {
+        tabs.newTab();
+      }
+    } else if (msg.type === 'tab_created') {
+      if (!tabs.hasPaneId(msg.pane_id)) {
+        tabs.addRemoteTab(msg.pane_id);
+      }
+    } else if (msg.type === 'tab_closed') {
+      tabs.removeByPaneId(msg.pane_id);
+    } else if (msg.type === 'tab_activated') {
+      tabs.activateByPaneId(msg.pane_id);
+    }
+  };
+
+  ws.onclose = () => {
+    tabs.setSyncWs(null);
+    setTimeout(() => connectSyncWS(tabs), 2000);
+  };
+
+  ws.onerror = () => {};
+}
 
 function makeDraggable(el) {
   let startX, startY, startRight, startBottom, dragged;

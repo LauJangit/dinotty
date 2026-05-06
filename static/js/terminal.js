@@ -24,6 +24,7 @@ class Terminal {
 
     this.xterm = new window.Terminal({
       cursorBlink: true,
+      scrollback: 10000,
       fontSize: 14,
       fontFamily: v('--font-mono'),
       allowProposedApi: true,
@@ -61,10 +62,57 @@ class Terminal {
     });
 
     this.xterm.onTitleChange(title => {
+      if (this._suppressTitleChange) return;
       this.onTitleChange && this.onTitleChange(title);
     });
 
     this._connectWS();
+
+    const xtermEl = wrapper.querySelector('.xterm');
+    (xtermEl || wrapper).addEventListener('dragover', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = 'copy';
+    }, true);
+    (xtermEl || wrapper).addEventListener('drop', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      const types = Array.from(e.dataTransfer.types);
+      console.log('[drop] types:', types);
+      console.log('[drop] text/uri-list:', e.dataTransfer.getData('text/uri-list'));
+      console.log('[drop] text/plain:', e.dataTransfer.getData('text/plain'));
+      if (e.dataTransfer.files.length > 0) {
+        const f = e.dataTransfer.files[0];
+        console.log('[drop] file:', { name: f.name, path: f.path, type: f.type, webkitRelativePath: f.webkitRelativePath });
+      }
+      const paths = [];
+      if (types.includes('text/uri-list')) {
+        const uriList = e.dataTransfer.getData('text/uri-list');
+        uriList.split('\n').forEach(u => {
+          u = u.trim();
+          if (!u || u.startsWith('#')) return;
+          try { paths.push(decodeURIComponent(new URL(u).pathname)); } catch {}
+        });
+      }
+      if (paths.length === 0 && types.includes('text/plain')) {
+        const text = e.dataTransfer.getData('text/plain').trim();
+        if (text && text.startsWith('/')) {
+          text.split('\n').forEach(l => { if (l.trim()) paths.push(l.trim()); });
+        }
+      }
+      if (paths.length === 0 && e.dataTransfer.files.length > 0) {
+        Array.from(e.dataTransfer.files).forEach(f => {
+          if (f.path) paths.push(f.path);
+          else if (f.name) paths.push(f.name);
+        });
+      }
+      if (paths.length > 0) {
+        this.sendData(paths.map(p => {
+          const escaped = p.replace(/'/g, "'\\''");
+          return `'${escaped}'`;
+        }).join(' '));
+      }
+    }, true);
 
     this.resizeObserver = new ResizeObserver(() => this._refit());
     this.resizeObserver.observe(wrapper);
@@ -134,7 +182,9 @@ class Terminal {
       let msg;
       try { msg = JSON.parse(e.data); } catch { return; }
       if (msg.type === 'reconnected') {
+        this._suppressTitleChange = true;
         this.xterm.reset();
+        this._suppressTitleChange = false;
         this._reconnectAttempts = 0;
         this._hideOverlay();
       } else if (msg.type === 'output') {
@@ -156,11 +206,14 @@ class Terminal {
 
     this.ws.onerror = () => {};
 
-    this.xterm.onData(data => {
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({ type: 'input', data }));
-      }
-    });
+    if (!this._onDataRegistered) {
+      this._onDataRegistered = true;
+      this.xterm.onData(data => {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({ type: 'input', data }));
+        }
+      });
+    }
   }
 
   _scheduleReconnect() {

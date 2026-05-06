@@ -12,10 +12,10 @@ use std::{
     io::{Read, Write},
     sync::{Arc, Mutex},
 };
-use tokio::sync::mpsc;
+
 use tracing::{error, info};
 
-use crate::session::{Session, SessionManager, SessionStatus};
+use crate::session::{Session, SessionManager, SessionStatus, SyncMsg};
 use crate::vt_screen::VirtualScreen;
 
 #[derive(Deserialize)]
@@ -29,6 +29,14 @@ pub struct WsQuery {
 pub enum ClientMsg {
     Input { data: String },
     Resize { cols: u16, rows: u16 },
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SyncClientMsg {
+    ActivateTab { pane_id: String },
+    CreateTab { pane_id: String },
+    CloseTab { pane_id: String },
 }
 
 #[derive(Serialize)]
@@ -48,16 +56,67 @@ pub async fn ws_handler(
     ws.on_upgrade(move |socket| handle_socket(socket, pane_id, manager))
 }
 
+pub async fn sync_handler(
+    ws: WebSocketUpgrade,
+    State(manager): State<Arc<SessionManager>>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_sync_socket(socket, manager))
+}
+
+async fn handle_sync_socket(socket: WebSocket, manager: Arc<SessionManager>) {
+    let (mut ws_tx, mut ws_rx) = socket.split();
+
+    // Send current tab list with active tab
+    let (tabs, active_pane_id) = manager.tab_list();
+    let tab_list = SyncMsg::TabList { tabs, active_pane_id };
+    let msg = serde_json::to_string(&tab_list).unwrap();
+    if ws_tx.send(Message::Text(msg.into())).await.is_err() { return; }
+
+    // Register this client for sync broadcasts
+    let mut rx = manager.add_sync_client();
+
+    let fwd = tokio::spawn(async move {
+        while let Some(data) = rx.recv().await {
+            if ws_tx.send(Message::Text(data.into())).await.is_err() { break; }
+        }
+    });
+
+    // Process incoming sync messages from this client
+    while let Some(Ok(msg)) = ws_rx.next().await {
+        match msg {
+            Message::Text(text) => {
+                if let Ok(sync_msg) = serde_json::from_str::<SyncClientMsg>(&text) {
+                    match sync_msg {
+                        SyncClientMsg::ActivateTab { pane_id } => {
+                            *manager.active_pane_id.lock().unwrap() = Some(pane_id.clone());
+                            manager.broadcast_sync(&SyncMsg::TabActivated { pane_id });
+                        }
+                        SyncClientMsg::CreateTab { pane_id } => {
+                            *manager.active_pane_id.lock().unwrap() = Some(pane_id.clone());
+                            manager.broadcast_sync(&SyncMsg::TabCreated { pane_id });
+                        }
+                        SyncClientMsg::CloseTab { pane_id } => {
+                            manager.broadcast_sync(&SyncMsg::TabClosed { pane_id });
+                        }
+                    }
+                }
+            }
+            Message::Close(_) => break,
+            _ => {}
+        }
+    }
+    fwd.abort();
+}
+
 async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionManager>) {
     info!("WebSocket connected: pane={}", pane_id);
     let (mut ws_tx, mut ws_rx) = socket.split();
 
-    // Check if session already exists (reconnection case)
-    if let Some(session) = manager.sessions.get(&pane_id) {
-        let session = Arc::clone(session.value());
-        info!("Reconnecting to existing session: pane={}", pane_id);
+    // Check if session already exists (reconnection / multi-client case)
+    let existing_session = manager.sessions.get(&pane_id).map(|r| Arc::clone(r.value()));
+    if let Some(session) = existing_session {
+        info!("Joining existing session: pane={}", pane_id);
 
-        // Update status
         *session.status.lock().unwrap() = SessionStatus::Connected;
 
         // Send reconnected message
@@ -65,16 +124,21 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
         let msg = serde_json::to_string(&ServerMsg::Reconnected { cols, rows }).unwrap();
         if ws_tx.send(Message::Text(msg.into())).await.is_err() { return; }
 
-        // Send screen snapshot
-        let snapshot = session.screen.lock().unwrap().snapshot();
+        // Send scrollback history in chunks, then visible screen
+        let (scrollback_chunks, snapshot) = {
+            let screen = session.screen.lock().unwrap();
+            (screen.snapshot_scrollback_chunks(200), screen.snapshot())
+        };
+        for chunk in &scrollback_chunks {
+            let msg = serde_json::to_string(&ServerMsg::Output { data: chunk }).unwrap();
+            if ws_tx.send(Message::Text(msg.into())).await.is_err() { return; }
+        }
         let msg = serde_json::to_string(&ServerMsg::Output { data: &snapshot }).unwrap();
         if ws_tx.send(Message::Text(msg.into())).await.is_err() { return; }
 
-        // Create new channel and bind to session
-        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-        *session.ws_tx.lock().unwrap() = Some(tx);
+        // Add this client to the broadcast list
+        let mut rx = session.add_client();
 
-        // Forward PTY output to this new WS
         let fwd = tokio::spawn(async move {
             while let Some(data) = rx.recv().await {
                 let msg = serde_json::to_string(&ServerMsg::Output { data: &data }).unwrap();
@@ -83,20 +147,19 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
         });
 
         // Read loop
-        let writer = Arc::clone(&session.writer);
-        let master = Arc::clone(&session.master);
         let mut normal_close = false;
         while let Some(Ok(msg)) = ws_rx.next().await {
             match msg {
                 Message::Text(text) => {
                     match serde_json::from_str::<ClientMsg>(&text) {
                         Ok(ClientMsg::Input { data }) => {
-                            let mut w = writer.lock().unwrap();
+                            let mut w = session.writer.lock().unwrap();
                             let _ = w.write_all(data.as_bytes());
                         }
                         Ok(ClientMsg::Resize { cols, rows }) => {
-                            let m = master.lock().unwrap();
+                            let m = session.master.lock().unwrap();
                             let _ = m.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
+                            drop(m);
                             *session.size.lock().unwrap() = (cols, rows);
                             session.screen.lock().unwrap().resize(cols as usize, rows as usize);
                         }
@@ -104,7 +167,6 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
                     }
                 }
                 Message::Close(frame) => {
-                    // Only destroy session if client explicitly closed with code 1000
                     normal_close = frame.as_ref().map(|f| f.code == 1000).unwrap_or(false);
                     break;
                 }
@@ -113,14 +175,14 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
         }
 
         fwd.abort();
-        *session.ws_tx.lock().unwrap() = None;
 
-        if normal_close {
+        if normal_close && !session.has_clients() {
             manager.sessions.remove(&pane_id);
-            info!("Session destroyed (normal close): pane={}", pane_id);
-        } else {
+            manager.broadcast_sync(&SyncMsg::TabClosed { pane_id: pane_id.clone() });
+            info!("Session destroyed (last client closed): pane={}", pane_id);
+        } else if !session.has_clients() {
             *session.status.lock().unwrap() = SessionStatus::Detached { since: std::time::Instant::now() };
-            info!("Session detached (abnormal close): pane={}", pane_id);
+            info!("Session detached (all clients gone): pane={}", pane_id);
         }
         return;
     }
@@ -172,27 +234,26 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
         Ok(w) => w,
         Err(e) => { error!("take writer: {}", e); return; }
     };
-    let writer = Arc::new(Mutex::new(writer));
-    let master: Arc<Mutex<Box<dyn portable_pty::MasterPty + Send>>> = Arc::new(Mutex::new(pair.master));
-
-    let screen = Arc::new(Mutex::new(VirtualScreen::new(80, 24)));
-    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-    let ws_tx_holder: Arc<Mutex<Option<mpsc::UnboundedSender<String>>>> = Arc::new(Mutex::new(Some(tx)));
 
     let session = Arc::new(Session {
-        writer: Arc::clone(&writer),
-        master: Arc::clone(&master),
-        screen: Arc::clone(&screen),
-        ws_tx: Arc::clone(&ws_tx_holder),
-        status: Arc::new(Mutex::new(SessionStatus::Connected)),
-        size: Arc::new(Mutex::new((80, 24))),
+        writer: Mutex::new(writer),
+        master: Mutex::new(pair.master),
+        screen: Mutex::new(VirtualScreen::new(80, 24)),
+        clients: Mutex::new(Vec::new()),
+        status: Mutex::new(SessionStatus::Connected),
+        size: Mutex::new((80, 24)),
         shell_type: shell_type.clone(),
     });
     manager.sessions.insert(pane_id.clone(), Arc::clone(&session));
 
-    // PTY reader — lives as long as the session/PTY, not tied to WS
-    let screen_clone = Arc::clone(&screen);
-    let ws_tx_clone = Arc::clone(&ws_tx_holder);
+    // Broadcast tab creation to sync clients
+    manager.broadcast_sync(&SyncMsg::TabCreated { pane_id: pane_id.clone() });
+
+    // Add this WS as the first client
+    let mut rx = session.add_client();
+
+    // PTY reader — broadcasts to all connected clients
+    let session_clone = Arc::clone(&session);
     let pane_id_clone = pane_id.clone();
     let manager_clone = Arc::clone(&manager);
     tokio::task::spawn_blocking(move || {
@@ -203,16 +264,14 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
                     let data = &buf[..n];
-                    screen_clone.lock().unwrap().feed(data);
+                    session_clone.screen.lock().unwrap().feed(data);
                     let s = String::from_utf8_lossy(data).to_string();
-                    if let Some(ref tx) = *ws_tx_clone.lock().unwrap() {
-                        let _ = tx.send(s);
-                    }
+                    session_clone.broadcast(&s);
                 }
             }
         }
-        // PTY died — remove session
         manager_clone.sessions.remove(&pane_id_clone);
+        manager_clone.broadcast_sync(&SyncMsg::TabClosed { pane_id: pane_id_clone.clone() });
         info!("PTY exited, session removed: pane={}", pane_id_clone);
     });
 
@@ -220,7 +279,7 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
     let shell_info = serde_json::to_string(&ServerMsg::ShellInfo { shell_type: &shell_type }).unwrap();
     let _ = ws_tx.send(Message::Text(shell_info.into())).await;
 
-    // Forward PTY output to WS
+    // Forward PTY output to this WS client
     let fwd = tokio::spawn(async move {
         while let Some(data) = rx.recv().await {
             let msg = serde_json::to_string(&ServerMsg::Output { data: &data }).unwrap();
@@ -235,12 +294,13 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
             Message::Text(text) => {
                 match serde_json::from_str::<ClientMsg>(&text) {
                     Ok(ClientMsg::Input { data }) => {
-                        let mut w = writer.lock().unwrap();
+                        let mut w = session.writer.lock().unwrap();
                         let _ = w.write_all(data.as_bytes());
                     }
                     Ok(ClientMsg::Resize { cols, rows }) => {
-                        let m = master.lock().unwrap();
+                        let m = session.master.lock().unwrap();
                         let _ = m.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
+                        drop(m);
                         *session.size.lock().unwrap() = (cols, rows);
                         session.screen.lock().unwrap().resize(cols as usize, rows as usize);
                     }
@@ -248,21 +308,20 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
                 }
             }
             Message::Close(frame) => {
-                    // Only destroy session if client explicitly closed with code 1000
-                    normal_close = frame.as_ref().map(|f| f.code == 1000).unwrap_or(false);
-                    break;
-                }
+                normal_close = frame.as_ref().map(|f| f.code == 1000).unwrap_or(false);
+                break;
+            }
             _ => {}
         }
     }
 
     fwd.abort();
-    *session.ws_tx.lock().unwrap() = None;
 
-    if normal_close {
+    if normal_close && !session.has_clients() {
         manager.sessions.remove(&pane_id);
+        manager.broadcast_sync(&SyncMsg::TabClosed { pane_id: pane_id.clone() });
         info!("Session destroyed (normal close): pane={}", pane_id);
-    } else {
+    } else if !session.has_clients() {
         *session.status.lock().unwrap() = SessionStatus::Detached { since: std::time::Instant::now() };
         info!("Session detached (abnormal close): pane={}", pane_id);
     }

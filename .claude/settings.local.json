@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo init *)",
+      "Bash(cargo build *)",
+      "Bash(cargo run *)",
+      "Bash(curl -s http://127.0.0.1:8999/)",
+      "Bash(kill %1)",
+      "Bash(open http://127.0.0.1:8999/)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:8999/)",
+      "Bash(curl -s http://localhost:8999/)",
+      "Bash(curl -s http://localhost:8999/static/js/terminal.js)",
+      "Bash(curl -sI http://localhost:8999/static/js/terminal.js)",
+      "Read(//Users/CHENXI/rust/rproxy/**)",
+      "Bash(command -v cargo-zigbuild)",
+      "Bash(command -v cross)",
+      "Bash(cargo install *)",
+      "Bash(command -v zig)",
+      "Bash(brew install *)",
+      "Bash(rustup target *)",
+      "Bash(pkill -f xterm-server)",
+      "Read(//tmp/**)",
+      "Read(//private/tmp/**)",
+      "Bash(curl -s http://127.0.0.1:8999/static/js/mobile-keyboard.js)",
+      "Bash(node --input-type=module)",
+      "Bash(node -e ' *)",
+      "Bash(node *)",
+      "Bash(curl -s http://127.0.0.1:8999/static/css/mobile-keyboard.css)",
+      "Bash(curl -s http://127.0.0.1:8999)",
+      "Bash(pkill -f 'target/debug/xterm')",
+      "Bash(git rm *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Read(//Users/CHENXI/.cargo/registry/src/**)"
+    ]
+  }
+}

@@ -74,6 +74,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/ws", get(ws::ws_handler))
+        .route("/ws/sync", get(ws::sync_handler))
         .route("/static/*path", get(static_handler))
         .route("/", get(routes::index))
         .layer(CorsLayer::permissive())

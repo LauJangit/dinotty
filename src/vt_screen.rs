@@ -93,7 +93,7 @@ impl ScreenBuffer {
         let row = self.cells.remove(self.scroll_top);
         if self.scroll_top == 0 {
             scrollback.push_back(row);
-            if scrollback.len() > 1000 {
+            if scrollback.len() > 10000 {
                 scrollback.pop_front();
             }
         }
@@ -167,6 +167,42 @@ impl VirtualScreen {
         self.alternate.resize(cols, rows);
     }
 
+    pub fn snapshot_scrollback_chunks(&self, chunk_lines: usize) -> Vec<String> {
+        if self.using_alternate || self.scrollback.is_empty() {
+            return Vec::new();
+        }
+        let mut chunks = Vec::new();
+        let mut current = String::new();
+        let mut lines_in_chunk = 0;
+
+        for row in &self.scrollback {
+            let mut prev_attrs = CellAttrs::default();
+            let last_content = row.iter().rposition(|c| c.ch != ' ' || has_attrs(&c.attrs))
+                .map(|i| i + 1).unwrap_or(0);
+            for cell in &row[..last_content] {
+                if !attrs_eq(&cell.attrs, &prev_attrs) {
+                    current.push_str(&encode_sgr(&cell.attrs));
+                    prev_attrs = cell.attrs;
+                }
+                current.push(cell.ch);
+            }
+            if has_attrs(&prev_attrs) {
+                current.push_str("\x1b[0m");
+            }
+            current.push_str("\r\n");
+            lines_in_chunk += 1;
+
+            if lines_in_chunk >= chunk_lines {
+                chunks.push(std::mem::take(&mut current));
+                lines_in_chunk = 0;
+            }
+        }
+        if !current.is_empty() {
+            chunks.push(current);
+        }
+        chunks
+    }
+
     pub fn snapshot(&self) -> String {
         let buf = if self.using_alternate { &self.alternate } else { &self.primary };
         let mut out = String::with_capacity(self.cols * self.rows * 4);
@@ -181,9 +217,8 @@ impl VirtualScreen {
 
         // Render each row
         for (row_idx, row) in buf.cells.iter().enumerate() {
-            out.push_str(&format!("\x1b[{};1H", row_idx + 1)); // move to row start
+            out.push_str(&format!("\x1b[{};1H\x1b[2K", row_idx + 1)); // move to row start + erase line
             let mut prev_attrs = CellAttrs::default();
-            let mut col = 0;
 
             // Find last non-space column to avoid trailing spaces
             let last_content = row.iter().rposition(|c| c.ch != ' ' || has_attrs(&c.attrs))
@@ -195,9 +230,7 @@ impl VirtualScreen {
                     prev_attrs = cell.attrs;
                 }
                 out.push(cell.ch);
-                col += 1;
             }
-            let _ = col;
 
             // Reset attrs at end of row
             if has_attrs(&prev_attrs) {
