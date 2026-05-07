@@ -55,6 +55,31 @@ class Terminal {
 
     this.fitAddon = new FitAddon.FitAddon();
     this.xterm.loadAddon(this.fitAddon);
+
+    if (window.WebLinksAddon) {
+      const linksAddon = new WebLinksAddon.WebLinksAddon((event, uri) => {
+        console.log('[WebLinksAddon] clicked:', uri);
+        try {
+          const url = new URL(uri);
+          const host = url.hostname;
+          if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0') {
+            const port = parseInt(url.port) || 80;
+            if (port >= 1024) {
+              event.preventDefault();
+              openPreview(port, url.pathname + url.search);
+              return;
+            }
+          }
+        } catch (e) {
+          console.error('[WebLinksAddon] error:', e);
+        }
+        window.open(uri, '_blank');
+      });
+      this.xterm.loadAddon(linksAddon);
+    } else {
+      console.warn('[Terminal] WebLinksAddon not loaded');
+    }
+
     this.xterm.open(wrapper);
 
     requestAnimationFrame(() => {

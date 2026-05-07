@@ -1,0 +1,304 @@
+#mobile-kb {
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  z-index: 500;
+  background: #1c1c1e;
+  border-top: 1px solid #38383a;
+  padding: 5px 4px env(safe-area-inset-bottom, 0px);
+  gap: 4px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+/* ── Row wrapper: main keys + optional right nav column ──── */
+
+.mkb-row-wrap {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+}
+
+.mkb-row {
+  display: flex;
+  flex: 1;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* Stagger set by JS via _applyStagger() */
+.mkb-stagger-asdf .mkb-row,
+.mkb-stagger-zxcv .mkb-row { padding-left: 0; }
+
+/* ── Right nav column (68-key style) ─────────────────────── */
+
+.mkb-nav-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.mkb-nav {
+  flex-grow: unset !important;
+  flex-basis: unset !important;
+  width: 44px;
+  height: 44px;
+  font-size: 11px;
+  color: #8e8e93;
+}
+
+/* ── Keys ─────────────────────────────────────────────────── */
+
+.mkb-btn {
+  flex-shrink: 1;
+  flex-basis: 0;
+  flex-grow: 1;
+  min-width: 0;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 16px;
+  font-weight: 400;
+  color: #ffffff;
+  background: #48484a;
+  border: none;
+  border-radius: 6px;
+  height: 44px;
+  padding: 0 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.45);
+  box-sizing: border-box;
+}
+
+.mkb-btn:active {
+  background: #636366;
+  box-shadow: none;
+  transform: translateY(1px);
+}
+
+.mkb-mod {
+  background: #2c2c2e;
+  font-size: 12px;
+  color: #ebebf0;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+}
+
+.mkb-btn.active {
+  background: #0a84ff;
+  color: #fff;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+}
+
+.mkb-return { color: #30d158; }
+
+#mkb-space {
+  background: #48484a;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.45);
+}
+
+.mkb-blank {
+  background: transparent;
+  box-shadow: none;
+  pointer-events: none;
+}
+
+/* ── ZXCV + Bottom shared layout ────────────────────────── */
+.mkb-zxcv-bottom {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+}
+.mkb-zxcv-left {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* ── Arrow cluster ───────────────────────────────────────── */
+.mkb-arrow-cluster {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mkb-arrow-row {
+  display: flex;
+  gap: 4px;
+}
+
+/* All arrow/nav keys: identical fixed size */
+.mkb-arrow {
+  flex-grow: 0 !important;
+  flex-shrink: 0 !important;
+  flex-basis: auto !important;
+  font-size: 15px;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  box-sizing: border-box;
+}
+
+/* top arrow row: ↑ aligned above ↓ */
+.mkb-arrow-top {
+  padding-left: 48px;
+}
+
+:root { --mkb-height: 0px; }
+
+/* Action panel */
+#mkb-main-panel,
+#mkb-action-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+#mkb-action-panel .mkb-row-wrap {
+  padding-left: 0 !important;
+}
+
+#mkb-action-panel .mkb-btn {
+  font-size: 13px;
+  min-height: 44px;
+}
+
+.mkb-action-arrow {
+  font-size: 20px !important;
+}
+
+.mkb-action-danger {
+  color: #ff6b6b;
+  border-color: rgba(255, 107, 107, 0.4);
+}
+
+.mkb-action-back {
+  font-size: 12px;
+}
+
+/* Arrow cross-pad + big Enter side by side */
+.mkb-action-arrow-enter {
+  display: flex;
+  flex-direction: row;
+  gap: 4px;
+  align-items: stretch;
+}
+
+.mkb-action-arrowpad {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  flex: 3;
+  min-width: 0;
+}
+
+.mkb-action-arrow-top {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: center;
+  align-items: stretch;
+}
+
+.mkb-action-arrow-top .mkb-btn {
+  width: 100%;
+  max-width: 100%;
+  flex: 1 1 auto;
+  height: 44px;
+  min-height: 44px;
+  box-sizing: border-box;
+  font-size: 20px !important;
+}
+
+.mkb-action-arrow-bot {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.mkb-action-arrow-bot .mkb-btn {
+  width: 100%;
+  min-width: 0;
+  height: 44px;
+  min-height: 44px;
+  flex: none;
+  box-sizing: border-box;
+  font-size: 20px !important;
+}
+
+/* Big Enter: tall, right side */
+.mkb-action-enter {
+  font-size: 24px !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  flex-grow: 0 !important;
+  flex-shrink: 0 !important;
+  flex-basis: 108px !important;
+  height: auto !important;
+  min-height: unset !important;
+}
+
+/* Floating keyboard toggle button */
+#kb-toggle-btn {
+  position: fixed;
+  right: 16px;
+  bottom: calc(var(--mkb-height, 0px) + 16px);
+  z-index: 501;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: #2c2c2e;
+  color: #fff;
+  font-size: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  -webkit-tap-highlight-color: transparent;
+}
+
+#kb-toggle-btn.active {
+  background: #3a3a3c;
+  border-color: rgba(255,255,255,0.3);
+}
+
+/* ── Keyboard top bar (collapse) ───────────────────────────── */
+#mkb-kb-bar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 4px 8px;
+  flex-shrink: 0;
+}
+
+.mkb-collapse-btn {
+  flex-shrink: 0;
+  padding: 4px 12px;
+  font-size: 14px;
+  min-width: 36px;
+  font-family: system-ui, -apple-system, sans-serif;
+  color: #e5e5ea;
+  background: #3a3a3c;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 14px;
+  cursor: pointer;
+  opacity: 0.85;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.mkb-collapse-btn:active {
+  background: #0a84ff;
+  color: #fff;
+}

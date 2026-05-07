@@ -37,9 +37,26 @@ class MobileKeyboard {
 
   // ── Build ─────────────────────────────────────────────────
 
+  _normalizeCaretSend(send) {
+    if (!send || send.length !== 2 || send[0] !== '^') return send;
+    const x = send[1];
+    const u = x.toUpperCase();
+    if (u >= 'A' && u <= 'Z') return String.fromCharCode(u.charCodeAt(0) - 64);
+    if (x === '[') return '\x1b';
+    if (x === '\\') return '\x1c';
+    if (x === ']') return '\x1d';
+    if (x === '^') return '\x1e';
+    if (x === '_') return '\x1f';
+    if (x === '?') return '\x7f';
+    if (x === '@') return '\x00';
+    return send;
+  }
+
   _buildDOM() {
     const bar = document.createElement('div');
     bar.id = 'mobile-kb';
+
+    bar.appendChild(this._buildKbBar());
 
     // ── Main panel ────────────────────────────────────────────
     const mainPanel = document.createElement('div');
@@ -93,35 +110,98 @@ class MobileKeyboard {
     }).observe(bar);
   }
 
+  _buildKbBar() {
+    const wrap = document.createElement('div');
+    wrap.id = 'mkb-kb-bar';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'mkb-collapse-btn';
+    btn.textContent = '▼';
+    btn.addEventListener('touchstart', e => {
+      e.preventDefault();
+      if (this._visible) this.toggle();
+    }, { passive: false });
+    btn.addEventListener('mousedown', e => {
+      e.preventDefault();
+      if (this._visible) this.toggle();
+    });
+    wrap.appendChild(btn);
+    return wrap;
+  }
+
+  _getActionKeyboardConfig() {
+    const stored = localStorage.getItem('xterm_action_keyboard');
+    if (stored) {
+      try { return JSON.parse(stored); } catch(e) {}
+    }
+    return null;
+  }
+
+  _getDefaultActionConfig() {
+    return {
+      rows: [
+        [
+          { label: 'esc', send: '\x1b' },
+          { label: 'tab', send: '\t' },
+          { label: '⇤', send: '\x1b[Z' },
+          { label: '⌫', send: '\x7f', repeat: true },
+        ],
+        [
+          { label: 'ctrl+c', send: '\x03', style: 'danger' },
+          { label: 'ctrl+z', send: '\x1a' },
+          { label: 'ctrl+l', send: '\x0c' },
+          { label: 'ctrl+r', send: '\x12' },
+          { label: 'ctrl+d', send: '\x04' },
+          { label: 'ctrl+k', send: '\x0b' },
+        ],
+        [
+          { label: 'ctrl', send: '', special: 'ctrl' },
+          { label: 'opt', send: '', special: 'alt' },
+          { label: '⌘', send: '', special: 'cmd' },
+          { label: '', send: ' ', special: 'space' },
+        ],
+      ]
+    };
+  }
+
+  updateActionPanel(config) {
+    if (config) localStorage.setItem('xterm_action_keyboard', JSON.stringify(config));
+    if (!this._bar) return;
+    const oldPanel = this._bar.querySelector('#mkb-action-panel');
+    if (oldPanel) oldPanel.remove();
+    const newPanel = this._buildActionPanel();
+    this._bar.appendChild(newPanel);
+    this._syncKbPanels();
+  }
+
   _buildActionPanel() {
     const panel = document.createElement('div');
     panel.id = 'mkb-action-panel';
     panel.style.display = 'none';
 
-    // Row 1: common nav / edit actions
-    panel.appendChild(this._buildRow([
-      { l:'⌨', sp:'kbswitch', g:1.5, cls:'mkb-mod mkb-action-back', id:'mkb-kbswitch2' },
-      { l:'esc',   s:'\x1b',   g:1.5, cls:'mkb-mod' },
-      { l:'tab',   s:'\x09',   g:1.5, cls:'mkb-mod' },
-      { l:'⇤',     s:'\x1b[Z', g:1.5, cls:'mkb-mod', title:'shift+tab' },
-      { l:'⌫',     s:'\x7f',   g:1.5, cls:'mkb-mod', repeat:true },
-    ]));
+    const config = this._getActionKeyboardConfig() || this._getDefaultActionConfig();
 
-    // Row 2: ctrl combos
-    panel.appendChild(this._buildRow([
-      { l:'ctrl+c', s:'\x03', g:2, cls:'mkb-mod mkb-action-danger' },
-      { l:'ctrl+z', s:'\x1a', g:2, cls:'mkb-mod' },
-      { l:'ctrl+l', s:'\x0c', g:2, cls:'mkb-mod' },
-      { l:'ctrl+r', s:'\x12', g:2, cls:'mkb-mod' },
-      { l:'ctrl+d', s:'\x04', g:2, cls:'mkb-mod' },
-      { l:'ctrl+k', s:'\x0b', g:2, cls:'mkb-mod' },
-    ]));
+    config.rows.forEach((row, rowIdx) => {
+      const keys = row.map(k => {
+        let normSend = this._normalizeCaretSend(k.send || '');
+        if (k.auto_enter && normSend !== '') normSend += '\r';
+        const def = { l: k.label, s: normSend, cls: 'mkb-mod' };
+        if (k.grow != null && k.grow > 0) def.g = k.grow;
+        if (k.style === 'danger') def.cls += ' mkb-action-danger';
+        if (k.repeat) def.repeat = true;
+        if (k.special) { def.sp = k.special; def.id = 'mkb-' + k.special + '2'; }
+        return def;
+      });
+      if (rowIdx === 0) {
+        keys.unshift({ l:'⌨', sp:'kbswitch', g:1.5, cls:'mkb-mod mkb-action-back', id:'mkb-kbswitch2' });
+      }
+      panel.appendChild(this._buildRow(keys));
+    });
 
-    // Row 3+4: arrow cross-pad (left) + big enter (right)
+    // Fixed: arrow cross-pad + big enter
     const arrowEnterRow = document.createElement('div');
     arrowEnterRow.className = 'mkb-action-arrow-enter';
 
-    // Arrow cross: ↑ on top centered, ← ↓ → on bottom
     const arrowPad = document.createElement('div');
     arrowPad.className = 'mkb-action-arrowpad';
 
@@ -139,19 +219,10 @@ class MobileKeyboard {
 
     arrowPad.append(arrowTop, arrowBot);
 
-    // Big Enter key
     const enterBtn = this._buildKey({ l:'↵', s:'\r', cls:'mkb-mod mkb-action-enter mkb-return' });
 
     arrowEnterRow.append(arrowPad, enterBtn);
     panel.appendChild(arrowEnterRow);
-
-    // Bottom row: ctrl/opt/space
-    panel.appendChild(this._buildRow([
-      { l:'ctrl', sp:'ctrl', g:1, cls:'mkb-mod', id:'mkb-ctrl2' },
-      { l:'opt',  sp:'alt',  g:1, cls:'mkb-mod', id:'mkb-alt2'  },
-      { l:'⌘',    sp:'cmd',  g:1, cls:'mkb-mod' },
-      { l:'',     s:' ',     g:5, id:'mkb-space2' },
-    ]));
 
     return panel;
   }
@@ -206,23 +277,23 @@ class MobileKeyboard {
       const zxcvRow = this._bar.querySelector('.mkb-row-zxcv');
       if (!aKey || !sKey || !shiftKey || !zxcvRow) return;
 
-      const rowRect   = zxcvRow.getBoundingClientRect();
-      const aLeft     = aKey.getBoundingClientRect().left;
-      const sLeft     = sKey.getBoundingClientRect().left;
-      const zTarget   = (aLeft + sLeft) / 2;          // z's desired left edge
-      const shiftRight = shiftKey.getBoundingClientRect().right + gap; // first available pixel after ⇧
+      const letterW   = aKey.getBoundingClientRect().width;
+      if (!letterW) return;
 
-      const zxcvPad = Math.round(zTarget - shiftRight);
-      zxcvRow.style.paddingLeft = Math.max(0, zxcvPad) + 'px';
+      // Make shift key wider: 2.5 letter keys wide
+      shiftKey.style.flexGrow   = '0';
+      shiftKey.style.flexShrink = '0';
+      shiftKey.style.flexBasis  = Math.round(letterW * 2.5) + 'px';
 
-      // Make shift slightly wider than fn
-      const fnKey = [...this._bar.querySelectorAll('.mkb-btn')].find(b => b.textContent === 'fn');
-      if (fnKey && shiftKey) {
-        const fnW = fnKey.getBoundingClientRect().width;
-        shiftKey.style.flexGrow   = '0';
-        shiftKey.style.flexShrink = '0';
-        shiftKey.style.flexBasis  = (fnW + 32) + 'px';
-      }
+      // After shift resize, set zxcv row padding
+      requestAnimationFrame(() => {
+        const aLeft2 = aKey.getBoundingClientRect().left;
+        const sLeft2 = sKey.getBoundingClientRect().left;
+        const shiftRight = shiftKey.getBoundingClientRect().right + gap;
+        const zTarget = (aLeft2 + sLeft2) / 2;
+        const zxcvPad = Math.round(zTarget - shiftRight);
+        zxcvRow.style.paddingLeft = Math.max(0, zxcvPad) + 'px';
+      });
     });
   }
 
@@ -237,7 +308,7 @@ class MobileKeyboard {
     const r4 = document.createElement('div');
     r4.className = 'mkb-row mkb-row-zxcv';
     [
-      { l:'⇧', sp:'shift', g:1.5, cls:'mkb-mod', id:'mkb-shift' },
+      { l:'⇧', sp:'shift', g:2.5, cls:'mkb-mod', id:'mkb-shift' },
       { l:'z',s:'z' }, { l:'x',s:'x' }, { l:'c',s:'c' }, { l:'v',s:'v' },
       { l:'b',s:'b' }, { l:'n',s:'n' }, { l:'m',s:'m' },
       { l:',',sl:'<',s:',' ,cls:'mkb-alpha'}, { l:'.',sl:'>',s:'.',cls:'mkb-alpha' }, { l:'/',sl:'?',s:'/',cls:'mkb-alpha' },
@@ -322,7 +393,24 @@ class MobileKeyboard {
           if (k.sl) ch = k.sl;
           else if (ch >= 'a' && ch <= 'z') ch = ch.toUpperCase();
         }
-        if (this._ctrl && ch.length === 1) {
+        if (ch.length !== 1) {
+          this._setCtrl(false);
+          this._setAlt(false);
+          if (this._shift) this._setShift(false);
+          this._send(ch);
+          return;
+        }
+        {
+          const cc = ch.charCodeAt(0);
+          if (cc < 32 || cc === 127) {
+            this._setCtrl(false);
+            this._setAlt(false);
+            if (this._shift) this._setShift(false);
+            this._send(ch);
+            return;
+          }
+        }
+        if (this._ctrl) {
           const code = ch.toUpperCase().charCodeAt(0) - 64;
           if (code >= 1 && code <= 26) ch = String.fromCharCode(code);
           this._setCtrl(false);

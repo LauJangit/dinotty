@@ -1,6 +1,4 @@
-mod session;
-mod vt_screen;
-mod ws;
+use xterm_server::{session, settings, file_preview, ws, proxy};
 mod routes;
 
 use axum::{
@@ -9,24 +7,46 @@ use axum::{
     http::{header, Response, StatusCode},
     response::IntoResponse,
     Router,
-    routing::get,
+    routing::{any, get, post},
 };
 use rust_embed::Embed;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::session::SessionManager;
-use std::sync::Arc;
+use crate::settings::SettingsState;
 
 #[derive(Embed)]
-#[folder = "static/"]
-struct StaticFiles;
+#[folder = "frontend/dist/"]
+pub struct StaticFiles;
+
+#[derive(Clone)]
+pub struct AppState {
+    pub manager: Arc<SessionManager>,
+    pub settings: SettingsState,
+}
+
+// Allow extracting Arc<SessionManager> from AppState for ws handlers
+impl axum::extract::FromRef<AppState> for Arc<SessionManager> {
+    fn from_ref(state: &AppState) -> Self {
+        state.manager.clone()
+    }
+}
+
+// Allow extracting (Arc<SessionManager>, SettingsState) for settings handlers
+impl axum::extract::FromRef<AppState> for (Arc<SessionManager>, SettingsState) {
+    fn from_ref(state: &AppState) -> Self {
+        (state.manager.clone(), state.settings.clone())
+    }
+}
 
 async fn static_handler(Path(path): Path<String>) -> impl IntoResponse {
-    match StaticFiles::get(&path) {
+    let lookup = format!("assets/{}", path);
+    match StaticFiles::get(&lookup) {
         Some(content) => {
-            let mime = mime_guess::from_path(&path).first_or_octet_stream();
+            let mime = mime_guess::from_path(&lookup).first_or_octet_stream();
             Response::builder()
                 .header(header::CONTENT_TYPE, mime.as_ref())
                 .body(Body::from(content.data.into_owned()))
@@ -72,13 +92,24 @@ async fn main() {
     let manager = Arc::new(SessionManager::new());
     manager.start_cleanup_task();
 
+    let state = AppState {
+        manager,
+        settings: settings::create_settings_state(),
+    };
+
     let app = Router::new()
         .route("/ws", get(ws::ws_handler))
         .route("/ws/sync", get(ws::sync_handler))
-        .route("/static/*path", get(static_handler))
+        .route("/api/settings", get(settings::get_settings).put(settings::put_settings))
+        .route("/api/settings/background", post(settings::upload_background).get(settings::get_background))
+        .route("/api/file", get(file_preview::get_file))
+        .route("/preview/:port", any(proxy::proxy_handler_root))
+        .route("/preview/:port/", any(proxy::proxy_handler_root))
+        .route("/preview/:port/*path", any(proxy::proxy_handler_wildcard))
+        .route("/assets/*path", get(static_handler))
         .route("/", get(routes::index))
         .layer(CorsLayer::permissive())
-        .with_state(manager);
+        .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     tracing::info!("Listening on http://0.0.0.0:{}", port);

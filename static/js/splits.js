@@ -112,10 +112,10 @@ class SplitTree {
     return pane;
   }
 
-  splitPane(targetPane, dir) {
+  splitPane(targetPane, dir, type, opts) {
     if (!this._findParentContainer(targetPane)) return null;
 
-    const newPane = this._makePane();
+    const newPane = type === 'preview' ? this._makePreviewPane(opts) : this._makePane();
     const wrapper = this._buildSplitEl(dir);
 
     // Insert wrapper where targetPane.el currently lives
@@ -142,7 +142,7 @@ class SplitTree {
       this._allPanes.forEach(p => p.terminal && p.terminal._refit());
     });
 
-    newPane.attachTerminal();
+    if (newPane.terminal) newPane.attachTerminal();
     this._focusPane(newPane);
     return newPane;
   }
@@ -170,7 +170,8 @@ class SplitTree {
     }
 
     // Clean up pane
-    pane.terminal && pane.terminal.destroy();
+    if (pane.terminal) pane.terminal.destroy();
+    if (pane.preview) pane.preview.destroy();
     this._allPanes = this._allPanes.filter(p => p !== pane);
 
     // Update tree: replace split node with sibling subtree
@@ -222,6 +223,25 @@ class SplitTree {
     term.onDisconnect = () => pane.setStatus('err');
     term.onShellInfo  = (s) => pane.setShell(s);
     term.onTitleChange= (t) => pane.setTitle(t);
+
+    this._allPanes.push(pane);
+    return pane;
+  }
+
+  _makePreviewPane(opts) {
+    const pane = new Pane();
+    pane.buildEl((p) => this.closePane(p));
+    pane.el.addEventListener('mousedown', () => this._focusPane(pane));
+    pane._titleEl.textContent = 'Preview';
+
+    const preview = new PreviewPanel();
+    preview.render(pane._termWrapper);
+    preview.onClose = () => this.closePane(pane);
+    pane.preview = preview;
+
+    if (opts && opts.port) {
+      preview.load(opts.port, opts.path || '/');
+    }
 
     this._allPanes.push(pane);
     return pane;

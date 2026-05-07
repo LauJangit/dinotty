@@ -3,6 +3,7 @@ set -euo pipefail
 
 BIN="xterm-server"
 DIST="dist"
+FRONTEND_DIR="frontend"
 
 PLATFORMS=(
     "x86_64-unknown-linux-musl"
@@ -24,6 +25,8 @@ Commands:
   native      Build for the current host (release)
   cross       Cross-compile for all targets (or specified targets)
   all         native + cross
+  frontend    Build frontend only
+  desktop     Build Tauri desktop app
   list        List supported targets
   clean       Remove dist/ and target/
   help        Show this message
@@ -57,11 +60,25 @@ strip_bin() {
     fi
 }
 
+build_frontend() {
+    info "Building frontend..."
+    need pnpm
+
+    pushd "$FRONTEND_DIR" > /dev/null
+    pnpm install --frozen-lockfile 2>/dev/null || pnpm install
+    pnpm build
+    popd > /dev/null
+
+    ok "Frontend built: $FRONTEND_DIR/dist/"
+}
+
 build_native() {
+    build_frontend
+
     info "Building native release..."
     need cargo
 
-    cargo build --release
+    cargo build --release -p xterm-server
 
     mkdir -p "$DIST"
     local host; host="$(rustc -vV | awk '/^host:/{print $2}')"
@@ -85,12 +102,12 @@ build_one_target() {
     fi
 
     if command -v cargo-zigbuild &>/dev/null; then
-        cargo zigbuild --release --target "$target"
+        cargo zigbuild --release --target "$target" -p xterm-server
     elif command -v cross &>/dev/null; then
-        cross build --release --target "$target"
+        cross build --release --target "$target" -p xterm-server
     else
         warn "Neither cargo-zigbuild nor cross found; trying plain cargo (may fail for cross targets)"
-        cargo build --release --target "$target"
+        cargo build --release --target "$target" -p xterm-server
     fi
 
     mkdir -p "$DIST"
@@ -105,6 +122,8 @@ build_one_target() {
 }
 
 build_cross() {
+    build_frontend
+
     info "Cross-compiling..."
     need cargo
     need rustup
@@ -123,6 +142,21 @@ build_cross() {
     done
 }
 
+build_desktop() {
+    build_frontend
+
+    info "Building Tauri desktop app..."
+    need cargo
+
+    if ! command -v cargo-tauri &>/dev/null; then
+        info "Installing tauri-cli..."
+        cargo install tauri-cli --version "^2"
+    fi
+
+    cargo tauri build
+    ok "Desktop app built"
+}
+
 cmd_list() {
     echo "Supported targets:"
     local idx=1
@@ -133,18 +167,21 @@ cmd_list() {
 }
 
 cmd_clean() {
-    info "Cleaning dist/ and target/..."
+    info "Cleaning dist/, target/, and frontend/dist/..."
     rm -rf "$DIST"
+    rm -rf "$FRONTEND_DIR/dist"
     cargo clean
     ok "Clean done"
 }
 
 case "${1:-}" in
-    native) build_native ;;
-    cross)  shift; build_cross "$@" ;;
-    all)    shift; build_native; build_cross "$@" ;;
-    list)   cmd_list ;;
-    clean)  cmd_clean ;;
+    native)   build_native ;;
+    cross)    shift; build_cross "$@" ;;
+    all)      shift; build_native; build_cross "$@" ;;
+    frontend) build_frontend ;;
+    desktop)  build_desktop ;;
+    list)     cmd_list ;;
+    clean)    cmd_clean ;;
     help|-h|--help) usage ;;
     *) die "Unknown command: ${1:-} — run '$0 help' for usage" ;;
 esac

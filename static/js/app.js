@@ -23,9 +23,34 @@ document.addEventListener('DOMContentLoaded', () => {
       kbd: ['⌘', 'W'],
       action: () => tabs.closeActiveTab(),
     },
+    {
+      icon: '⊡', title: 'Open Preview',
+      subtitle: 'Open web preview panel for a localhost port',
+      action: () => {
+        const input = prompt('Enter port number (e.g. 3000):');
+        if (input) {
+          const port = parseInt(input.trim());
+          if (port >= 1024 && port <= 65535) openPreview(port, '/');
+        }
+      },
+    },
   ]);
 
   tabNewBtn.addEventListener('click', () => tabs.newTab());
+
+  // Preview button — prompt for port
+  const previewBtn = document.getElementById('preview-btn');
+  if (previewBtn) {
+    previewBtn.addEventListener('click', () => {
+      const input = prompt('Enter port number (e.g. 3000):');
+      if (input) {
+        const port = parseInt(input.trim());
+        if (port >= 1024 && port <= 65535) {
+          openPreview(port, '/');
+        }
+      }
+    });
+  }
 
   document.addEventListener('keydown', (e) => {
     const cmd   = e.metaKey || e.ctrlKey;

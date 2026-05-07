@@ -1,0 +1,11 @@
+{
+  "identifier": "default",
+  "description": "Default permissions for xterm desktop",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "shell:allow-open",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister"
+  ]
+}

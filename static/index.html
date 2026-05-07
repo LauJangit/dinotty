@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/static/css/base.css" />
   <link rel="stylesheet" href="/static/css/layout.css" />
   <link rel="stylesheet" href="/static/css/mobile-keyboard.css" />
+  <link rel="stylesheet" href="/static/css/preview.css" />
 </head>
 <body>
 
@@ -15,6 +16,7 @@
   <div id="tab-bar">
     <div id="tabs-list"></div>
     <button id="tab-new-btn" title="New Tab (⌘T)">+</button>
+    <button id="preview-btn" title="Open Preview">⊡</button>
   </div>
   <div id="tab-content"></div>
 </div>
@@ -37,7 +39,9 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5/lib/xterm.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10/lib/addon-fit.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11/lib/addon-web-links.js"></script>
 
+<script src="/static/js/preview.js"></script>
 <script src="/static/js/terminal.js"></script>
 <script src="/static/js/tabs.js"></script>
 <script src="/static/js/palette.js"></script>

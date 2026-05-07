@@ -23,6 +23,7 @@ pub struct Session {
     pub size: Mutex<(u16, u16)>,
     #[allow(dead_code)]
     pub shell_type: String,
+    pub tauri_on_exit: Mutex<Option<Arc<dyn Fn(String) + Send + Sync>>>,
 }
 
 impl Session {

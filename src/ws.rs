@@ -6,17 +6,13 @@ use axum::{
     response::IntoResponse,
 };
 use futures_util::{SinkExt, StreamExt};
-use portable_pty::{NativePtySystem, PtySize, PtySystem, CommandBuilder};
+use portable_pty::PtySize;
 use serde::{Deserialize, Serialize};
-use std::{
-    io::{Read, Write},
-    sync::{Arc, Mutex},
-};
+use std::{io::Write, sync::Arc};
 
 use tracing::{error, info};
 
-use crate::session::{Session, SessionManager, SessionStatus, SyncMsg};
-use crate::vt_screen::VirtualScreen;
+use crate::session::{SessionManager, SessionStatus, SyncMsg};
 
 #[derive(Deserialize)]
 pub struct WsQuery {
@@ -188,92 +184,15 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
     }
 
     // ── New session ──
-    let pty_system = NativePtySystem::default();
-    let pair = match pty_system.openpty(PtySize {
-        rows: 24, cols: 80, pixel_width: 0, pixel_height: 0,
-    }) {
-        Ok(p) => p,
-        Err(e) => { error!("Failed to open pty: {}", e); return; }
-    };
-
-    let shell = get_shell();
-    let shell_type = get_shell_type(&shell);
-    let mut cmd = CommandBuilder::new(&shell);
-    cmd.args(get_shell_args(&shell));
-    cmd.env("TERM", "xterm-256color");
-
-    if let Ok(home) = std::env::var("HOME") {
-        cmd.cwd(&home);
-        match shell_type.as_str() {
-            "zsh" => {
-                if let Some(zdotdir) = setup_zsh_title_hooks(&home) {
-                    cmd.env("ZDOTDIR", &zdotdir);
-                }
-            }
-            "bash" => {
-                cmd.env(
-                    "PROMPT_COMMAND",
-                    r#"printf "\033]0;%s@%s:%s\007" "${USER}" "${HOSTNAME%%.*}" "${PWD/#$HOME/~}""#,
-                );
-            }
-            _ => {}
+    let (session, shell_type) = match crate::pty::create_session(Arc::clone(&manager), pane_id.clone(), None) {
+        Ok(x) => x,
+        Err(e) => {
+            error!("{}", e);
+            return;
         }
-    }
-
-    if let Err(e) = pair.slave.spawn_command(cmd) {
-        error!("Failed to spawn shell: {}", e);
-        return;
-    }
-    drop(pair.slave);
-
-    let reader = match pair.master.try_clone_reader() {
-        Ok(r) => r,
-        Err(e) => { error!("clone reader: {}", e); return; }
-    };
-    let writer: Box<dyn Write + Send> = match pair.master.take_writer() {
-        Ok(w) => w,
-        Err(e) => { error!("take writer: {}", e); return; }
     };
 
-    let session = Arc::new(Session {
-        writer: Mutex::new(writer),
-        master: Mutex::new(pair.master),
-        screen: Mutex::new(VirtualScreen::new(80, 24)),
-        clients: Mutex::new(Vec::new()),
-        status: Mutex::new(SessionStatus::Connected),
-        size: Mutex::new((80, 24)),
-        shell_type: shell_type.clone(),
-    });
-    manager.sessions.insert(pane_id.clone(), Arc::clone(&session));
-
-    // Broadcast tab creation to sync clients
-    manager.broadcast_sync(&SyncMsg::TabCreated { pane_id: pane_id.clone() });
-
-    // Add this WS as the first client
     let mut rx = session.add_client();
-
-    // PTY reader — broadcasts to all connected clients
-    let session_clone = Arc::clone(&session);
-    let pane_id_clone = pane_id.clone();
-    let manager_clone = Arc::clone(&manager);
-    tokio::task::spawn_blocking(move || {
-        let mut reader = reader;
-        let mut buf = [0u8; 4096];
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    let data = &buf[..n];
-                    session_clone.screen.lock().unwrap().feed(data);
-                    let s = String::from_utf8_lossy(data).to_string();
-                    session_clone.broadcast(&s);
-                }
-            }
-        }
-        manager_clone.sessions.remove(&pane_id_clone);
-        manager_clone.broadcast_sync(&SyncMsg::TabClosed { pane_id: pane_id_clone.clone() });
-        info!("PTY exited, session removed: pane={}", pane_id_clone);
-    });
 
     // Send shell info
     let shell_info = serde_json::to_string(&ServerMsg::ShellInfo { shell_type: &shell_type }).unwrap();
@@ -327,62 +246,3 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
     }
 }
 
-fn setup_zsh_title_hooks(home: &str) -> Option<std::path::PathBuf> {
-    let zdotdir = std::env::temp_dir().join(format!("xterm_zsh_{}", std::process::id()));
-    std::fs::create_dir_all(&zdotdir).ok()?;
-
-    let zshrc = format!(
-        r#"# xterm title injection — loaded via ZDOTDIR
-ZDOTDIR=  # reset so child shells behave normally
-
-[[ -f "{home}/.zshrc" ]] && source "{home}/.zshrc"
-
-function _xterm_precmd {{
-  printf "\033]0;%s@%s:%s\007" "${{USER}}" "${{HOST%%.*}}" "${{PWD/#$HOME/~}}"
-}}
-
-function _xterm_preexec {{
-  printf "\033]0;%s\007" "$1"
-}}
-
-if [[ -z "${{precmd_functions[(r)_xterm_precmd]}}" ]]; then
-  precmd_functions+=(_xterm_precmd)
-fi
-if [[ -z "${{preexec_functions[(r)_xterm_preexec]}}" ]]; then
-  preexec_functions+=(_xterm_preexec)
-fi
-"#,
-        home = home
-    );
-
-    let zprofile = format!(
-        r#"[[ -f "{home}/.zprofile" ]] && source "{home}/.zprofile"
-"#,
-        home = home
-    );
-
-    std::fs::write(zdotdir.join(".zshrc"), zshrc).ok()?;
-    std::fs::write(zdotdir.join(".zprofile"), zprofile).ok()?;
-    Some(zdotdir)
-}
-
-fn get_shell() -> String {
-    if let Ok(s) = std::env::var("SHELL") {
-        if std::path::Path::new(&s).exists() { return s; }
-    }
-    for s in ["/bin/zsh", "/usr/bin/zsh", "/bin/bash", "/usr/bin/bash", "/bin/sh"] {
-        if std::path::Path::new(s).exists() { return s.to_string(); }
-    }
-    "/bin/sh".to_string()
-}
-
-fn get_shell_type(shell: &str) -> String {
-    if shell.contains("zsh") { "zsh".into() }
-    else if shell.contains("bash") { "bash".into() }
-    else { "sh".into() }
-}
-
-fn get_shell_args(shell: &str) -> Vec<&'static str> {
-    if shell.contains("zsh") || shell.contains("bash") { vec!["-i", "-l"] }
-    else { vec!["-i"] }
-}
