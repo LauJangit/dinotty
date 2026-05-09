@@ -16,6 +16,8 @@ use xterm_server::proxy;
 use xterm_server::session::SessionManager;
 use xterm_server::settings;
 use xterm_server::ws;
+use xterm_server::monitor;
+use xterm_server::file_watcher::{self, FileWatcherState};
 
 #[derive(Embed)]
 #[folder = "../frontend/dist/"]
@@ -25,6 +27,7 @@ struct StaticFiles;
 pub struct AppState {
     pub manager: Arc<SessionManager>,
     pub settings: settings::SettingsState,
+    pub file_watcher: Arc<FileWatcherState>,
 }
 
 impl axum::extract::FromRef<AppState> for Arc<SessionManager> {
@@ -36,6 +39,12 @@ impl axum::extract::FromRef<AppState> for Arc<SessionManager> {
 impl axum::extract::FromRef<AppState> for (Arc<SessionManager>, settings::SettingsState) {
     fn from_ref(state: &AppState) -> Self {
         (state.manager.clone(), state.settings.clone())
+    }
+}
+
+impl axum::extract::FromRef<AppState> for (Arc<SessionManager>, Arc<FileWatcherState>) {
+    fn from_ref(state: &AppState) -> Self {
+        (state.manager.clone(), state.file_watcher.clone())
     }
 }
 
@@ -69,11 +78,14 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
     let state = AppState {
         manager,
         settings: settings::create_settings_state(),
+        file_watcher: Arc::new(FileWatcherState::new()),
     };
 
     let app = Router::new()
         .route("/ws", get(ws::ws_handler))
         .route("/ws/sync", get(ws::sync_handler))
+        .route("/ws/watch", get(file_watcher::watch_handler))
+        .route("/ws/monitor", get(monitor::ws_monitor_handler))
         .route(
             "/api/settings",
             get(settings::get_settings).put(settings::put_settings),
@@ -90,6 +102,7 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
         .route("/api/workspace/create", post(workspace::workspace_create_entry))
         .route("/api/workspace/file", put(workspace::workspace_put_file))
         .route("/api/workspace/delete", delete(workspace::workspace_delete))
+        .route("/api/workspace/rename", post(workspace::workspace_rename))
         .route("/api/proxy", any(proxy::external_proxy_handler))
         .route("/preview/:port", any(proxy::proxy_handler_root))
         .route("/preview/:port/", any(proxy::proxy_handler_root))

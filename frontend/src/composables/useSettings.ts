@@ -19,6 +19,15 @@ export interface SettingsData {
   action_keyboard: ActionKeyboardConfig | null
   locale: string
   port?: number | null
+  monitor: MonitorConfig
+}
+
+export interface MonitorConfig {
+  enabled: boolean
+  cpu: boolean
+  memory: boolean
+  disk: boolean
+  network: boolean
 }
 
 export interface TextConfig {
@@ -92,6 +101,13 @@ export const settings = reactive<SettingsData>({
   bookmarks: [],
   action_keyboard: null,
   locale: 'zh',
+  monitor: {
+    enabled: true,
+    cpu: true,
+    memory: true,
+    disk: true,
+    network: true,
+  },
 })
 
 let loaded = false

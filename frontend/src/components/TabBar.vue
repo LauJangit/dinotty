@@ -7,12 +7,13 @@
         class="tab"
         :class="{ active: tab.paneId === activePaneId }"
         @click="$emit('activate', tab.paneId)"
+        @touchend.prevent="$emit('activate', tab.paneId)"
       >
         <span class="tab-title">{{ tab.title }}</span>
-        <button class="tab-close" @click.stop="$emit('close', tab.paneId)">✕</button>
+        <button class="tab-close" @click.stop="$emit('close', tab.paneId)" @touchend.stop.prevent="$emit('close', tab.paneId)">✕</button>
       </div>
     </div>
-    <button id="tab-new-btn" title="New Tab (⌘T)" @click="$emit('new')">+</button>
+    <button id="tab-new-btn" title="New Tab (⌘T)" @click="$emit('new')" @touchend.prevent="$emit('new')">+</button>
     <slot name="right"></slot>
   </div>
 </template>

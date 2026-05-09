@@ -1,13 +1,13 @@
-use xterm_server::{auth, session, settings, ws, proxy, workspace, file_watcher};
+use xterm_server::{auth, session, settings, ws, proxy, workspace, file_watcher, monitor};
 mod routes;
 
 use axum::{
     body::Body,
-    extract::Path,
+    extract::{Path, State},
     http::{header, Response, StatusCode},
     middleware,
     response::IntoResponse,
-    Router,
+    Json, Router,
     routing::{any, delete, get, post, put},
 };
 use rust_embed::Embed;
@@ -30,6 +30,7 @@ pub struct AppState {
     pub settings: SettingsState,
     pub file_watcher: Arc<FileWatcherState>,
     pub auth_token: Arc<String>,
+    pub port: u16,
 }
 
 // Allow extracting Arc<SessionManager> from AppState for ws handlers
@@ -90,6 +91,16 @@ fn parse_port() -> u16 {
     8999
 }
 
+async fn server_info(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let lan_ip = local_ip_address::local_ip()
+        .map(|ip| ip.to_string())
+        .unwrap_or_else(|_| "127.0.0.1".to_string());
+    Json(serde_json::json!({
+        "lan_ip": lan_ip,
+        "port": state.port,
+    }))
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::registry()
@@ -116,12 +127,14 @@ async fn main() {
         settings: settings::create_settings_state(),
         file_watcher: Arc::new(FileWatcherState::new()),
         auth_token: auth_token.clone(),
+        port,
     };
 
     let app = Router::new()
         .route("/ws", get(ws::ws_handler))
         .route("/ws/sync", get(ws::sync_handler))
         .route("/ws/watch", get(file_watcher::watch_handler))
+        .route("/ws/monitor", get(monitor::ws_monitor_handler))
         .route("/api/settings", get(settings::get_settings).put(settings::put_settings))
         .route("/api/settings/background", post(settings::upload_background).get(settings::get_background))
         .route("/api/workspace/resolve", get(workspace::workspace_resolve))
@@ -134,6 +147,7 @@ async fn main() {
         .route("/api/workspace/delete", delete(workspace::workspace_delete))
         .route("/api/workspace/rename", post(workspace::workspace_rename))
         .route("/api/proxy", any(proxy::external_proxy_handler))
+        .route("/api/info", get(server_info))
         .route("/preview/:port", any(proxy::proxy_handler_root))
         .route("/preview/:port/", any(proxy::proxy_handler_root))
         .route("/preview/:port/*path", any(proxy::proxy_handler_wildcard))

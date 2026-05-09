@@ -13,7 +13,7 @@
           class="settings-tab"
           :class="{ active: activeTab === tab.id }"
           @click="activeTab = tab.id"
-        ><span class="settings-tab-icon" v-html="tab.icon"></span>{{ tab.label }}</button>
+        ><span class="settings-tab-icon" v-html="tab.icon"></span><span class="settings-tab-label">{{ tab.label }}</span></button>
       </div>
 
       <div class="settings-body">
@@ -21,45 +21,46 @@
         <ThemeTab v-show="activeTab === 'theme'" />
         <TextTab v-show="activeTab === 'text'" />
         <KeyboardTab v-show="activeTab === 'keyboard'" />
+        <MonitorTab v-show="activeTab === 'monitor'" />
       </div>
 
-      <div class="settings-footer">
-        <button class="settings-save" @click="save">{{ t('settings.save') }}</button>
-      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useSettings, notifyTextChange } from '../composables/useSettings'
 import { useI18n } from '../composables/useI18n'
 import GeneralTab from './settings/GeneralTab.vue'
 import ThemeTab from './settings/ThemeTab.vue'
 import TextTab from './settings/TextTab.vue'
 import KeyboardTab from './settings/KeyboardTab.vue'
+import MonitorTab from './settings/MonitorTab.vue'
 
 defineProps<{ open: boolean }>()
-const emit = defineEmits<{ close: [] }>()
+defineEmits<{ close: [] }>()
 
 const { settings, saveSettings, applyCurrentTheme } = useSettings()
 const { t } = useI18n()
 
-const activeTab = ref<'general' | 'theme' | 'text' | 'keyboard'>('general')
+const activeTab = ref<'general' | 'theme' | 'text' | 'keyboard' | 'monitor'>('general')
 
-const tabs = computed(() => [
-  { id: 'general' as const, label: t('settings.tab.general'), icon: '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M8 1a2 2 0 0 1 2 2v2h3a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h3V3a2 2 0 0 1 2-2zm0 1.5A.5.5 0 0 0 7.5 3v2h1V3A.5.5 0 0 0 8 2.5z"/></svg>' },
-  { id: 'theme' as const, label: t('settings.tab.theme'), icon: '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 12.5a5.5 5.5 0 1 1 0-11 5.5 5.5 0 0 1 0 11z"/><path d="M8 3v5h4.5a3.5 3.5 0 0 0-4.5-5z"/></svg>' },
-  { id: 'text' as const, label: t('settings.tab.text'), icon: '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M2 2h12v2H9v10h-2V4H2V2z"/></svg>' },
-  { id: 'keyboard' as const, label: t('settings.tab.keyboard'), icon: '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M1 3h14v10H1V3zm1 1v8h12V4H2zm2 2h1v1H4V6zm3 0h1v1H7V6zm3 0h1v1h-1V6zm3 0h1v1h-1V6zM4 8h1v1H4V8zm3 0h1v1H7V8zm3 0h1v1h-1V8zm3 0h1v1h-1V8zM5 10h6v1H5v-1z"/></svg>' },
-])
-
-async function save() {
+let saveTimer: ReturnType<typeof setTimeout> | null = null
+watch(settings, () => {
   applyCurrentTheme()
   notifyTextChange()
-  await saveSettings()
-  emit('close')
-}
+  if (saveTimer) clearTimeout(saveTimer)
+  saveTimer = setTimeout(() => saveSettings(), 500)
+}, { deep: true })
+
+const tabs = computed(() => [
+  { id: 'general' as const, label: t('settings.tab.general'), icon: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>' },
+  { id: 'theme' as const, label: t('settings.tab.theme'), icon: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="19" cy="13" r="2.5"/><circle cx="16" cy="20" r="2.5"/><circle cx="7" cy="20" r="2.5"/><circle cx="4" cy="13" r="2.5"/><circle cx="12" cy="12" r="8"/></svg>' },
+  { id: 'text' as const, label: t('settings.tab.text'), icon: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>' },
+  { id: 'keyboard' as const, label: t('settings.tab.keyboard'), icon: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2" ry="2"/><line x1="6" y1="8" x2="6" y2="8"/><line x1="10" y1="8" x2="10" y2="8"/><line x1="14" y1="8" x2="14" y2="8"/><line x1="18" y1="8" x2="18" y2="8"/><line x1="6" y1="12" x2="6" y2="12"/><line x1="10" y1="12" x2="10" y2="12"/><line x1="14" y1="12" x2="14" y2="12"/><line x1="18" y1="12" x2="18" y2="12"/><line x1="8" y1="16" x2="16" y2="16"/></svg>' },
+  { id: 'monitor' as const, label: t('settings.tab.monitor'), icon: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>' },
+])
 </script>
 
 <style>
@@ -130,7 +131,7 @@ async function save() {
   padding: 0 20px;
 }
 .settings-tab {
-  padding: 10px 16px;
+  padding: 12px 16px 10px;
   font-size: 13px;
   font-weight: 500;
   color: var(--fg-muted, #666);
@@ -138,14 +139,20 @@ async function save() {
   transition: color 0.15s, border-color 0.15s;
   white-space: nowrap;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 .settings-tab-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  opacity: 0.7;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+.settings-tab-label {
+  font-size: 10px;
+  letter-spacing: 0.3px;
 }
 .settings-tab:hover .settings-tab-icon,
 .settings-tab.active .settings-tab-icon {
@@ -853,8 +860,7 @@ async function save() {
 }
 
 .settings-footer {
-  padding: 12px 20px;
-  border-top: 1px solid var(--border, #333);
+  display: none;
 }
 .settings-save {
   width: 100%;

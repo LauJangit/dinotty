@@ -30,6 +30,28 @@ pub struct Settings {
     pub action_keyboard: Option<ActionKeyboardConfig>,
     #[serde(default = "default_locale")]
     pub locale: String,
+    #[serde(default)]
+    pub monitor: MonitorConfig,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MonitorConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub cpu: bool,
+    #[serde(default = "default_true")]
+    pub memory: bool,
+    #[serde(default = "default_true")]
+    pub disk: bool,
+    #[serde(default = "default_true")]
+    pub network: bool,
+}
+
+impl Default for MonitorConfig {
+    fn default() -> Self {
+        Self { enabled: true, cpu: true, memory: true, disk: true, network: true }
+    }
 }
 
 fn default_locale() -> String {
@@ -158,6 +180,7 @@ impl Default for Settings {
             bookmarks: vec![],
             action_keyboard: None,
             locale: default_locale(),
+            monitor: MonitorConfig::default(),
         }
     }
 }

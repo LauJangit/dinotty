@@ -7,3 +7,4 @@ pub mod ws;
 pub mod proxy;
 pub mod workspace;
 pub mod file_watcher;
+pub mod monitor;
