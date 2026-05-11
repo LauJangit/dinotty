@@ -111,6 +111,17 @@
         </div>
       </div>
     </section>
+
+    <section class="settings-section">
+      <h3>{{ t('settings.keyboard.feedback') }}</h3>
+      <div class="settings-row">
+        <label>{{ t('settings.keyboard.sound') }}</label>
+        <label class="toggle">
+          <input type="checkbox" v-model="settings.keyboard_sound" />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
+    </section>
   </div>
 </template>
 

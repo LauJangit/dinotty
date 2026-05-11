@@ -13,8 +13,29 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import type { KeyDef, ModState } from './mkbTypes'
+import { settings } from '../composables/useSettings'
+
+let audioCtx: AudioContext | null = null
+
+function playClick() {
+  if (!audioCtx) audioCtx = new AudioContext()
+  if (audioCtx.state === 'suspended') audioCtx.resume()
+  const osc = audioCtx.createOscillator()
+  const gain = audioCtx.createGain()
+  osc.type = 'sine'
+  osc.frequency.value = 1800
+  gain.gain.setValueAtTime(0.08, audioCtx.currentTime)
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.008)
+  osc.connect(gain).connect(audioCtx.destination)
+  osc.start()
+  osc.stop(audioCtx.currentTime + 0.01)
+}
+
+function feedback() {
+  if (settings.keyboard_sound) playClick()
+}
 
 const props = defineProps<{
   k: KeyDef
@@ -52,11 +73,13 @@ function fire() {
   emit('key-press', ch)
 }
 
+function fireWithFeedback() { feedback(); fire() }
+
 function onDown() {
-  fire()
+  fireWithFeedback()
   if (props.k.repeat) {
     repeatTimer = setTimeout(() => {
-      repeatInterval = setInterval(fire, 80)
+      repeatInterval = setInterval(fireWithFeedback, 80)
     }, 400)
   }
 }

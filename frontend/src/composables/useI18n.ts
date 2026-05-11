@@ -113,6 +113,8 @@ const messages: Record<Locale, Record<string, string>> = {
     'settings.monitor.netChart': 'Network Rate',
     'settings.monitor.diskLabel': 'Disk',
     'settings.tab.monitor': 'Monitor',
+    'settings.keyboard.feedback': 'Key Feedback',
+    'settings.keyboard.sound': 'Click sound on key press',
   },
   zh: {
     'app.settings': '设置',
@@ -223,6 +225,8 @@ const messages: Record<Locale, Record<string, string>> = {
     'settings.monitor.netChart': '网络速率',
     'settings.monitor.diskLabel': '磁盘',
     'settings.tab.monitor': '监控',
+    'settings.keyboard.feedback': '按键反馈',
+    'settings.keyboard.sound': '按键音效',
   },
 }
 

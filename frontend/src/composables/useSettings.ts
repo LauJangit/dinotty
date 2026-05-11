@@ -17,6 +17,7 @@ export interface SettingsData {
   text: TextConfig
   bookmarks: CommandBookmark[]
   action_keyboard: ActionKeyboardConfig | null
+  keyboard_sound: boolean
   locale: string
   port?: number | null
   monitor: MonitorConfig
@@ -99,6 +100,7 @@ export const settings = reactive<SettingsData>({
   },
   bookmarks: [],
   action_keyboard: null,
+  keyboard_sound: false,
   locale: 'zh',
   monitor: {
     enabled: true,
