@@ -65,23 +65,23 @@ export interface ActionKeyboardConfig {
 export const DEFAULT_ACTION_KEYBOARD: ActionKeyboardConfig = {
   rows: [
     [
-      { label: 'cc', send: 'claude' },
-      { label: 'oc', send: 'opencode' },
+      { label: 'cc', send: 'claude', auto_enter: true },
+      { label: 'oc', send: 'opencode', auto_enter: true },
     ],
     [
-      { label: 'esc', send: '\x1b' },
-      { label: 'ctrl+c', send: '\x03', style: 'danger' },
-      { label: 'clear', send: 'clear' },
-      { label: '⌫', send: '\x7f', repeat: true },
+      { label: 'esc', send: '\x1b', style: 'danger', auto_enter: true },
+      { label: 'ctrl+c', send: '\x03', style: 'danger', auto_enter: true },
+      { label: 'clear', send: 'clear', auto_enter: true },
+      { label: '⌫', send: '', repeat: true, grow: 1.5 },
     ],
     [
-      { label: 'PlanMode', send: '\x1b[Z' },
-      { label: '/', send: '/' },
-      { label: 'tab', send: '\t' },
-      { label: '1', send: '1' },
-      { label: '2', send: '2' },
-      { label: '3', send: '3' },
-      { label: '4', send: '4' },
+      { label: 'PlanMode', send: '\x1b[Z', auto_enter: true, grow: 1.75 },
+      { label: '/', send: '/', grow: 1.5 },
+      { label: 'tab', send: '\t', grow: 1.5 },
+      { label: '1', send: '1', auto_enter: true },
+      { label: '2', send: '2', auto_enter: true },
+      { label: '3', send: '3', auto_enter: true },
+      { label: '4', send: '4', auto_enter: true },
     ],
   ],
 }
