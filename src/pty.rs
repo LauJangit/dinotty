@@ -94,16 +94,17 @@ pub fn create_session(
                 Ok(n) => {
                     let data = &buf[..n];
                     session_clone.screen.lock().unwrap().feed(data);
-                    session_clone.on_pty_output(data);
                     let s = String::from_utf8_lossy(data).to_string();
                     session_clone.broadcast(&s);
+                    session_clone.on_pty_output(data);
                 }
             }
         }
-        manager_clone.sessions.remove(&pane_id_clone);
-        manager_clone.broadcast_sync(&SyncMsg::TabClosed {
-            pane_id: pane_id_clone.clone(),
-        });
+        if manager_clone.sessions.remove(&pane_id_clone).is_some() {
+            manager_clone.broadcast_sync(&SyncMsg::TabClosed {
+                pane_id: pane_id_clone.clone(),
+            });
+        }
         info!("PTY exited, session removed: pane={}", pane_id_clone);
         let cb = session_clone.tauri_on_exit.lock().unwrap().clone();
         if let Some(f) = cb {

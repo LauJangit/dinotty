@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use unicode_width::UnicodeWidthChar;
 use vte::{Params, Perform};
 
 #[derive(Clone, Copy, Default)]
@@ -19,15 +20,36 @@ pub enum Color {
     Rgb(u8, u8, u8),
 }
 
+const MAX_COMBINING: usize = 3;
+
 #[derive(Clone, Copy)]
 struct Cell {
     ch: char,
+    combining: [char; MAX_COMBINING],
+    combining_len: u8,
     attrs: CellAttrs,
 }
 
 impl Default for Cell {
     fn default() -> Self {
-        Self { ch: ' ', attrs: CellAttrs::default() }
+        Self { ch: ' ', combining: ['\0'; MAX_COMBINING], combining_len: 0, attrs: CellAttrs::default() }
+    }
+}
+
+impl Cell {
+    fn push_combining(&mut self, c: char) {
+        let len = self.combining_len as usize;
+        if len < MAX_COMBINING {
+            self.combining[len] = c;
+            self.combining_len += 1;
+        }
+    }
+
+    fn write_to(&self, out: &mut String) {
+        out.push(self.ch);
+        for i in 0..self.combining_len as usize {
+            out.push(self.combining[i]);
+        }
     }
 }
 
@@ -177,14 +199,15 @@ impl VirtualScreen {
 
         for row in &self.scrollback {
             let mut prev_attrs = CellAttrs::default();
-            let last_content = row.iter().rposition(|c| c.ch != ' ' || has_attrs(&c.attrs))
+            let last_content = row.iter().rposition(|c| (c.ch != ' ' && c.ch != '\0') || has_attrs(&c.attrs))
                 .map(|i| i + 1).unwrap_or(0);
             for cell in &row[..last_content] {
+                if cell.ch == '\0' { continue; }
                 if !attrs_eq(&cell.attrs, &prev_attrs) {
                     current.push_str(&encode_sgr(&cell.attrs));
                     prev_attrs = cell.attrs;
                 }
-                current.push(cell.ch);
+                cell.write_to(&mut current);
             }
             if has_attrs(&prev_attrs) {
                 current.push_str("\x1b[0m");
@@ -207,41 +230,47 @@ impl VirtualScreen {
         let buf = if self.using_alternate { &self.alternate } else { &self.primary };
         let mut out = String::with_capacity(self.cols * self.rows * 4);
 
-        // Reset terminal state
-        out.push_str("\x1b[!p"); // soft reset
         out.push_str("\x1b[?25l"); // hide cursor during draw
+        out.push_str("\x1b[0m");  // reset all attributes
 
         if self.using_alternate {
             out.push_str("\x1b[?1049h"); // enter alternate screen
         }
 
         // Render each row
+        let mut prev_attrs = CellAttrs::default();
         for (row_idx, row) in buf.cells.iter().enumerate() {
             out.push_str(&format!("\x1b[{};1H\x1b[2K", row_idx + 1)); // move to row start + erase line
-            let mut prev_attrs = CellAttrs::default();
 
             // Find last non-space column to avoid trailing spaces
-            let last_content = row.iter().rposition(|c| c.ch != ' ' || has_attrs(&c.attrs))
+            let last_content = row.iter().rposition(|c| (c.ch != ' ' && c.ch != '\0') || has_attrs(&c.attrs))
                 .map(|i| i + 1).unwrap_or(0);
 
             for cell in &row[..last_content] {
+                if cell.ch == '\0' { continue; }
                 if !attrs_eq(&cell.attrs, &prev_attrs) {
                     out.push_str(&encode_sgr(&cell.attrs));
                     prev_attrs = cell.attrs;
                 }
-                out.push(cell.ch);
+                cell.write_to(&mut out);
             }
 
             // Reset attrs at end of row
             if has_attrs(&prev_attrs) {
                 out.push_str("\x1b[0m");
+                prev_attrs = CellAttrs::default();
             }
+        }
+
+        out.push_str("\x1b[0m");
+
+        // Restore scroll region if non-default
+        if buf.scroll_top != 0 || buf.scroll_bottom != buf.rows - 1 {
+            out.push_str(&format!("\x1b[{};{}r", buf.scroll_top + 1, buf.scroll_bottom + 1));
         }
 
         // Restore cursor position
         out.push_str(&format!("\x1b[{};{}H", buf.cursor.row + 1, buf.cursor.col + 1));
-        // Restore cursor attrs
-        out.push_str(&encode_sgr(&buf.cursor.attrs));
         out.push_str("\x1b[?25h"); // show cursor
 
         out
@@ -302,7 +331,28 @@ struct ScreenPerformer<'a> {
 
 impl<'a> Perform for ScreenPerformer<'a> {
     fn print(&mut self, c: char) {
+        let width = UnicodeWidthChar::width(c).unwrap_or(0);
+        if width == 0 {
+            // Append combining character to the previous cell
+            let row = self.screen.cursor.row;
+            let col = self.screen.cursor.col;
+            if row < self.screen.rows && col > 0 {
+                let prev = &mut self.screen.cells[row][col - 1];
+                if prev.ch != ' ' && prev.ch != '\0' {
+                    prev.push_combining(c);
+                }
+            }
+            return;
+        }
         if self.screen.cursor.col >= self.screen.cols {
+            self.screen.cursor.col = 0;
+            self.screen.cursor.row += 1;
+            if self.screen.cursor.row > self.screen.scroll_bottom {
+                self.screen.cursor.row = self.screen.scroll_bottom;
+                self.screen.scroll_up(self.scrollback);
+            }
+        }
+        if width == 2 && self.screen.cursor.col + 1 >= self.screen.cols {
             self.screen.cursor.col = 0;
             self.screen.cursor.row += 1;
             if self.screen.cursor.row > self.screen.scroll_bottom {
@@ -313,9 +363,24 @@ impl<'a> Perform for ScreenPerformer<'a> {
         let row = self.screen.cursor.row;
         let col = self.screen.cursor.col;
         if row < self.screen.rows && col < self.screen.cols {
-            self.screen.cells[row][col] = Cell { ch: c, attrs: self.screen.cursor.attrs };
+            // Clear orphaned half of a wide char we're about to overwrite
+            let old = self.screen.cells[row][col].ch;
+            if old == '\0' && col > 0 {
+                self.screen.cells[row][col - 1] = Cell::default();
+            }
+            if old != '\0' && old != ' ' {
+                if let Some(2) = UnicodeWidthChar::width(old) {
+                    if col + 1 < self.screen.cols {
+                        self.screen.cells[row][col + 1] = Cell::default();
+                    }
+                }
+            }
+            self.screen.cells[row][col] = Cell { ch: c, combining: ['\0'; MAX_COMBINING], combining_len: 0, attrs: self.screen.cursor.attrs };
+            if width == 2 && col + 1 < self.screen.cols {
+                self.screen.cells[row][col + 1] = Cell { ch: '\0', combining: ['\0'; MAX_COMBINING], combining_len: 0, attrs: self.screen.cursor.attrs };
+            }
         }
-        self.screen.cursor.col += 1;
+        self.screen.cursor.col += width;
     }
 
     fn execute(&mut self, byte: u8) {
@@ -512,7 +577,7 @@ impl<'a> Perform for ScreenPerformer<'a> {
                 }
             }
             'm' => { // SGR - select graphic rendition
-                self.apply_sgr(&ps);
+                self.apply_sgr(params);
             }
             _ => {}
         }
@@ -541,19 +606,36 @@ impl<'a> Perform for ScreenPerformer<'a> {
 }
 
 impl<'a> ScreenPerformer<'a> {
-    fn apply_sgr(&mut self, params: &[u16]) {
+    fn apply_sgr(&mut self, params: &Params) {
         if params.is_empty() {
             self.screen.cursor.attrs = CellAttrs::default();
             return;
         }
+        // Build a list of (value, has_subparam) pairs to distinguish 4 from 4:N
+        // Each sub-slice from Params represents colon-separated sub-parameters.
+        // E.g. "4:3" yields one sub-slice [4, 3], while "4;3" yields two sub-slices [4] and [3].
+        let mut sgr_items: Vec<(u16, Option<u16>)> = Vec::new();
+        for sub in params.iter() {
+            if sub.is_empty() { continue; }
+            // First element is the SGR code; second (if present) is a colon sub-parameter
+            sgr_items.push((sub[0], sub.get(1).copied()));
+        }
+
         let mut i = 0;
-        while i < params.len() {
-            match params[i] {
+        while i < sgr_items.len() {
+            let (code, sub) = sgr_items[i];
+            match code {
                 0 => self.screen.cursor.attrs = CellAttrs::default(),
                 1 => self.screen.cursor.attrs.bold = true,
                 2 => self.screen.cursor.attrs.dim = true,
                 3 => self.screen.cursor.attrs.italic = true,
-                4 => self.screen.cursor.attrs.underline = true,
+                4 => {
+                    // 4 = underline on; 4:0 = off, 4:1..4:5 = various styles (all "on" for us)
+                    match sub {
+                        Some(0) => self.screen.cursor.attrs.underline = false,
+                        _ => self.screen.cursor.attrs.underline = true,
+                    }
+                }
                 7 => self.screen.cursor.attrs.inverse = true,
                 9 => self.screen.cursor.attrs.strikethrough = true,
                 21 | 22 => { self.screen.cursor.attrs.bold = false; self.screen.cursor.attrs.dim = false; }
@@ -561,15 +643,15 @@ impl<'a> ScreenPerformer<'a> {
                 24 => self.screen.cursor.attrs.underline = false,
                 27 => self.screen.cursor.attrs.inverse = false,
                 29 => self.screen.cursor.attrs.strikethrough = false,
-                30..=37 => self.screen.cursor.attrs.fg = Some(Color::Indexed((params[i] - 30) as u8)),
+                30..=37 => self.screen.cursor.attrs.fg = Some(Color::Indexed((code - 30) as u8)),
                 38 => {
                     i += 1;
-                    if i < params.len() {
-                        match params[i] {
-                            5 => { i += 1; if i < params.len() { self.screen.cursor.attrs.fg = Some(Color::Indexed(params[i] as u8)); } }
+                    if i < sgr_items.len() {
+                        match sgr_items[i].0 {
+                            5 => { i += 1; if i < sgr_items.len() { self.screen.cursor.attrs.fg = Some(Color::Indexed(sgr_items[i].0 as u8)); } }
                             2 => {
-                                if i + 3 < params.len() {
-                                    self.screen.cursor.attrs.fg = Some(Color::Rgb(params[i+1] as u8, params[i+2] as u8, params[i+3] as u8));
+                                if i + 3 < sgr_items.len() {
+                                    self.screen.cursor.attrs.fg = Some(Color::Rgb(sgr_items[i+1].0 as u8, sgr_items[i+2].0 as u8, sgr_items[i+3].0 as u8));
                                     i += 3;
                                 }
                             }
@@ -578,15 +660,15 @@ impl<'a> ScreenPerformer<'a> {
                     }
                 }
                 39 => self.screen.cursor.attrs.fg = None,
-                40..=47 => self.screen.cursor.attrs.bg = Some(Color::Indexed((params[i] - 40) as u8)),
+                40..=47 => self.screen.cursor.attrs.bg = Some(Color::Indexed((code - 40) as u8)),
                 48 => {
                     i += 1;
-                    if i < params.len() {
-                        match params[i] {
-                            5 => { i += 1; if i < params.len() { self.screen.cursor.attrs.bg = Some(Color::Indexed(params[i] as u8)); } }
+                    if i < sgr_items.len() {
+                        match sgr_items[i].0 {
+                            5 => { i += 1; if i < sgr_items.len() { self.screen.cursor.attrs.bg = Some(Color::Indexed(sgr_items[i].0 as u8)); } }
                             2 => {
-                                if i + 3 < params.len() {
-                                    self.screen.cursor.attrs.bg = Some(Color::Rgb(params[i+1] as u8, params[i+2] as u8, params[i+3] as u8));
+                                if i + 3 < sgr_items.len() {
+                                    self.screen.cursor.attrs.bg = Some(Color::Rgb(sgr_items[i+1].0 as u8, sgr_items[i+2].0 as u8, sgr_items[i+3].0 as u8));
                                     i += 3;
                                 }
                             }
@@ -595,8 +677,8 @@ impl<'a> ScreenPerformer<'a> {
                     }
                 }
                 49 => self.screen.cursor.attrs.bg = None,
-                90..=97 => self.screen.cursor.attrs.fg = Some(Color::Indexed((params[i] - 90 + 8) as u8)),
-                100..=107 => self.screen.cursor.attrs.bg = Some(Color::Indexed((params[i] - 100 + 8) as u8)),
+                90..=97 => self.screen.cursor.attrs.fg = Some(Color::Indexed((code - 90 + 8) as u8)),
+                100..=107 => self.screen.cursor.attrs.bg = Some(Color::Indexed((code - 100 + 8) as u8)),
                 _ => {}
             }
             i += 1;

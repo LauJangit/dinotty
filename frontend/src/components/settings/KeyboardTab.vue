@@ -117,7 +117,7 @@
       <div class="settings-row">
         <label>{{ t('settings.keyboard.sound') }}</label>
         <label class="toggle">
-          <input type="checkbox" v-model="settings.keyboard_sound" />
+          <input type="checkbox" v-model="settings.keyboard_sound" @change="saveSettings()" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
@@ -132,7 +132,7 @@ import { useI18n } from '../../composables/useI18n'
 import type { ActionKey } from '../../composables/useSettings'
 import { actionKeyToKeyDef } from '../../utils/actionKeyDef'
 
-const { settings } = useSettings()
+const { settings, saveSettings } = useSettings()
 const { t } = useI18n()
 
 const actionRows = computed(() => {

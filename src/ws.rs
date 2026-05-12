@@ -92,6 +92,7 @@ async fn handle_sync_socket(socket: WebSocket, manager: Arc<SessionManager>) {
                             manager.broadcast_sync(&SyncMsg::TabCreated { pane_id });
                         }
                         SyncClientMsg::CloseTab { pane_id } => {
+                            manager.sessions.remove(&pane_id);
                             manager.broadcast_sync(&SyncMsg::TabClosed { pane_id });
                         }
                     }
@@ -115,25 +116,24 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
 
         *session.status.lock().unwrap() = SessionStatus::Connected;
 
+        // Snapshot screen state and register for broadcast atomically
+        // (holding the screen lock prevents PTY output from being both in the
+        // snapshot AND queued to the broadcast channel)
+        let (cols, rows, snapshot, mut rx) = {
+            let screen = session.screen.lock().unwrap();
+            let (cols, rows) = *session.size.lock().unwrap();
+            let snap = screen.snapshot();
+            let rx = session.add_client();
+            (cols, rows, snap, rx)
+        };
+
         // Send reconnected message
-        let (cols, rows) = *session.size.lock().unwrap();
         let msg = serde_json::to_string(&ServerMsg::Reconnected { cols, rows }).unwrap();
         if ws_tx.send(Message::Text(msg.into())).await.is_err() { return; }
 
-        // Send scrollback history in chunks, then visible screen
-        let (scrollback_chunks, snapshot) = {
-            let screen = session.screen.lock().unwrap();
-            (screen.snapshot_scrollback_chunks(200), screen.snapshot())
-        };
-        for chunk in &scrollback_chunks {
-            let msg = serde_json::to_string(&ServerMsg::Output { data: chunk }).unwrap();
-            if ws_tx.send(Message::Text(msg.into())).await.is_err() { return; }
-        }
+        // Send visible screen snapshot only (no scrollback replay)
         let msg = serde_json::to_string(&ServerMsg::Output { data: &snapshot }).unwrap();
         if ws_tx.send(Message::Text(msg.into())).await.is_err() { return; }
-
-        // Add this client to the broadcast list
-        let mut rx = session.add_client();
 
         let fwd = tokio::spawn(async move {
             while let Some(data) = rx.recv().await {

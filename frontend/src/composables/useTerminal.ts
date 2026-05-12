@@ -289,6 +289,9 @@ export class TerminalInstance {
         this._suppressTitleChange = true
         this.xterm!.reset()
         this._suppressTitleChange = false
+        this._lastCols = 0
+        this._lastRows = 0
+        this._refit()
       }
     })
 
@@ -325,6 +328,9 @@ export class TerminalInstance {
         this._suppressTitleChange = false
         this._reconnectAttempts = 0
         this._hideOverlay()
+        this._lastCols = 0
+        this._lastRows = 0
+        this._refit()
       } else if (msg.type === 'output') {
         this.xterm!.write(msg.data)
       } else if (msg.type === 'shell_info') {
