@@ -26,9 +26,8 @@
   min-width: 0;
 }
 
-/* Stagger set by JS via _applyStagger() */
-.mkb-stagger-asdf .mkb-row,
-.mkb-stagger-zxcv .mkb-row { padding-left: 0; }
+/* Row stagger: offsets relative to row 1 (no stagger) */
+.mkb-stagger-asdf .mkb-row { padding-left: 0; }
 
 /* ── Right nav column (68-key style) ─────────────────────── */
 
@@ -108,13 +107,30 @@
   pointer-events: none;
 }
 
-/* ── ZXCV + Bottom shared layout ────────────────────────── */
-.mkb-zxcv-bottom {
+/* ── Bottom row: modifiers + arrow cluster ─────────────── */
+.mkb-bottom-row {
   display: flex;
   gap: 4px;
   width: 100%;
 }
-.mkb-zxcv-left {
+.mkb-bottom-left {
+  flex: 1;
+  min-width: 0;
+}
+.mkb-bottom-left .mkb-row {
+  height: 100%;
+}
+.mkb-bottom-left .mkb-btn {
+  height: 100%;
+}
+
+/* ── Rows 4+5 wrapper with arrow cluster ─────────────────── */
+.mkb-rows-45 {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+}
+.mkb-rows-45-main {
   flex: 1;
   min-width: 0;
   display: flex;
@@ -122,34 +138,41 @@
   gap: 4px;
 }
 
-/* ── Arrow cluster ───────────────────────────────────────── */
+/* ── Arrow cluster (inverted-T: ↑ above ←↓→) ────────────── */
 .mkb-arrow-cluster {
-  flex-shrink: 0;
+  flex: 0 0 calc((100% - 4px) * 3 / 14);
   display: flex;
   flex-direction: column;
   gap: 4px;
+  align-items: center;
+  justify-content: flex-end;
+}
+.mkb-arrow-cluster > .mkb-btn {
+  width: calc((100% - 8px) / 3);
+}
+.mkb-arrow-cluster-bot {
+  display: flex;
+  gap: 4px;
+  width: 100%;
 }
 .mkb-arrow-row {
   display: flex;
   gap: 4px;
 }
 
-/* All arrow/nav keys: identical fixed size */
+/* All arrow/nav keys: responsive size */
 .mkb-arrow {
-  flex-grow: 0 !important;
-  flex-shrink: 0 !important;
-  flex-basis: auto !important;
+  flex: 1 1 0;
   font-size: 15px;
-  width: 44px;
   height: 44px;
-  min-width: 44px;
-  min-height: 44px;
+  min-width: 0;
+  min-height: 38px;
   box-sizing: border-box;
 }
 
 /* top arrow row: ↑ aligned above ↓ */
 .mkb-arrow-top {
-  padding-left: 48px;
+  padding-left: calc(33.333% + 2px);
 }
 
 :root { --mkb-height: 0px; }
@@ -301,4 +324,29 @@
 .mkb-collapse-btn:active {
   background: #0a84ff;
   color: #fff;
+}
+
+/* ── Phone portrait optimizations ────────────────────────── */
+@media (max-width: 480px) {
+  #mobile-kb {
+    padding: 3px 2px env(safe-area-inset-bottom, 0px);
+    gap: 3px;
+  }
+  .mkb-row-wrap { gap: 3px; }
+  .mkb-row { gap: 3px; }
+  .mkb-rows-45 { gap: 3px; }
+  .mkb-rows-45-main { gap: 3px; }
+  .mkb-arrow-cluster { gap: 3px; }
+  .mkb-arrow-cluster-bot { gap: 3px; }
+
+  .mkb-btn {
+    height: 38px;
+    font-size: 14px;
+    border-radius: 5px;
+    padding: 0 1px;
+  }
+  .mkb-mod { font-size: 11px; }
+  .mkb-arrow { height: 38px; min-height: 34px; }
+  .mkb-arrow-cluster { flex-basis: calc((100% - 3px) * 3 / 14); }
+  .mkb-arrow-cluster > .mkb-btn { width: calc((100% - 6px) / 3); }
 }

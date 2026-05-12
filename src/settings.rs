@@ -28,6 +28,8 @@ pub struct Settings {
     pub bookmarks: Vec<CommandBookmark>,
     #[serde(default)]
     pub action_keyboard: Option<ActionKeyboardConfig>,
+    #[serde(default)]
+    pub keyboard_sound: bool,
     #[serde(default = "default_locale")]
     pub locale: String,
     #[serde(default)]
@@ -179,6 +181,7 @@ impl Default for Settings {
             text: TextConfig::default(),
             bookmarks: vec![],
             action_keyboard: None,
+            keyboard_sound: false,
             locale: default_locale(),
             monitor: MonitorConfig::default(),
         }

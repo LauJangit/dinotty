@@ -289,9 +289,7 @@ export class TerminalInstance {
         this._suppressTitleChange = true
         this.xterm!.reset()
         this._suppressTitleChange = false
-        this._lastCols = 0
-        this._lastRows = 0
-        this._refit()
+        this._doFitAndResize(true)
       }
     })
 
@@ -328,9 +326,7 @@ export class TerminalInstance {
         this._suppressTitleChange = false
         this._reconnectAttempts = 0
         this._hideOverlay()
-        this._lastCols = 0
-        this._lastRows = 0
-        this._refit()
+        this._doFitAndResize(true)
       } else if (msg.type === 'output') {
         this.xterm!.write(msg.data)
       } else if (msg.type === 'shell_info') {
@@ -403,21 +399,23 @@ export class TerminalInstance {
   _refit() {
     if (!this.fitAddon || !this._wrapper) return
     if (this._refitTimer) clearTimeout(this._refitTimer)
-    this._refitTimer = setTimeout(() => {
-      if (!this.fitAddon || !this.xterm) return
-      this.fitAddon.fit()
-      const cols = this.xterm.cols
-      const rows = this.xterm.rows
-      if (cols === this._lastCols && rows === this._lastRows) return
-      this._lastCols = cols
-      this._lastRows = rows
-      const resizeMsg: ClientMsg = { type: 'resize', cols, rows }
-      if (this._transport) {
-        this._transport.send(resizeMsg)
-      } else if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify(resizeMsg))
-      }
-    }, 100)
+    this._refitTimer = setTimeout(() => this._doFitAndResize(), 100)
+  }
+
+  private _doFitAndResize(force = false) {
+    if (!this.fitAddon || !this.xterm) return
+    this.fitAddon.fit()
+    const cols = this.xterm.cols
+    const rows = this.xterm.rows
+    if (!force && cols === this._lastCols && rows === this._lastRows) return
+    this._lastCols = cols
+    this._lastRows = rows
+    const resizeMsg: ClientMsg = { type: 'resize', cols, rows }
+    if (this._transport) {
+      this._transport.send(resizeMsg)
+    } else if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(resizeMsg))
+    }
   }
 
   private _setupDragDrop(wrapper: HTMLElement) {
