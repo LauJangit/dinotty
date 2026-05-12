@@ -17,18 +17,18 @@
       <MkbRow :keys="row2" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
       <!-- Row 3: ⌨ a-l ; ' ↵ (stagger) -->
       <MkbRow :keys="row3" :state="modState" @key-press="onKeyPress" @special="onSpecial" stagger="asdf" />
-      <!-- Row 4+5: ZXCV + bottom + arrows -->
-      <div class="mkb-zxcv-bottom mkb-stagger-zxcv">
-        <div class="mkb-zxcv-left">
-          <MkbRow :keys="row4zxcv" :state="modState" @key-press="onKeyPress" @special="onSpecial" row-class="mkb-row-zxcv" />
+      <!-- Rows 4-5 with arrow cluster -->
+      <div class="mkb-rows-45">
+        <div class="mkb-rows-45-main">
+          <MkbRow :keys="row4zxcv" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
           <MkbRow :keys="row5bottom" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
         </div>
         <div class="mkb-arrow-cluster">
-          <div class="mkb-arrow-row mkb-arrow-top">
-            <MkbKey :k="arrowUp" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
-          </div>
-          <div class="mkb-arrow-row">
-            <MkbKey v-for="k in arrowBottomKeys" :key="k.l" :k="k" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
+          <MkbKey :k="arrowUp" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
+          <div class="mkb-arrow-cluster-bot">
+            <MkbKey :k="arrowLeft" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
+            <MkbKey :k="arrowDown" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
+            <MkbKey :k="arrowRight" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
           </div>
         </div>
       </div>
@@ -114,25 +114,23 @@ const row3: KeyDef[] = [
 ]
 
 const row4zxcv: KeyDef[] = [
-  { l:'⇧', sp:'shift', g:2.5, cls:'mkb-mod', id:'mkb-shift' },
+  { l:'⇧', sp:'shift', g:2.2, cls:'mkb-mod', id:'mkb-shift' },
   { l:'z',s:'z' }, { l:'x',s:'x' }, { l:'c',s:'c' }, { l:'v',s:'v' },
   { l:'b',s:'b' }, { l:'n',s:'n' }, { l:'m',s:'m' },
   { l:',',sl:'<',s:',',cls:'mkb-alpha' }, { l:'.',sl:'>',s:'.',cls:'mkb-alpha' }, { l:'/',sl:'?',s:'/',cls:'mkb-alpha' },
 ]
 
-const row5bottom: KeyDef[] = [
-  { l:'fn', sp:'fn', g:1, cls:'mkb-mod' },
-  { l:'ctrl', sp:'ctrl', g:1, cls:'mkb-mod', id:'mkb-ctrl' },
-  { l:'opt', sp:'alt', g:1, cls:'mkb-mod', id:'mkb-alt' },
-  { l:'⌘', sp:'cmd', g:1, cls:'mkb-mod' },
-  { l:'', s:' ', g:4, id:'mkb-space' },
-]
-
 const arrowUp: KeyDef = { l:'↑', s:'\x1b[A', repeat:true, cls:'mkb-arrow' }
-const arrowBottomKeys: KeyDef[] = [
-  { l:'←', s:'\x1b[D', repeat:true, cls:'mkb-arrow' },
-  { l:'↓', s:'\x1b[B', repeat:true, cls:'mkb-arrow' },
-  { l:'→', s:'\x1b[C', repeat:true, cls:'mkb-arrow' },
+const arrowDown: KeyDef = { l:'↓', s:'\x1b[B', repeat:true, cls:'mkb-arrow' }
+const arrowLeft: KeyDef = { l:'←', s:'\x1b[D', repeat:true, cls:'mkb-arrow' }
+const arrowRight: KeyDef = { l:'→', s:'\x1b[C', repeat:true, cls:'mkb-arrow' }
+
+const row5bottom: KeyDef[] = [
+  { l:'fn', sp:'fn', g:1.05, cls:'mkb-mod' },
+  { l:'ctrl', sp:'ctrl', g:1.05, cls:'mkb-mod', id:'mkb-ctrl' },
+  { l:'opt', sp:'alt', g:1.05, cls:'mkb-mod', id:'mkb-alt' },
+  { l:'⌘', sp:'cmd', g:1.05, cls:'mkb-mod' },
+  { l:'', s:' ', g:8, id:'mkb-space' },
 ]
 
 const kbswitchAction: KeyDef = {
