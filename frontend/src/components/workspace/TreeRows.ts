@@ -108,7 +108,7 @@ export const TreeRows = defineComponent({
     inlinePlaceholder: { type: String, default: '' },
     inlineRename: { type: Object, default: undefined },
   },
-  emits: ['toggle', 'select-file', 'select-dir', 'inline-create-commit', 'inline-create-cancel', 'inline-rename-commit', 'inline-rename-cancel', 'context-menu', 'long-press'],
+  emits: ['toggle', 'select-file', 'select-dir', 'inline-create-commit', 'inline-create-cancel', 'inline-rename-commit', 'inline-rename-cancel', 'context-menu', 'long-press', 'move-entry'],
   setup(p, { emit }) {
     function makeLongPressHandlers(rel: string, isDir: boolean) {
       let timer: ReturnType<typeof setTimeout> | null = null
@@ -195,21 +195,41 @@ export const TreeRows = defineComponent({
                 class: 'tree-row dir',
                 key: rel,
                 style: rowPad,
-                draggable: !!(p.workspaceRoot as string),
+                draggable: true,
                 onContextmenu: (ev: MouseEvent) => {
                   ev.preventDefault()
                   ev.stopPropagation()
                   emit('context-menu', { ev, rel, isDir: true })
                 },
                 onDragstart: (ev: DragEvent) => {
+                  ev.dataTransfer?.setData('application/x-tree-move', rel)
                   const root = p.workspaceRoot as string
-                  if (!root) return
-                  ev.dataTransfer?.setData('text/plain', absJoinWorkspaceRoot(root, rel))
-                  ev.dataTransfer!.effectAllowed = 'copy'
+                  if (root) {
+                    ev.dataTransfer?.setData('text/plain', absJoinWorkspaceRoot(root, rel))
+                  }
+                  ev.dataTransfer!.effectAllowed = 'copyMove'
                 },
                 onDragend: (ev: DragEvent) => {
                   const root = p.workspaceRoot as string
                   if (root) dispatchDropToTerminal(ev, absJoinWorkspaceRoot(root, rel))
+                },
+                onDragover: (ev: DragEvent) => {
+                  if (ev.dataTransfer?.types.includes('application/x-tree-move')) {
+                    ev.preventDefault()
+                    ev.dataTransfer!.dropEffect = 'move'
+                    ;(ev.currentTarget as HTMLElement).classList.add('drop-target')
+                  }
+                },
+                onDragleave: (ev: DragEvent) => {
+                  ;(ev.currentTarget as HTMLElement).classList.remove('drop-target')
+                },
+                onDrop: (ev: DragEvent) => {
+                  ev.preventDefault()
+                  ;(ev.currentTarget as HTMLElement).classList.remove('drop-target')
+                  const srcRel = ev.dataTransfer?.getData('application/x-tree-move')
+                  if (srcRel !== undefined && srcRel !== rel && !rel.startsWith(srcRel + '/')) {
+                    emit('move-entry', { src: srcRel, destDir: rel })
+                  }
                 },
                 ...makeLongPressHandlers(rel, true),
               },
@@ -264,6 +284,8 @@ export const TreeRows = defineComponent({
                   emit('context-menu', payload),
                 onLongPress: (pos: { clientX: number; clientY: number }, rel: string, isDir: boolean) =>
                   emit('long-press', pos, rel, isDir),
+                onMoveEntry: (payload: { src: string; destDir: string }) =>
+                  emit('move-entry', payload),
               }),
             )
           }
@@ -289,17 +311,19 @@ export const TreeRows = defineComponent({
                 class: 'tree-row file',
                 key: rel,
                 style: rowPad,
-                draggable: !!(p.workspaceRoot as string),
+                draggable: true,
                 onContextmenu: (ev: MouseEvent) => {
                   ev.preventDefault()
                   ev.stopPropagation()
                   emit('context-menu', { ev, rel, isDir: false })
                 },
                 onDragstart: (ev: DragEvent) => {
+                  ev.dataTransfer?.setData('application/x-tree-move', rel)
                   const root = p.workspaceRoot as string
-                  if (!root) return
-                  ev.dataTransfer?.setData('text/plain', absJoinWorkspaceRoot(root, rel))
-                  ev.dataTransfer!.effectAllowed = 'copy'
+                  if (root) {
+                    ev.dataTransfer?.setData('text/plain', absJoinWorkspaceRoot(root, rel))
+                  }
+                  ev.dataTransfer!.effectAllowed = 'copyMove'
                 },
                 onDragend: (ev: DragEvent) => {
                   const root = p.workspaceRoot as string
@@ -325,6 +349,19 @@ export const TreeRows = defineComponent({
 
       return h('div', {
         class: 'tree-rows',
+        onDragover: (ev: DragEvent) => {
+          if (ev.dataTransfer?.types.includes('application/x-tree-move')) {
+            ev.preventDefault()
+            ev.dataTransfer!.dropEffect = 'move'
+          }
+        },
+        onDrop: (ev: DragEvent) => {
+          ev.preventDefault()
+          const srcRel = ev.dataTransfer?.getData('application/x-tree-move')
+          if (srcRel !== undefined && srcRel.includes('/')) {
+            emit('move-entry', { src: srcRel, destDir: '' })
+          }
+        },
         onContextmenu: (ev: MouseEvent) => {
           if (ev.target === ev.currentTarget) {
             ev.preventDefault()

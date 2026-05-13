@@ -162,6 +162,7 @@ async fn main() {
         .route("/api/workspace/file", put(workspace::workspace_put_file))
         .route("/api/workspace/delete", delete(workspace::workspace_delete))
         .route("/api/workspace/rename", post(workspace::workspace_rename))
+        .route("/api/workspace/move", post(workspace::workspace_move))
         .route("/api/proxy", any(proxy::external_proxy_handler))
         .route("/api/info", get(server_info))
         .route("/preview/:port", any(proxy::proxy_handler_root))

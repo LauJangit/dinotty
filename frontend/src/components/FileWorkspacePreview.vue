@@ -36,6 +36,7 @@
             @inline-rename-cancel="onInlineRenameCancel"
             @context-menu="onTreeContextMenu"
             @long-press="onTreeLongPress"
+            @move-entry="onMoveEntry"
           />
         </div>
       </div>
@@ -169,6 +170,7 @@
               @inline-create-cancel="onInlineCreateCancel"
               @context-menu="onTreeContextMenu"
               @long-press="onTreeLongPress"
+              @move-entry="onMoveEntry"
             />
           </div>
         </div>
@@ -697,6 +699,79 @@ function handleFileChange(event: { type: string; path: string }) {
   }
 }
 
+// --- Tree watcher: watches the workspace root to detect file/dir create/delete ---
+const treeWatchSocket = ref<WebSocket | null>(null)
+let treeRefreshTimer: ReturnType<typeof setTimeout> | null = null
+
+async function connectTreeWatchSocket() {
+  disconnectTreeWatchSocket()
+
+  const base = await getApiBase()
+  const apiBase = base || window.location.origin
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const wsBase = apiBase.replace(/^https?:\/\//, `${wsProtocol}//`)
+  const wsUrl = `${wsBase}/ws/watch?pane_id=${props.paneId}&path=${encodeURIComponent('/')}`
+
+  try {
+    const ws = new WebSocket(wsUrlWithToken(wsUrl))
+    treeWatchSocket.value = ws
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        if (data.type === 'file_event') {
+          handleTreeChange(data)
+        }
+      } catch {}
+    }
+
+    ws.onclose = () => { treeWatchSocket.value = null }
+    ws.onerror = () => { treeWatchSocket.value = null }
+  } catch {}
+}
+
+function disconnectTreeWatchSocket() {
+  if (treeWatchSocket.value) {
+    treeWatchSocket.value.close()
+    treeWatchSocket.value = null
+  }
+  if (treeRefreshTimer) {
+    clearTimeout(treeRefreshTimer)
+    treeRefreshTimer = null
+  }
+}
+
+function handleTreeChange(event: { type: string; path?: string }) {
+  const changedPath = (event.path || '').replace(/\\/g, '/')
+  if (!changedPath) return
+
+  const parentDir = changedPath.substring(0, changedPath.lastIndexOf('/') + 1)
+
+  if (treeRefreshTimer) clearTimeout(treeRefreshTimer)
+  treeRefreshTimer = setTimeout(() => {
+    treeRefreshTimer = null
+    refreshTreeDir(parentDir)
+  }, 300)
+}
+
+async function refreshTreeDir(absDir: string) {
+  const cwd = (cwdLabel.value || '').replace(/\\/g, '/')
+  const cwdNorm = cwd.endsWith('/') ? cwd : cwd + '/'
+
+  let rel = ''
+  if (absDir.startsWith(cwdNorm)) {
+    rel = absDir.slice(cwdNorm.length)
+  } else {
+    rel = ''
+  }
+  if (rel.endsWith('/')) rel = rel.slice(0, -1)
+
+  try {
+    const entries = await fetchList(rel)
+    childCache.value = { ...childCache.value, [rel]: entries }
+  } catch {}
+}
+
 async function refreshCurrentFile() {
   if (!selectedRel.value || selectedIsDir.value) return
 
@@ -727,6 +802,7 @@ watch(
 
 onBeforeUnmount(() => {
   disconnectWatchSocket()
+  disconnectTreeWatchSocket()
 })
 
 const previewContentRef1 = ref<InstanceType<typeof FilePreviewContent> | null>(null)
@@ -1115,6 +1191,38 @@ function onInlineRenameCancel() {
   inlineRename.value = null
 }
 
+async function onMoveEntry(payload: { src: string; destDir: string }) {
+  const { src, destDir } = payload
+  if (!src) return
+  const srcParent = parentRelPath(src)
+  if (srcParent === destDir) return
+
+  await getApiBase()
+  const q = new URLSearchParams({ pane_id: props.paneId, path: src })
+  const res = await authFetch(apiUrl(`/api/workspace/move?${q}`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dest: destDir }),
+  })
+  if (!res.ok) {
+    const j = await res.json().catch(() => ({}))
+    previewErr.value = j.error || 'move failed'
+    return
+  }
+  previewErr.value = ''
+
+  const next = { ...childCache.value }
+  delete next[srcParent]
+  delete next[destDir]
+  for (const k of Object.keys(next)) {
+    if (k === src || k.startsWith(`${src}/`)) delete next[k]
+  }
+  childCache.value = next
+  try {
+    await Promise.all([ensureChildren(srcParent), ensureChildren(destDir)])
+  } catch {}
+}
+
 async function ctxDelete() {
   if (!contextMenu.value) return
   const { rel, isDir } = contextMenu.value
@@ -1323,6 +1431,7 @@ async function boot() {
   expanded.value = new Set([''])
   try {
     await ensureChildren('')
+    connectTreeWatchSocket()
   } catch {
     previewErr.value = 'list failed'
   }
@@ -2071,6 +2180,12 @@ defineExpose({
 
 .file-workspace-tree :deep(.tree-row:hover) {
   background: var(--tree-row-hover);
+}
+
+.file-workspace-tree :deep(.tree-row.drop-target) {
+  background: var(--tree-row-selected);
+  outline: 1px solid var(--focus-border, #007fd4);
+  outline-offset: -1px;
 }
 
 .file-workspace-tree :deep(.tree-row:has(.tree-label.sel)) {

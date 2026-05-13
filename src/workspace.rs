@@ -813,6 +813,70 @@ pub async fn workspace_rename(
     Json(serde_json::json!({ "ok": true, "rel": rel })).into_response()
 }
 
+#[derive(Deserialize)]
+pub struct MoveBody {
+    pub dest: String,
+}
+
+pub async fn workspace_move(
+    State(manager): State<Arc<SessionManager>>,
+    Query(q): Query<PanePathQuery>,
+    Json(body): Json<MoveBody>,
+) -> impl IntoResponse {
+    let session = match get_session(&manager, &q.pane_id) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let root = match workspace_root(&session) {
+        Ok(r) => r,
+        Err(e) => return e,
+    };
+    let source = match normalize_join(&root, &q.path) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if !source.exists() {
+        return json_err(StatusCode::NOT_FOUND, "source not found");
+    }
+    if let Err(e) = path_must_be_under(&root, &source) {
+        return e;
+    }
+    let dest_dir = match normalize_join(&root, &body.dest) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if !dest_dir.is_dir() {
+        return json_err(StatusCode::BAD_REQUEST, "dest is not a directory");
+    }
+    if let Err(e) = path_must_be_under(&root, &dest_dir) {
+        return e;
+    }
+    let file_name = match source.file_name() {
+        Some(n) => n.to_owned(),
+        None => return json_err(StatusCode::BAD_REQUEST, "invalid source path"),
+    };
+    let dest = dest_dir.join(&file_name);
+    if dest.exists() {
+        return json_err(StatusCode::CONFLICT, "already exists in destination");
+    }
+    if source.is_dir() {
+        let dest_canon = dest_dir
+            .canonicalize()
+            .unwrap_or_else(|_| dest_dir.clone());
+        let source_canon = source
+            .canonicalize()
+            .unwrap_or_else(|_| source.clone());
+        if dest_canon.starts_with(&source_canon) {
+            return json_err(StatusCode::BAD_REQUEST, "cannot move into itself");
+        }
+    }
+    if let Err(e) = std::fs::rename(&source, &dest) {
+        return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+    }
+    let rel = rel_from_root(&root, &dest).unwrap_or_default();
+    Json(serde_json::json!({ "ok": true, "rel": rel })).into_response()
+}
+
 pub async fn workspace_upload(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<UploadQuery>,
