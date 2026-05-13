@@ -226,7 +226,6 @@ pub async fn workspace_list(
     let mut entries = match std::fs::read_dir(&target) {
         Ok(rd) => rd
             .filter_map(|e| e.ok())
-            .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
             .collect::<Vec<_>>(),
         Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     };
