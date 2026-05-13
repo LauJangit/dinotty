@@ -2,7 +2,7 @@
 dist/
 node_modules/
 .claude/
-docs/
 CLAUDE.md
 *.tsbuildinfo
 .pnpm-store/
+.DS_Store
