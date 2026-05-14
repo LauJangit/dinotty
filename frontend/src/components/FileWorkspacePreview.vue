@@ -1,7 +1,7 @@
 <template>
   <div v-if="visible && embedded" class="file-workspace-embedded">
     <input ref="fileInputRef" type="file" multiple class="sr-only" @change="onFilePick" />
-    <div ref="fileWorkspaceBodyRef" class="file-workspace-body" :class="{ 'drawer-mode': narrow, embedded }"
+    <div ref="fileWorkspaceBodyRef" class="file-workspace-body" :class="{ 'drawer-mode': layout.narrow.value, embedded }"
       @dragover.prevent
       @dragenter.prevent="dragCounter++"
       @dragleave="dragCounter = Math.max(0, dragCounter - 1)"
@@ -9,11 +9,11 @@
     >
       <div v-if="dragging" class="file-workspace-drop-overlay">{{ t('filePreview.dropHint') }}</div>
       <div
-        v-if="(narrow && drawerOpen) || (!narrow && !treeCollapsed)"
+        v-if="(layout.narrow.value && layout.drawerOpen.value) || (!layout.narrow.value && !treeCollapsed)"
         class="file-workspace-tree-wrap"
-        :class="{ drawer: narrow }"
-        :style="treeWrapStyle"
-        @click.self="narrow && tryCloseDrawerFromChrome()"
+        :class="{ drawer: layout.narrow.value }"
+        :style="layout.treeWrapStyle.value"
+        @click.self="layout.narrow.value && tryCloseDrawerFromChrome()"
       >
         <div class="file-workspace-tree" @click.stop @pointerdown.capture="bumpTreePointerTs" @contextmenu.prevent="onTreeBgContextMenu">
           <TreeRows
@@ -41,13 +41,13 @@
         </div>
       </div>
       <div
-        v-if="!narrow && !treeCollapsed"
+        v-if="!layout.narrow.value && !treeCollapsed"
         class="file-workspace-tree-splitter"
-        @mousedown.prevent="startTreeWidthDrag"
-        @touchstart.prevent="startTreeWidthDragTouch"
+        @mousedown.prevent="(e) => layout.startTreeWidthDrag(e, fileWorkspaceBodyRef)"
+        @touchstart.prevent="(e) => layout.startTreeWidthDragTouch(e, fileWorkspaceBodyRef)"
       ></div>
       <button
-        v-if="!narrow && treeCollapsed"
+        v-if="!layout.narrow.value && treeCollapsed"
         type="button"
         class="file-workspace-tree-reveal"
         :title="t('previewPanel.expandTree')"
@@ -55,7 +55,7 @@
       >
         ▶
       </button>
-      <div v-if="narrow && drawerOpen" class="file-workspace-overlay" @click="tryCloseDrawerFromChrome"></div>
+      <div v-if="layout.narrow.value && layout.drawerOpen.value" class="file-workspace-overlay" @click="tryCloseDrawerFromChrome"></div>
       <FilePreviewContent
         ref="previewContentRef1"
         :preview-loading="previewLoading"
@@ -67,35 +67,35 @@
         :show-save="false"
         :audio-title="audioTitle"
         :audio-sub="audioSub"
-        :audio-time-now="audioTimeNow"
-        :audio-time-total="audioTimeTotal"
-        :audio-seek-value="audioSeekValue"
-        :audio-vol-value="audioVolValue"
-        :audio-playing="audioPlaying"
+        :audio-time-now="audio.audioTimeNow.value"
+        :audio-time-total="audio.audioTimeTotal.value"
+        :audio-seek-value="audio.audioSeekValue.value"
+        :audio-vol-value="audio.audioVolValue.value"
+        :audio-playing="audio.audioPlaying.value"
         :editor-dirty="editorDirty"
         :editor-text="editorText"
         :can-save-editor="canSaveEditor"
         :md-show-preview="mdShowPreview"
+        :html-show-preview="htmlShowPreview"
         :markdown-editor-html="markdownEditorHtml"
-        :code-lines="codeLines"
-        :highlighted-html="highlightedHtml"
         :office-loading="officeLoading"
         :office-err="officeErr"
         :office-html="officeHtml"
-        @audio-time-update="onAudioTimeUpdate"
-        @audio-loaded-metadata="onAudioLoadedMetadata"
-        @audio-ended="onAudioEnded"
-        @audio-seek-input="onAudioSeekInput"
-        @seek-audio="seekAudio"
-        @toggle-audio="toggleAudio"
-        @audio-volume-input="onAudioVolumeInput"
+        @audio-time-update="audio.onAudioTimeUpdate(audioRef)"
+        @audio-loaded-metadata="audio.onAudioLoadedMetadata(audioRef)"
+        @audio-ended="audio.onAudioEnded()"
+        @audio-seek-input="(ev) => audio.onAudioSeekInput(audioRef, ev)"
+        @seek-audio="(d) => audio.seekAudio(audioRef, d)"
+        @toggle-audio="audio.toggleAudio(audioRef)"
+        @audio-volume-input="(ev) => audio.onAudioVolumeInput(audioRef, ev)"
         @update:md-show-preview="mdShowPreview = $event"
+        @update:html-show-preview="htmlShowPreview = $event"
         @update:editor-text="editorText = $event"
-        @editor-scroll="onEditorScroll"
+        @save-editor="saveEditor"
       />
     </div>
   </div>
-  <div v-else-if="visible" class="file-workspace" :class="direction">
+  <div v-else-if="visible" class="file-workspace" :class="layout.direction.value">
     <div
       class="file-workspace-divider"
       @mousedown.prevent="startDrag"
@@ -103,8 +103,8 @@
     ></div>
     <div class="file-workspace-panel">
       <div class="file-workspace-toolbar">
-        <button type="button" :disabled="!canGoBack" @click="goBack" title="Back">←</button>
-        <button type="button" :disabled="!canGoForward" @click="goForward" title="Forward">→</button>
+        <button type="button" :disabled="!nav.canGoBack.value" @click="doGoBack" title="Back">←</button>
+        <button type="button" :disabled="!nav.canGoForward.value" @click="doGoForward" title="Forward">→</button>
         <button type="button" @click="reloadAll" title="Refresh">↻</button>
         <span class="file-workspace-cwd" :title="cwdLabel">{{ cwdShort }}</span>
         <div class="file-workspace-add-menu">
@@ -118,7 +118,7 @@
         <button type="button" @click="triggerUpload()" title="Upload">↑</button>
         <button type="button" :disabled="!canDownload" @click="downloadSelected" title="Download">↓</button>
         <button
-          v-if="!narrow"
+          v-if="!layout.narrow.value"
           type="button"
           class="file-workspace-drawer-btn"
           :title="treeCollapsed ? t('previewPanel.expandTree') : t('previewPanel.collapseTree')"
@@ -127,18 +127,18 @@
           {{ treeCollapsed ? '▶' : '◀' }}
         </button>
         <button
-          v-if="narrow"
+          v-if="layout.narrow.value"
           type="button"
           class="file-workspace-drawer-btn"
-          :title="drawerOpen ? t('previewPanel.collapseTree') : t('previewPanel.expandTree')"
-          @click="toggleDrawer"
+          :title="layout.drawerOpen.value ? t('previewPanel.collapseTree') : t('previewPanel.expandTree')"
+          @click="layout.toggleDrawer()"
         >
-          {{ drawerOpen ? '◀' : '▶' }}
+          {{ layout.drawerOpen.value ? '◀' : '▶' }}
         </button>
         <button type="button" @click="close" title="Close">✕</button>
       </div>
       <input ref="fileInputRef" type="file" multiple class="sr-only" @change="onFilePick" />
-      <div ref="fileWorkspaceBodyRef" class="file-workspace-body" :class="{ 'drawer-mode': narrow }"
+      <div ref="fileWorkspaceBodyRef" class="file-workspace-body" :class="{ 'drawer-mode': layout.narrow.value }"
         @dragover.prevent
         @dragenter.prevent="dragCounter++"
         @dragleave="dragCounter = Math.max(0, dragCounter - 1)"
@@ -146,11 +146,11 @@
       >
         <div v-if="dragging" class="file-workspace-drop-overlay">{{ t('filePreview.dropHint') }}</div>
         <div
-          v-if="(narrow && drawerOpen) || (!narrow && !treeCollapsed)"
+          v-if="(layout.narrow.value && layout.drawerOpen.value) || (!layout.narrow.value && !treeCollapsed)"
           class="file-workspace-tree-wrap"
-          :class="{ drawer: narrow }"
-          :style="treeWrapStyle"
-          @click.self="narrow && tryCloseDrawerFromChrome()"
+          :class="{ drawer: layout.narrow.value }"
+          :style="layout.treeWrapStyle.value"
+          @click.self="layout.narrow.value && tryCloseDrawerFromChrome()"
         >
           <div class="file-workspace-tree" @click.stop @pointerdown.capture="bumpTreePointerTs" @contextmenu.prevent="onTreeBgContextMenu">
             <TreeRows
@@ -175,13 +175,13 @@
           </div>
         </div>
         <div
-          v-if="!narrow && !treeCollapsed"
+          v-if="!layout.narrow.value && !treeCollapsed"
           class="file-workspace-tree-splitter"
-          @mousedown.prevent="startTreeWidthDrag"
-          @touchstart.prevent="startTreeWidthDragTouch"
+          @mousedown.prevent="(e) => layout.startTreeWidthDrag(e, fileWorkspaceBodyRef)"
+          @touchstart.prevent="(e) => layout.startTreeWidthDragTouch(e, fileWorkspaceBodyRef)"
         ></div>
         <button
-          v-if="!narrow && treeCollapsed"
+          v-if="!layout.narrow.value && treeCollapsed"
           type="button"
           class="file-workspace-tree-reveal"
           :title="t('previewPanel.expandTree')"
@@ -189,7 +189,7 @@
         >
           ▶
         </button>
-        <div v-if="narrow && drawerOpen" class="file-workspace-overlay" @click="tryCloseDrawerFromChrome"></div>
+        <div v-if="layout.narrow.value && layout.drawerOpen.value" class="file-workspace-overlay" @click="tryCloseDrawerFromChrome"></div>
         <FilePreviewContent
           ref="previewContentRef2"
           :preview-loading="previewLoading"
@@ -201,32 +201,31 @@
           :show-save="true"
           :audio-title="audioTitle"
           :audio-sub="audioSub"
-          :audio-time-now="audioTimeNow"
-          :audio-time-total="audioTimeTotal"
-          :audio-seek-value="audioSeekValue"
-          :audio-vol-value="audioVolValue"
-          :audio-playing="audioPlaying"
+          :audio-time-now="audio.audioTimeNow.value"
+          :audio-time-total="audio.audioTimeTotal.value"
+          :audio-seek-value="audio.audioSeekValue.value"
+          :audio-vol-value="audio.audioVolValue.value"
+          :audio-playing="audio.audioPlaying.value"
           :editor-dirty="editorDirty"
           :editor-text="editorText"
           :can-save-editor="canSaveEditor"
           :md-show-preview="mdShowPreview"
+          :html-show-preview="htmlShowPreview"
           :markdown-editor-html="markdownEditorHtml"
-          :code-lines="codeLines"
-          :highlighted-html="highlightedHtml"
           :office-loading="officeLoading"
           :office-err="officeErr"
           :office-html="officeHtml"
-          @audio-time-update="onAudioTimeUpdate"
-          @audio-loaded-metadata="onAudioLoadedMetadata"
-          @audio-ended="onAudioEnded"
-          @audio-seek-input="onAudioSeekInput"
-          @seek-audio="seekAudio"
-          @toggle-audio="toggleAudio"
-          @audio-volume-input="onAudioVolumeInput"
+          @audio-time-update="audio.onAudioTimeUpdate(audioRef)"
+          @audio-loaded-metadata="audio.onAudioLoadedMetadata(audioRef)"
+          @audio-ended="audio.onAudioEnded()"
+          @audio-seek-input="(ev) => audio.onAudioSeekInput(audioRef, ev)"
+          @seek-audio="(d) => audio.seekAudio(audioRef, d)"
+          @toggle-audio="audio.toggleAudio(audioRef)"
+          @audio-volume-input="(ev) => audio.onAudioVolumeInput(audioRef, ev)"
           @update:md-show-preview="mdShowPreview = $event"
+          @update:html-show-preview="htmlShowPreview = $event"
           @save-editor="saveEditor"
           @update:editor-text="editorText = $event"
-          @editor-scroll="onEditorScroll"
         />
       </div>
     </div>
@@ -241,7 +240,7 @@
     <div
       v-if="contextMenu && visible"
       class="tree-ctx-menu"
-      :class="{ 'tree-ctx-menu--bottom': narrow }"
+      :class="{ 'tree-ctx-menu--bottom': layout.narrow.value }"
       role="menu"
       :style="contextMenuStyle"
       @mousedown.stop
@@ -283,47 +282,19 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import hljs from 'highlight.js/lib/core'
-import rust from 'highlight.js/lib/languages/rust'
-import javascript from 'highlight.js/lib/languages/javascript'
-import typescript from 'highlight.js/lib/languages/typescript'
-import python from 'highlight.js/lib/languages/python'
-import go from 'highlight.js/lib/languages/go'
-import bash from 'highlight.js/lib/languages/bash'
-import json from 'highlight.js/lib/languages/json'
-import yaml from 'highlight.js/lib/languages/yaml'
-import xml from 'highlight.js/lib/languages/xml'
-import css from 'highlight.js/lib/languages/css'
-import sql from 'highlight.js/lib/languages/sql'
-import markdown from 'highlight.js/lib/languages/markdown'
-import cpp from 'highlight.js/lib/languages/cpp'
-import java from 'highlight.js/lib/languages/java'
 import { useI18n } from '../composables/useI18n'
-import { getApiBase, apiUrl, authFetch, wsUrlWithToken, getAuthToken } from '../composables/apiBase'
-import { isNarrowViewport } from '../utils/viewport'
+import { getApiBase, apiUrl, authFetch, getAuthToken } from '../composables/apiBase'
 import { usePaneResize } from '../composables/usePaneResize'
-import { TreeRows, TreeInlineInput, treeFolderIcon, treeFileIcon, absJoinWorkspaceRoot } from './workspace/TreeRows'
+import { useFileNavigation } from '../composables/useFileNavigation'
+import { useAudioPlayer } from '../composables/useAudioPlayer'
+import { useFileWorkspaceLayout } from '../composables/useFileWorkspaceLayout'
+import { useFileWatch } from '../composables/useFileWatch'
+import { TreeRows } from './workspace/TreeRows'
 import type { DirEntry } from './workspace/TreeRows'
 import FilePreviewContent from './workspace/FilePreviewContent.vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import officeParser from 'officeparser'
-
-hljs.registerLanguage('rust', rust)
-hljs.registerLanguage('javascript', javascript)
-hljs.registerLanguage('typescript', typescript)
-hljs.registerLanguage('python', python)
-hljs.registerLanguage('go', go)
-hljs.registerLanguage('bash', bash)
-hljs.registerLanguage('json', json)
-hljs.registerLanguage('yaml', yaml)
-hljs.registerLanguage('xml', xml)
-hljs.registerLanguage('html', xml)
-hljs.registerLanguage('css', css)
-hljs.registerLanguage('sql', sql)
-hljs.registerLanguage('markdown', markdown)
-hljs.registerLanguage('cpp', cpp)
-hljs.registerLanguage('java', java)
 
 const props = withDefaults(
   defineProps<{ visible: boolean; paneId: string; embedded?: boolean }>(),
@@ -342,70 +313,26 @@ interface Meta {
   message?: string
 }
 
+// --- Composables ---
+const nav = useFileNavigation()
+const audio = useAudioPlayer()
+const layout = useFileWorkspaceLayout()
+
+watch(nav.canGoBack, v => emit('update:canGoBack', v), { immediate: true })
+watch(nav.canGoForward, v => emit('update:canGoForward', v), { immediate: true })
+
+// --- State ---
 const cwdLabel = ref('')
 const childCache = ref<Record<string, DirEntry[]>>({})
 const expanded = ref<Set<string>>(new Set(['']))
 const selectedRel = ref<string | null>(null)
 const selectedIsDir = ref(false)
-
-const navHistory = ref<{ rel: string; isDir: boolean }[]>([])
-const navIndex = ref(-1)
-const navFromHistory = ref(false)
-const canGoBack = computed(() => navIndex.value > 0)
-const canGoForward = computed(() => navIndex.value < navHistory.value.length - 1)
-
-watch(canGoBack, v => emit('update:canGoBack', v), { immediate: true })
-watch(canGoForward, v => emit('update:canGoForward', v), { immediate: true })
-
-function pushNav(rel: string, isDir: boolean) {
-  if (navFromHistory.value) { navFromHistory.value = false; return }
-  const cur = navHistory.value[navIndex.value]
-  if (cur && cur.rel === rel && cur.isDir === isDir) return
-  navHistory.value = navHistory.value.slice(0, navIndex.value + 1)
-  navHistory.value.push({ rel, isDir })
-  navIndex.value = navHistory.value.length - 1
-}
-
-function ensureParentsExpanded(rel: string) {
-  const parts = rel.split('/')
-  const next = new Set(expanded.value)
-  next.add('')
-  for (let i = 1; i < parts.length; i++) {
-    const ancestor = parts.slice(0, i).join('/')
-    if (!next.has(ancestor)) {
-      next.add(ancestor)
-      void ensureChildren(ancestor)
-    }
-  }
-  expanded.value = next
-}
-
-function goBack() {
-  if (!canGoBack.value) return
-  navFromHistory.value = true
-  navIndex.value--
-  const entry = navHistory.value[navIndex.value]
-  ensureParentsExpanded(entry.rel)
-  if (entry.isDir) onSelectDir(entry.rel)
-  else void onSelectFile(entry.rel)
-}
-
-function goForward() {
-  if (!canGoForward.value) return
-  navFromHistory.value = true
-  navIndex.value++
-  const entry = navHistory.value[navIndex.value]
-  ensureParentsExpanded(entry.rel)
-  if (entry.isDir) onSelectDir(entry.rel)
-  else void onSelectFile(entry.rel)
-}
 const meta = ref<Meta | null>(null)
 const previewLoading = ref(false)
 const previewErr = ref('')
 const fileInputRef = ref<HTMLInputElement>()
 const dragCounter = ref(0)
 const dragging = computed(() => dragCounter.value > 0)
-const drawerOpen = ref(isNarrowViewport())
 const lastTreePointerTs = ref(0)
 const officeLoading = ref(false)
 const officeErr = ref('')
@@ -415,124 +342,48 @@ const inlineRename = ref<{ rel: string; isDir: boolean } | null>(null)
 const editorText = ref('')
 const editorBaseline = ref('')
 const mdShowPreview = ref(false)
+const htmlShowPreview = ref(false)
 const contextMenu = ref<{ x: number; y: number; rel: string; isDir: boolean } | null>(null)
 const addMenuOpen = ref(false)
-
-const ctxDeleteKeyHint = computed(() =>
-  typeof navigator !== 'undefined' && /Mac|iPhone|iPod|iPad/i.test(navigator.platform) ? '⌘⌫' : 'Del',
-)
-
-const contextMenuStyle = computed(() => {
-  const m = contextMenu.value
-  if (!m) return {}
-  if (narrow.value) {
-    return { left: '0', right: '0', bottom: '0' }
-  }
-  const pad = 8
-  const mw = 220
-  const mh = 140
-  let left = m.x
-  let top = m.y
-  if (typeof window !== 'undefined') {
-    if (left + mw > window.innerWidth - pad) left = Math.max(pad, window.innerWidth - mw - pad)
-    if (top + mh > window.innerHeight - pad) top = Math.max(pad, window.innerHeight - mh - pad)
-  }
-  return { left: `${left}px`, top: `${top}px` }
-})
-
-function bumpTreePointerTs() {
-  lastTreePointerTs.value = Date.now()
-}
-
-function tryCloseDrawerFromChrome() {
-  if (!narrow.value || !drawerOpen.value) return
-  if (Date.now() - lastTreePointerTs.value < 450) return
-  drawerOpen.value = false
-}
-
-const isLandscape = ref(window.innerWidth > window.innerHeight)
-const narrow = ref(isNarrowViewport())
 const fileWorkspaceBodyRef = ref<HTMLElement | null>(null)
+const cacheBustTs = ref<number | null>(null)
 
-const TREE_WIDTH_STORAGE = 'dinotty_tree_pane_width'
-
-function loadTreePaneWidth(): number {
-  try {
-    const v = parseInt(localStorage.getItem(TREE_WIDTH_STORAGE) || '', 10)
-    if (Number.isFinite(v) && v >= 120 && v <= 720) return v
-  } catch {}
-  return 260
-}
-
-const treePaneWidth = ref(loadTreePaneWidth())
-
-function persistTreePaneWidth() {
-  try {
-    localStorage.setItem(TREE_WIDTH_STORAGE, String(treePaneWidth.value))
-  } catch {}
-}
-
-const treeWrapStyle = computed(() => {
-  if (narrow.value) return {}
-  return { width: `${treePaneWidth.value}px` }
+// --- File Watch ---
+const fileWatch = useFileWatch({
+  paneId: () => props.paneId,
+  cwdLabel,
+  expanded,
+  childCache,
+  selectedRel,
+  selectedIsDir,
+  meta,
+  editorDirty: () => editorDirty.value,
+  onFileDeleted: () => {
+    selectedRel.value = null
+    selectedIsDir.value = false
+    meta.value = null
+    previewErr.value = ''
+  },
+  onFileChanged: (newMeta) => {
+    meta.value = newMeta
+    editorText.value = newMeta.content ?? ''
+    editorBaseline.value = newMeta.content ?? ''
+  },
+  onBinaryChanged: () => {
+    cacheBustTs.value = Date.now()
+  },
+  fetchList,
 })
 
-function clampTreePaneWidth() {
-  const body = fileWorkspaceBodyRef.value
-  if (!body || narrow.value) return
-  const maxW = Math.min(body.getBoundingClientRect().width * 0.78, 560)
-  if (treePaneWidth.value > maxW) treePaneWidth.value = Math.max(120, maxW)
-}
+// --- Audio ---
+const previewContentRef1 = ref<InstanceType<typeof FilePreviewContent> | null>(null)
+const previewContentRef2 = ref<InstanceType<typeof FilePreviewContent> | null>(null)
+const audioRef = computed(() => previewContentRef1.value?.audioRef ?? previewContentRef2.value?.audioRef ?? null)
 
-function startTreeWidthDrag(e: MouseEvent) {
-  if (narrow.value) return
-  const body = fileWorkspaceBodyRef.value
-  if (!body) return
-  const startX = e.clientX
-  const startW = treePaneWidth.value
-  const overlay = document.createElement('div')
-  overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;cursor:col-resize;'
-  document.body.appendChild(overlay)
-  const onMove = (ev: MouseEvent) => {
-    const rect = body.getBoundingClientRect()
-    const maxW = Math.min(rect.width * 0.78, 560)
-    const dx = ev.clientX - startX
-    treePaneWidth.value = Math.max(120, Math.min(maxW, startW + dx))
-  }
-  const onUp = () => {
-    overlay.remove()
-    window.removeEventListener('mousemove', onMove)
-    window.removeEventListener('mouseup', onUp)
-    persistTreePaneWidth()
-  }
-  window.addEventListener('mousemove', onMove)
-  window.addEventListener('mouseup', onUp)
-}
+const audioTitle = computed(() => (selectedRel.value ? selectedRel.value.split('/').pop() || selectedRel.value : ''))
+const audioSub = computed(() => '')
 
-function startTreeWidthDragTouch(e: TouchEvent) {
-  if (narrow.value) return
-  const body = fileWorkspaceBodyRef.value
-  if (!body) return
-  const startX = e.touches[0].clientX
-  const startW = treePaneWidth.value
-  const onMove = (ev: TouchEvent) => {
-    const touch = ev.touches[0]
-    const rect = body.getBoundingClientRect()
-    const maxW = Math.min(rect.width * 0.78, 560)
-    const dx = touch.clientX - startX
-    treePaneWidth.value = Math.max(120, Math.min(maxW, startW + dx))
-  }
-  const onEnd = () => {
-    window.removeEventListener('touchmove', onMove)
-    window.removeEventListener('touchend', onEnd)
-    persistTreePaneWidth()
-  }
-  window.addEventListener('touchmove', onMove, { passive: true })
-  window.addEventListener('touchend', onEnd)
-}
-
-const direction = computed(() => (isLandscape.value ? 'horizontal' : 'vertical'))
-
+// --- Computed ---
 const cwdShort = computed(() => {
   const s = cwdLabel.value
   if (s.length <= 36) return s
@@ -544,6 +395,7 @@ const rawUrl = computed(() => {
   const q = new URLSearchParams({ pane_id: props.paneId, path: selectedRel.value })
   const token = getAuthToken()
   if (token) q.set('token', token)
+  if (cacheBustTs.value) q.set('_t', String(cacheBustTs.value))
   return apiUrl(`/api/workspace/raw?${q}`)
 })
 
@@ -564,9 +416,35 @@ const canSaveEditorContext = computed(
     (meta.value?.kind === 'text' || meta.value?.kind === 'markdown'),
 )
 
-const canSaveEditor = computed(
-  () => canSaveEditorContext.value && editorDirty.value,
+const canSaveEditor = computed(() => canSaveEditorContext.value && editorDirty.value)
+
+const canDownload = computed(
+  () => !!selectedRel.value && !selectedIsDir.value && meta.value?.kind !== 'unsupported',
 )
+
+const ctxDeleteKeyHint = computed(() =>
+  typeof navigator !== 'undefined' && /Mac|iPhone|iPod|iPad/i.test(navigator.platform) ? '⌘⌫' : 'Del',
+)
+
+const contextMenuStyle = computed(() => {
+  const m = contextMenu.value
+  if (!m) return {}
+  if (layout.narrow.value) return { left: '0', right: '0', bottom: '0' }
+  const pad = 8
+  const mw = 220
+  const mh = 140
+  let left = m.x
+  let top = m.y
+  if (typeof window !== 'undefined') {
+    if (left + mw > window.innerWidth - pad) left = Math.max(pad, window.innerWidth - mw - pad)
+    if (top + mh > window.innerHeight - pad) top = Math.max(pad, window.innerHeight - mh - pad)
+  }
+  return { left: `${left}px`, top: `${top}px` }
+})
+
+function esc(s: string) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
 
 const markdownEditorHtml = computed(() => {
   const src = editorText.value
@@ -579,417 +457,61 @@ const markdownEditorHtml = computed(() => {
   }
 })
 
-const canDownload = computed(
-  () => !!selectedRel.value && !selectedIsDir.value && meta.value?.kind !== 'unsupported',
-)
-
-const canDelete = computed(() => !!selectedRel.value)
-
-const MAX_HIGHLIGHT_SIZE = 100_000
-
-const codeLines = computed(() => {
-  const text = editorText.value || ''
-  return text.split('\n')
-})
-
-const highlightedLines = computed(() => {
-  const text = editorText.value || ''
-  if (text.length > MAX_HIGHLIGHT_SIZE) {
-    return esc(text).split('\n')
-  }
-  const language = meta.value?.language || 'plaintext'
-  let html = ''
-  try {
-    if (language !== 'plaintext' && hljs.getLanguage(language)) {
-      html = hljs.highlight(text, { language }).value
-    } else if (language === 'plaintext') {
-      html = esc(text)
-    } else {
-      html = hljs.highlightAuto(text).value
-    }
-  } catch {
-    html = esc(text)
-  }
-  return html.split('\n')
-})
-
-const highlightedHtml = computed(() => {
-  return highlightedLines.value.join('\n')
-})
-
-function esc(s: string) {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-}
-
-function onEditorScroll(e: Event) {
-  const textarea = e.target as HTMLTextAreaElement
-  const lineNumbers = textarea.closest('.file-code-preview')?.querySelector('.file-code-line-numbers') as HTMLElement
-  const highlighted = textarea.closest('.file-code-preview')?.querySelector('.file-code-highlighted') as HTMLElement
-  if (lineNumbers) {
-    lineNumbers.scrollTop = textarea.scrollTop
-  }
-  if (highlighted) {
-    highlighted.scrollTop = textarea.scrollTop
-    highlighted.scrollLeft = textarea.scrollLeft
-  }
-}
-
-const watchSocket = ref<WebSocket | null>(null)
-const isWatching = ref(false)
-
-async function connectWatchSocket(path: string) {
-  disconnectWatchSocket()
-
-  const base = await getApiBase()
-  const apiBase = base || window.location.origin
-  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const wsBase = apiBase.replace(/^https?:\/\//, `${wsProtocol}//`)
-  const wsUrl = `${wsBase}/ws/watch?pane_id=${props.paneId}&path=${encodeURIComponent(path)}`
-
-  try {
-    const ws = new WebSocket(wsUrlWithToken(wsUrl))
-    watchSocket.value = ws
-
-    ws.onopen = () => {
-      isWatching.value = true
-    }
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data)
-        if (data.type === 'file_event') {
-          handleFileChange(data)
-        }
-      } catch {}
-    }
-
-    ws.onclose = () => {
-      isWatching.value = false
-      watchSocket.value = null
-    }
-
-    ws.onerror = () => {
-      isWatching.value = false
-      watchSocket.value = null
-    }
-  } catch {}
-}
-
-function disconnectWatchSocket() {
-  if (watchSocket.value) {
-    watchSocket.value.close()
-    watchSocket.value = null
-    isWatching.value = false
-  }
-}
-
-function handleFileChange(event: { type: string; path: string }) {
-  if (!selectedRel.value || selectedIsDir.value) return
-
-  const changedPath = event.path.replace(/\\/g, '/')
-  const currentFile = selectedRel.value
-
-  const normalizedChanged = changedPath.endsWith('/') ? changedPath.slice(0, -1) : changedPath
-  const normalizedCurrent = currentFile.endsWith('/') ? currentFile.slice(0, -1) : currentFile
-
-  if (normalizedChanged.endsWith(normalizedCurrent) || normalizedChanged.includes(`/${normalizedCurrent}`)) {
-    if (!editorDirty.value) {
-      refreshCurrentFile()
-    }
-  }
-}
-
-// --- Tree watcher: watches the workspace root to detect file/dir create/delete ---
-const treeWatchSocket = ref<WebSocket | null>(null)
-let treeRefreshTimer: ReturnType<typeof setTimeout> | null = null
-
-async function connectTreeWatchSocket() {
-  disconnectTreeWatchSocket()
-
-  const base = await getApiBase()
-  const apiBase = base || window.location.origin
-  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const wsBase = apiBase.replace(/^https?:\/\//, `${wsProtocol}//`)
-  const wsUrl = `${wsBase}/ws/watch?pane_id=${props.paneId}&path=${encodeURIComponent('/')}`
-
-  try {
-    const ws = new WebSocket(wsUrlWithToken(wsUrl))
-    treeWatchSocket.value = ws
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data)
-        if (data.type === 'file_event') {
-          handleTreeChange(data)
-        }
-      } catch {}
-    }
-
-    ws.onclose = () => { treeWatchSocket.value = null }
-    ws.onerror = () => { treeWatchSocket.value = null }
-  } catch {}
-}
-
-function disconnectTreeWatchSocket() {
-  if (treeWatchSocket.value) {
-    treeWatchSocket.value.close()
-    treeWatchSocket.value = null
-  }
-  if (treeRefreshTimer) {
-    clearTimeout(treeRefreshTimer)
-    treeRefreshTimer = null
-  }
-}
-
-function handleTreeChange(event: { type: string; path?: string }) {
-  const changedPath = (event.path || '').replace(/\\/g, '/')
-  if (!changedPath) return
-
-  const parentDir = changedPath.substring(0, changedPath.lastIndexOf('/') + 1)
-
-  if (treeRefreshTimer) clearTimeout(treeRefreshTimer)
-  treeRefreshTimer = setTimeout(() => {
-    treeRefreshTimer = null
-    refreshTreeDir(parentDir)
-  }, 300)
-}
-
-async function refreshTreeDir(absDir: string) {
-  const cwd = (cwdLabel.value || '').replace(/\\/g, '/')
-  const cwdNorm = cwd.endsWith('/') ? cwd : cwd + '/'
-
-  let rel = ''
-  if (absDir.startsWith(cwdNorm)) {
-    rel = absDir.slice(cwdNorm.length)
-  } else {
-    rel = ''
-  }
-  if (rel.endsWith('/')) rel = rel.slice(0, -1)
-
-  try {
-    const entries = await fetchList(rel)
-    childCache.value = { ...childCache.value, [rel]: entries }
-  } catch {}
-}
-
-async function refreshCurrentFile() {
-  if (!selectedRel.value || selectedIsDir.value) return
-
-  try {
-    await getApiBase()
-    const q = new URLSearchParams({ pane_id: props.paneId, path: selectedRel.value })
-    const res = await authFetch(apiUrl(`/api/workspace/meta?${q}`))
-    if (!res.ok) return
-    const newMeta = await res.json()
-    if (newMeta?.kind === 'text' || newMeta?.kind === 'markdown') {
-      meta.value = newMeta
-      editorText.value = newMeta.content ?? ''
-      editorBaseline.value = newMeta.content ?? ''
-    }
-  } catch {}
-}
-
-watch(
-  () => selectedRel.value,
-  (newPath) => {
-    if (newPath && !selectedIsDir.value) {
-      connectWatchSocket(newPath)
-    } else {
-      disconnectWatchSocket()
-    }
-  },
-)
-
-onBeforeUnmount(() => {
-  disconnectWatchSocket()
-  disconnectTreeWatchSocket()
-})
-
-const previewContentRef1 = ref<InstanceType<typeof FilePreviewContent> | null>(null)
-const previewContentRef2 = ref<InstanceType<typeof FilePreviewContent> | null>(null)
-const audioRef = computed(() => previewContentRef1.value?.audioRef ?? previewContentRef2.value?.audioRef ?? null)
-const audioPlaying = ref(false)
-const audioCurrent = ref(0)
-const audioDuration = ref(0)
-const audioVolValue = ref(100)
-
-const audioTitle = computed(() => (selectedRel.value ? selectedRel.value.split('/').pop() || selectedRel.value : ''))
-const audioSub = computed(() => '')
-const audioSeekValue = computed(() => {
-  const d = audioDuration.value
-  if (!d || !Number.isFinite(d)) return 0
-  const v = (audioCurrent.value / d) * 1000
-  return Math.max(0, Math.min(1000, Math.round(v)))
-})
-
-function fmtTime(sec: number): string {
-  if (!Number.isFinite(sec) || sec <= 0) return '00:00'
-  const s = Math.floor(sec)
-  const h = Math.floor(s / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  const ss = s % 60
-  const mm = String(m).padStart(2, '0')
-  const sss = String(ss).padStart(2, '0')
-  return h > 0 ? `${h}:${mm}:${sss}` : `${mm}:${sss}`
-}
-
-const audioTimeNow = computed(() => fmtTime(audioCurrent.value))
-const audioTimeTotal = computed(() => fmtTime(audioDuration.value))
-
-function syncAudioVol() {
-  const el = audioRef.value
-  if (!el) return
-  el.volume = Math.max(0, Math.min(1, audioVolValue.value / 100))
-}
-
-function toggleAudio() {
-  const el = audioRef.value
-  if (!el) return
-  syncAudioVol()
-  if (el.paused) {
-    void el.play().then(
-      () => (audioPlaying.value = true),
-      () => (audioPlaying.value = false),
-    )
-  } else {
-    el.pause()
-    audioPlaying.value = false
-  }
-}
-
-function seekAudio(deltaSec: number) {
-  const el = audioRef.value
-  if (!el) return
-  const d = Number.isFinite(el.duration) ? el.duration : audioDuration.value
-  const next = Math.max(0, Math.min(d || Infinity, (Number.isFinite(el.currentTime) ? el.currentTime : 0) + deltaSec))
-  el.currentTime = next
-  audioCurrent.value = next
-}
-
-function onAudioSeekInput(ev: Event) {
-  const el = audioRef.value
-  if (!el) return
-  const v = (ev.target as HTMLInputElement).valueAsNumber
-  const d = Number.isFinite(el.duration) ? el.duration : audioDuration.value
-  if (!d || !Number.isFinite(d)) return
-  const next = (Math.max(0, Math.min(1000, v)) / 1000) * d
-  el.currentTime = next
-  audioCurrent.value = next
-}
-
-function onAudioVolumeInput(ev: Event) {
-  audioVolValue.value = (ev.target as HTMLInputElement).valueAsNumber
-  syncAudioVol()
-}
-
-function onAudioTimeUpdate() {
-  const el = audioRef.value
-  if (!el) return
-  audioCurrent.value = Number.isFinite(el.currentTime) ? el.currentTime : 0
-  audioDuration.value = Number.isFinite(el.duration) ? el.duration : audioDuration.value
-  audioPlaying.value = !el.paused
-}
-
-function onAudioLoadedMetadata() {
-  const el = audioRef.value
-  if (!el) return
-  audioDuration.value = Number.isFinite(el.duration) ? el.duration : 0
-  audioCurrent.value = Number.isFinite(el.currentTime) ? el.currentTime : 0
-  syncAudioVol()
-}
-
-function onAudioEnded() {
-  audioPlaying.value = false
-}
-
+// --- Marked config ---
 marked.use({
   gfm: true,
   breaks: true,
   renderer: {
     code({ text, lang }: { text: string; lang?: string }) {
       const language = (lang || 'plaintext').trim() || 'plaintext'
-      let inner: string
-      try {
-        if (language !== 'plaintext' && hljs.getLanguage(language)) {
-          inner = hljs.highlight(text, { language }).value
-        } else if (language === 'plaintext') {
-          inner = esc(text)
-        } else {
-          inner = hljs.highlightAuto(text).value
-        }
-      } catch {
-        inner = esc(text)
-      }
       const safeLang = language.replace(/[^a-z0-9_-]/gi, '') || 'plaintext'
-      return `<pre><code class="hljs language-${safeLang}">${inner}</code></pre>`
+      return `<pre><code class="language-${safeLang}">${esc(text)}</code></pre>`
     },
   },
 })
 
-function close() {
-  emit('close')
+// --- Navigation ---
+function ensureParentsExpanded(rel: string) {
+  const parts = rel.split('/')
+  const next = new Set(expanded.value)
+  next.add('')
+  for (let i = 1; i < parts.length; i++) {
+    const ancestor = parts.slice(0, i).join('/')
+    if (!next.has(ancestor)) {
+      next.add(ancestor)
+      void ensureChildren(ancestor)
+    }
+  }
+  expanded.value = next
 }
 
-function onResize() {
-  isLandscape.value = window.innerWidth > window.innerHeight
-  const next = isNarrowViewport()
-  const was = narrow.value
-  narrow.value = next
-  if (!next) drawerOpen.value = false
-  else if (!was && next) drawerOpen.value = true
-  requestAnimationFrame(() => clampTreePaneWidth())
+function doGoBack() {
+  const entry = nav.goBack()
+  if (!entry) return
+  ensureParentsExpanded(entry.rel)
+  if (entry.isDir) onSelectDir(entry.rel)
+  else void onSelectFile(entry.rel)
 }
 
-watch(narrow, (isNarrow) => {
-  if (isNarrow) treeCollapsed.value = false
-})
+function doGoForward() {
+  const entry = nav.goForward()
+  if (!entry) return
+  ensureParentsExpanded(entry.rel)
+  if (entry.isDir) onSelectDir(entry.rel)
+  else void onSelectFile(entry.rel)
+}
 
-watch(
-  () => [selectedRel.value, selectedIsDir.value, meta.value?.kind, meta.value?.content, meta.value?.truncated],
-  () => {
-    if (selectedIsDir.value || !selectedRel.value) {
-      editorText.value = ''
-      editorBaseline.value = ''
-      return
-    }
-    const m = meta.value
-    if (m?.kind === 'text' || m?.kind === 'markdown') {
-      const c = m.content ?? ''
-      editorText.value = c
-      editorBaseline.value = c
-    } else {
-      editorText.value = ''
-      editorBaseline.value = ''
-    }
-  },
-)
+// --- Tree interactions ---
+function bumpTreePointerTs() { lastTreePointerTs.value = Date.now() }
 
-watch(
-  () => [rawUrl.value, meta.value?.kind],
-  () => {
-    if (meta.value?.kind !== 'audio') return
-    const el = audioRef.value
-    if (!el) return
-    el.pause()
-    audioPlaying.value = false
-    audioCurrent.value = 0
-    audioDuration.value = 0
-    syncAudioVol()
-  },
-)
-
-watch(selectedRel, () => {
-  mdShowPreview.value = false
-})
+function tryCloseDrawerFromChrome() {
+  if (!layout.narrow.value || !layout.drawerOpen.value) return
+  if (Date.now() - lastTreePointerTs.value < 450) return
+  layout.drawerOpen.value = false
+}
 
 function shouldBlockNavigate(): boolean {
-  if (
-    !editorDirty.value ||
-    !meta.value ||
-    (meta.value.kind !== 'text' && meta.value.kind !== 'markdown')
-  ) {
-    return false
-  }
+  if (!editorDirty.value || !meta.value || (meta.value.kind !== 'text' && meta.value.kind !== 'markdown')) return false
   return !confirm(t('filePreview.discardChanges'))
 }
 
@@ -1008,6 +530,75 @@ function parentRelPath(rel: string): string {
   return i === -1 ? '' : rel.slice(0, i)
 }
 
+function absolutePath(rel: string): string {
+  const root = cwdLabel.value.replace(/\/+$/, '')
+  return rel ? `${root}/${rel}` : root
+}
+
+function onSelectDir(rel: string) {
+  selectedRel.value = rel
+  selectedIsDir.value = true
+  meta.value = null
+  previewErr.value = ''
+  nav.pushNav(rel, true)
+  emit('navigate', absolutePath(rel))
+}
+
+async function onSelectFile(rel: string) {
+  selectedRel.value = rel
+  selectedIsDir.value = false
+  previewErr.value = ''
+  previewLoading.value = true
+  meta.value = null
+  officeLoading.value = false
+  officeErr.value = ''
+  officeHtml.value = ''
+  nav.pushNav(rel, false)
+  emit('navigate', absolutePath(rel))
+  try {
+    await getApiBase()
+    const q = new URLSearchParams({ pane_id: props.paneId, path: rel })
+    const res = await authFetch(apiUrl(`/api/workspace/meta?${q}`))
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}))
+      previewErr.value = j.error || 'error'
+      return
+    }
+    meta.value = await res.json()
+    if (meta.value?.kind === 'office') void loadOfficePreview(rel)
+  } catch {
+    previewErr.value = 'network'
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+// --- Tree data ---
+async function fetchList(rel: string): Promise<DirEntry[]> {
+  await getApiBase()
+  const q = new URLSearchParams({ pane_id: props.paneId, path: rel })
+  const res = await authFetch(apiUrl(`/api/workspace/list?${q}`))
+  if (!res.ok) throw new Error('list failed')
+  const data = await res.json()
+  cwdLabel.value = data.cwd || ''
+  return data.entries || []
+}
+
+async function ensureChildren(rel: string) {
+  if (childCache.value[rel]) return
+  const entries = await fetchList(rel)
+  childCache.value = { ...childCache.value, [rel]: entries }
+}
+
+function onToggle(rel: string) {
+  const next = new Set(expanded.value)
+  if (next.has(rel)) next.delete(rel)
+  else next.add(rel)
+  expanded.value = next
+  if (next.has(rel)) void ensureChildren(rel)
+}
+
+// --- Inline create/rename ---
 function newItemParentRel(): string {
   if (selectedIsDir.value && selectedRel.value) return selectedRel.value
   if (!selectedIsDir.value && selectedRel.value) return parentRelPath(selectedRel.value)
@@ -1032,10 +623,7 @@ function startNewFolder() {
 
 async function onInlineCreateCommit(name: string) {
   if (!inlineCreate.value) return
-  if (!name) {
-    inlineCreate.value = null
-    return
-  }
+  if (!name) { inlineCreate.value = null; return }
   const { parentRel, kind } = inlineCreate.value
   inlineCreate.value = null
   await getApiBase()
@@ -1055,9 +643,7 @@ async function onInlineCreateCommit(name: string) {
   const next = { ...childCache.value }
   delete next[parentRel]
   childCache.value = next
-  try {
-    await ensureChildren(parentRel)
-  } catch {}
+  try { await ensureChildren(parentRel) } catch {}
   if (kind === 'file') await onSelectFile(rel)
   else {
     expanded.value = new Set([...expanded.value, rel])
@@ -1066,48 +652,85 @@ async function onInlineCreateCommit(name: string) {
   }
 }
 
-function onInlineCreateCancel() {
-  inlineCreate.value = null
-}
+function onInlineCreateCancel() { inlineCreate.value = null }
 
-async function saveEditor() {
-  if (!canSaveEditor.value || !selectedRel.value) return
+async function onInlineRenameCommit(newName: string) {
+  if (!inlineRename.value) return
+  if (!newName) { inlineRename.value = null; return }
+  const { rel, isDir } = inlineRename.value
+  inlineRename.value = null
   await getApiBase()
-  const q = new URLSearchParams({ pane_id: props.paneId, path: selectedRel.value })
-  const res = await authFetch(apiUrl(`/api/workspace/file?${q}`), {
-    method: 'PUT',
+  const q = new URLSearchParams({ pane_id: props.paneId, path: rel })
+  const res = await authFetch(apiUrl(`/api/workspace/rename?${q}`), {
+    method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content: editorText.value }),
+    body: JSON.stringify({ new_name: newName }),
   })
-  if (!res.ok) return
-  editorBaseline.value = editorText.value
-  if (meta.value && (meta.value.kind === 'text' || meta.value.kind === 'markdown')) {
-    meta.value = { ...meta.value, content: editorText.value, truncated: false, message: undefined }
+  if (!res.ok) {
+    const j = await res.json().catch(() => ({}))
+    previewErr.value = j.error || 'rename failed'
+    return
+  }
+  previewErr.value = ''
+  const data = await res.json()
+  const newRel = data.rel as string
+  const parentRel = parentRelPath(rel)
+  const next = { ...childCache.value }
+  delete next[parentRel]
+  if (isDir) {
+    for (const k of Object.keys(next)) {
+      if (k === rel || k.startsWith(`${rel}/`)) delete next[k]
+    }
+  }
+  childCache.value = next
+  try { await ensureChildren(parentRel) } catch {}
+  if (selectedRel.value === rel) {
+    if (isDir) onSelectDir(newRel)
+    else await onSelectFile(newRel)
   }
 }
 
-function closeContextMenu() {
-  contextMenu.value = null
+function onInlineRenameCancel() { inlineRename.value = null }
+
+async function onMoveEntry(payload: { src: string; destDir: string }) {
+  const { src, destDir } = payload
+  if (!src) return
+  const srcParent = parentRelPath(src)
+  if (srcParent === destDir) return
+  await getApiBase()
+  const q = new URLSearchParams({ pane_id: props.paneId, path: src })
+  const res = await authFetch(apiUrl(`/api/workspace/move?${q}`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dest: destDir }),
+  })
+  if (!res.ok) {
+    const j = await res.json().catch(() => ({}))
+    previewErr.value = j.error || 'move failed'
+    return
+  }
+  previewErr.value = ''
+  const next = { ...childCache.value }
+  delete next[srcParent]
+  delete next[destDir]
+  for (const k of Object.keys(next)) {
+    if (k === src || k.startsWith(`${src}/`)) delete next[k]
+  }
+  childCache.value = next
+  try { await Promise.all([ensureChildren(srcParent), ensureChildren(destDir)]) } catch {}
 }
+
+// --- Context menu ---
+function closeContextMenu() { contextMenu.value = null }
 
 function onTreeContextMenu(payload: { ev: MouseEvent; rel: string; isDir: boolean }) {
   payload.ev.preventDefault()
-  contextMenu.value = {
-    x: payload.ev.clientX,
-    y: payload.ev.clientY,
-    rel: payload.rel,
-    isDir: payload.isDir,
-  }
+  contextMenu.value = { x: payload.ev.clientX, y: payload.ev.clientY, rel: payload.rel, isDir: payload.isDir }
 }
 
 function onTreeBgContextMenu(ev: MouseEvent) {
   ev.preventDefault()
-  contextMenu.value = {
-    x: ev.clientX,
-    y: ev.clientY,
-    rel: '',
-    isDir: true,
-  }
+  contextMenu.value = { x: ev.clientX, y: ev.clientY, rel: '', isDir: true }
 }
 
 function onTreeLongPress(pos: { clientX: number; clientY: number }, rel: string, isDir: boolean) {
@@ -1146,83 +769,6 @@ function ctxRename() {
   inlineRename.value = { rel: targetRel, isDir: targetIsDir }
 }
 
-async function onInlineRenameCommit(newName: string) {
-  if (!inlineRename.value) return
-  if (!newName) {
-    inlineRename.value = null
-    return
-  }
-  const { rel, isDir } = inlineRename.value
-  inlineRename.value = null
-  await getApiBase()
-  const q = new URLSearchParams({ pane_id: props.paneId, path: rel })
-  const res = await authFetch(apiUrl(`/api/workspace/rename?${q}`), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ new_name: newName }),
-  })
-  if (!res.ok) {
-    const j = await res.json().catch(() => ({}))
-    previewErr.value = j.error || 'rename failed'
-    return
-  }
-  previewErr.value = ''
-  const data = await res.json()
-  const newRel = data.rel as string
-  const parentRel = parentRelPath(rel)
-  const next = { ...childCache.value }
-  delete next[parentRel]
-  if (isDir) {
-    for (const k of Object.keys(next)) {
-      if (k === rel || k.startsWith(`${rel}/`)) delete next[k]
-    }
-  }
-  childCache.value = next
-  try {
-    await ensureChildren(parentRel)
-  } catch {}
-  if (selectedRel.value === rel) {
-    if (isDir) onSelectDir(newRel)
-    else await onSelectFile(newRel)
-  }
-}
-
-function onInlineRenameCancel() {
-  inlineRename.value = null
-}
-
-async function onMoveEntry(payload: { src: string; destDir: string }) {
-  const { src, destDir } = payload
-  if (!src) return
-  const srcParent = parentRelPath(src)
-  if (srcParent === destDir) return
-
-  await getApiBase()
-  const q = new URLSearchParams({ pane_id: props.paneId, path: src })
-  const res = await authFetch(apiUrl(`/api/workspace/move?${q}`), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ dest: destDir }),
-  })
-  if (!res.ok) {
-    const j = await res.json().catch(() => ({}))
-    previewErr.value = j.error || 'move failed'
-    return
-  }
-  previewErr.value = ''
-
-  const next = { ...childCache.value }
-  delete next[srcParent]
-  delete next[destDir]
-  for (const k of Object.keys(next)) {
-    if (k === src || k.startsWith(`${src}/`)) delete next[k]
-  }
-  childCache.value = next
-  try {
-    await Promise.all([ensureChildren(srcParent), ensureChildren(destDir)])
-  } catch {}
-}
-
 async function ctxDelete() {
   if (!contextMenu.value) return
   const { rel, isDir } = contextMenu.value
@@ -1230,8 +776,7 @@ async function ctxDelete() {
   const targetRel = rel || selectedRel.value
   const targetIsDir = rel ? isDir : selectedIsDir.value
   if (!targetRel) return
-  const discardNeeded =
-    editorDirty.value && meta.value && (meta.value.kind === 'text' || meta.value.kind === 'markdown')
+  const discardNeeded = editorDirty.value && meta.value && (meta.value.kind === 'text' || meta.value.kind === 'markdown')
   const prevRel = selectedRel.value
   const prevIsDir = selectedIsDir.value
   const prevMeta = meta.value
@@ -1251,109 +796,34 @@ async function ctxDelete() {
   }
 }
 
-function onCloseContextScroll() {
-  if (contextMenu.value) contextMenu.value = null
-}
-
-function onEditorSaveKeydown(e: KeyboardEvent) {
-  if (contextMenu.value && e.key === 'Escape') {
-    e.preventDefault()
-    closeContextMenu()
-    return
-  }
-  if (!props.visible) return
-  const saveChord =
-    (e.metaKey || e.ctrlKey) && (e.code === 'KeyS' || e.key === 's' || e.key === 'S')
-  if (!saveChord) return
-  if (!canSaveEditorContext.value) return
-  e.preventDefault()
-  if (canSaveEditor.value) void saveEditor()
-}
-
-async function fetchList(rel: string): Promise<DirEntry[]> {
+// --- Editor ---
+async function saveEditor() {
+  if (!canSaveEditor.value || !selectedRel.value) return
   await getApiBase()
-  const q = new URLSearchParams({ pane_id: props.paneId, path: rel })
-  const res = await authFetch(apiUrl(`/api/workspace/list?${q}`))
-  if (!res.ok) throw new Error('list failed')
-  const data = await res.json()
-  cwdLabel.value = data.cwd || ''
-  return data.entries || []
-}
-
-async function ensureChildren(rel: string) {
-  const key = rel
-  if (childCache.value[key]) return
-  const entries = await fetchList(rel)
-  childCache.value = { ...childCache.value, [key]: entries }
-}
-
-function onToggle(rel: string) {
-  const next = new Set(expanded.value)
-  if (next.has(rel)) next.delete(rel)
-  else next.add(rel)
-  expanded.value = next
-  if (next.has(rel)) void ensureChildren(rel)
-}
-
-function absolutePath(rel: string): string {
-  const root = cwdLabel.value.replace(/\/+$/, '')
-  return rel ? `${root}/${rel}` : root
-}
-
-function onSelectDir(rel: string) {
-  selectedRel.value = rel
-  selectedIsDir.value = true
-  meta.value = null
-  previewErr.value = ''
-  pushNav(rel, true)
-  emit('navigate', absolutePath(rel))
-}
-
-async function onSelectFile(rel: string) {
-  selectedRel.value = rel
-  selectedIsDir.value = false
-  previewErr.value = ''
-  previewLoading.value = true
-  meta.value = null
-  officeLoading.value = false
-  officeErr.value = ''
-  officeHtml.value = ''
-  pushNav(rel, false)
-  emit('navigate', absolutePath(rel))
-  try {
-    await getApiBase()
-    const q = new URLSearchParams({ pane_id: props.paneId, path: rel })
-    const res = await authFetch(apiUrl(`/api/workspace/meta?${q}`))
-    if (!res.ok) {
-      const j = await res.json().catch(() => ({}))
-      previewErr.value = j.error || 'error'
-      return
-    }
-    meta.value = await res.json()
-    if (meta.value?.kind === 'office') {
-      void loadOfficePreview(rel)
-    }
-  } catch {
-    previewErr.value = 'network'
-  } finally {
-    previewLoading.value = false
+  const q = new URLSearchParams({ pane_id: props.paneId, path: selectedRel.value })
+  const res = await authFetch(apiUrl(`/api/workspace/file?${q}`), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: editorText.value }),
+  })
+  if (!res.ok) return
+  editorBaseline.value = editorText.value
+  if (meta.value && (meta.value.kind === 'text' || meta.value.kind === 'markdown')) {
+    meta.value = { ...meta.value, content: editorText.value, truncated: false, message: undefined }
   }
 }
 
+// --- Office preview ---
 function officeNodeToHtml(node: any): string {
   if (!node) return ''
   const type = String(node.type || '')
   if (type === 'table') {
     const rows = Array.isArray(node.children) ? node.children : []
-    const tr = rows
-      .map((r: any) => {
-        const cells = Array.isArray(r.children) ? r.children : []
-        const tds = cells
-          .map((c: any) => `<td>${esc(String(c.text ?? ''))}</td>`)
-          .join('')
-        return `<tr>${tds}</tr>`
-      })
-      .join('')
+    const tr = rows.map((r: any) => {
+      const cells = Array.isArray(r.children) ? r.children : []
+      const tds = cells.map((c: any) => `<td>${esc(String(c.text ?? ''))}</td>`).join('')
+      return `<tr>${tds}</tr>`
+    }).join('')
     return `<table>${tr}</table>`
   }
   if (type === 'list') {
@@ -1397,103 +867,8 @@ async function loadOfficePreview(rel: string) {
   }
 }
 
-async function reloadAll() {
-  inlineCreate.value = null
-  contextMenu.value = null
-  childCache.value = {}
-  expanded.value = new Set([''])
-  previewErr.value = ''
-  meta.value = null
-  try {
-    await ensureChildren('')
-  } catch {
-    previewErr.value = 'list failed'
-  }
-}
-
-watch(
-  () => [props.visible, props.paneId, props.embedded],
-  () => {
-    if (props.visible && props.paneId && !props.embedded) void boot()
-  },
-  { immediate: true },
-)
-
-async function boot() {
-  drawerOpen.value = false
-  selectedRel.value = null
-  selectedIsDir.value = false
-  meta.value = null
-  previewErr.value = ''
-  inlineCreate.value = null
-  contextMenu.value = null
-  childCache.value = {}
-  expanded.value = new Set([''])
-  try {
-    await ensureChildren('')
-    connectTreeWatchSocket()
-  } catch {
-    previewErr.value = 'list failed'
-  }
-}
-
-function bumpPreviewLayout() {
-  void nextTick().then(() => {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        window.dispatchEvent(new Event('resize'))
-      })
-    })
-  })
-}
-
-async function openFromTerminal(path: string) {
-  await getApiBase()
-  const q = new URLSearchParams({ pane_id: props.paneId, path })
-  const res = await authFetch(apiUrl(`/api/workspace/resolve?${q}`))
-  if (!res.ok) return
-  const { rel } = await res.json()
-  previewErr.value = ''
-  inlineCreate.value = null
-  contextMenu.value = null
-  childCache.value = {}
-  expanded.value = new Set([''])
-  try {
-    await ensureChildren('')
-  } catch {
-    previewErr.value = 'list failed'
-    return
-  }
-  const parts = rel.split('/').filter(Boolean)
-  if (parts.length === 0) {
-    selectedRel.value = null
-    selectedIsDir.value = false
-    meta.value = null
-    bumpPreviewLayout()
-    return
-  }
-  let acc = ''
-  const nextExpanded = new Set(expanded.value)
-  for (let i = 0; i < parts.length - 1; i++) {
-    acc = acc ? `${acc}/${parts[i]}` : parts[i]
-    nextExpanded.add(acc)
-    await ensureChildren(acc)
-  }
-  expanded.value = nextExpanded
-  const base = parts[parts.length - 1]
-  const parentRel = parts.slice(0, -1).join('/')
-  await ensureChildren(parentRel)
-  const full = rel
-  const parentEntries = childCache.value[parentRel]
-  const entry = parentEntries?.find((e) => e.name === base)
-  if (entry?.is_dir) onSelectDir(full)
-  else await onSelectFile(full)
-  bumpPreviewLayout()
-}
-
-function triggerUpload() {
-  fileInputRef.value?.click()
-}
+// --- Upload/Download/Delete ---
+function triggerUpload() { fileInputRef.value?.click() }
 
 async function uploadFiles(files: { file: File; path: string }[]) {
   if (!files.length) return
@@ -1507,14 +882,14 @@ async function uploadFiles(files: { file: File; path: string }[]) {
   }
   try {
     const res = await authFetch(apiUrl(`/api/workspace/upload?${q}`), { method: 'POST', body: fd })
-    if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText)
-      console.error('[upload] server error:', res.status, text)
-    }
+    if (!res.ok) console.error('[upload] server error:', res.status)
   } catch (e) {
     console.error('[upload] request failed:', e)
   }
-  await reloadAll()
+  const next = { ...childCache.value }
+  delete next[dir]
+  childCache.value = next
+  try { await ensureChildren(dir) } catch {}
 }
 
 async function onFilePick(ev: Event) {
@@ -1527,11 +902,7 @@ async function onFilePick(ev: Event) {
     files.push({ file: f, path: f.webkitRelativePath || f.name })
   }
   inp.value = ''
-  try {
-    await uploadFiles(files)
-  } catch (e) {
-    console.error('[upload] file pick upload failed:', e)
-  }
+  try { await uploadFiles(files) } catch (e) { console.error('[upload]', e) }
 }
 
 async function traverseEntry(entry: FileSystemEntry, basePath: string): Promise<{ file: File; path: string }[]> {
@@ -1540,10 +911,7 @@ async function traverseEntry(entry: FileSystemEntry, basePath: string): Promise<
     try {
       const file = await new Promise<File>((resolve, reject) => fileEntry.file(resolve, reject))
       return [{ file, path: basePath + entry.name }]
-    } catch (e) {
-      console.warn('[upload] skip unreadable file:', basePath + entry.name, e)
-      return []
-    }
+    } catch { return [] }
   }
   if (entry.isDirectory) {
     const dirEntry = entry as FileSystemDirectoryEntry
@@ -1555,10 +923,7 @@ async function traverseEntry(entry: FileSystemEntry, basePath: string): Promise<
         batch = await new Promise<FileSystemEntry[]>((resolve, reject) => reader.readEntries(resolve, reject))
         entries.push(...batch)
       } while (batch.length > 0)
-    } catch (e) {
-      console.warn('[upload] skip unreadable directory:', basePath + entry.name, e)
-      return []
-    }
+    } catch { return [] }
     const results: { file: File; path: string }[] = []
     const childResults = await Promise.all(entries.map(child => traverseEntry(child, basePath + entry.name + '/')))
     for (const r of childResults) results.push(...r)
@@ -1574,19 +939,10 @@ async function onDrop(ev: DragEvent) {
   const promises: Promise<void>[] = []
   for (let i = 0; i < items.length; i++) {
     const entry = items[i].webkitGetAsEntry?.()
-    if (entry) {
-      promises.push(traverseEntry(entry, '').then(files => { allFiles.push(...files) }))
-    }
+    if (entry) promises.push(traverseEntry(entry, '').then(files => { allFiles.push(...files) }))
   }
-  try {
-    await Promise.all(promises)
-  } catch (e) {
-    console.error('[upload] directory traversal failed:', e)
-  }
-  if (!allFiles.length) {
-    console.warn('[upload] no files resolved from drop')
-    return
-  }
+  try { await Promise.all(promises) } catch {}
+  if (!allFiles.length) return
   await uploadFiles(allFiles)
 }
 
@@ -1642,35 +998,155 @@ async function deleteSelected(skipConfirm = false): Promise<boolean> {
   officeErr.value = ''
   officeHtml.value = ''
   emit('navigate', absolutePath(parentRel))
-  try {
-    await ensureChildren(parentRel)
-  } catch {}
+  try { await ensureChildren(parentRel) } catch {}
   return true
 }
 
-const { startDrag } = usePaneResize('.file-workspace', direction)
+// --- Reload/Boot ---
+async function reloadAll() {
+  inlineCreate.value = null
+  contextMenu.value = null
+  childCache.value = {}
+  expanded.value = new Set([''])
+  previewErr.value = ''
+  meta.value = null
+  try { await ensureChildren('') } catch { previewErr.value = 'list failed' }
+}
+
+async function boot() {
+  layout.drawerOpen.value = false
+  selectedRel.value = null
+  selectedIsDir.value = false
+  meta.value = null
+  previewErr.value = ''
+  inlineCreate.value = null
+  contextMenu.value = null
+  childCache.value = {}
+  expanded.value = new Set([''])
+  try {
+    await ensureChildren('')
+    fileWatch.connectTreeWatchSocket()
+  } catch { previewErr.value = 'list failed' }
+}
+
+function close() { emit('close') }
+
+// --- Open from terminal ---
+async function openFromTerminal(path: string) {
+  await getApiBase()
+  const q = new URLSearchParams({ pane_id: props.paneId, path })
+  const res = await authFetch(apiUrl(`/api/workspace/resolve?${q}`))
+  if (!res.ok) return
+  const { rel } = await res.json()
+  previewErr.value = ''
+  inlineCreate.value = null
+  contextMenu.value = null
+  childCache.value = {}
+  expanded.value = new Set([''])
+  try { await ensureChildren('') } catch { previewErr.value = 'list failed'; return }
+  const parts = rel.split('/').filter(Boolean)
+  if (parts.length === 0) {
+    selectedRel.value = null
+    selectedIsDir.value = false
+    meta.value = null
+    return
+  }
+  let acc = ''
+  const nextExpanded = new Set(expanded.value)
+  for (let i = 0; i < parts.length - 1; i++) {
+    acc = acc ? `${acc}/${parts[i]}` : parts[i]
+    nextExpanded.add(acc)
+    await ensureChildren(acc)
+  }
+  expanded.value = nextExpanded
+  const base = parts[parts.length - 1]
+  const parentRel = parts.slice(0, -1).join('/')
+  await ensureChildren(parentRel)
+  const full = rel
+  const parentEntries = childCache.value[parentRel]
+  const entry = parentEntries?.find((e) => e.name === base)
+  if (entry?.is_dir) onSelectDir(full)
+  else await onSelectFile(full)
+}
+
+// --- Keyboard ---
+function onEditorSaveKeydown(e: KeyboardEvent) {
+  if (contextMenu.value && e.key === 'Escape') {
+    e.preventDefault()
+    closeContextMenu()
+    return
+  }
+  if (!props.visible) return
+  const saveChord = (e.metaKey || e.ctrlKey) && (e.code === 'KeyS' || e.key === 's' || e.key === 'S')
+  if (!saveChord) return
+  if (!canSaveEditorContext.value) return
+  e.preventDefault()
+  if (canSaveEditor.value) void saveEditor()
+}
+
+function onCloseContextScroll() {
+  if (contextMenu.value) contextMenu.value = null
+}
+
+// --- Watchers ---
+watch(layout.narrow, (isNarrow) => {
+  if (isNarrow) treeCollapsed.value = false
+})
+
+watch(
+  () => [selectedRel.value, selectedIsDir.value, meta.value?.kind, meta.value?.content, meta.value?.truncated],
+  () => {
+    if (selectedIsDir.value || !selectedRel.value) {
+      editorText.value = ''
+      editorBaseline.value = ''
+      return
+    }
+    const m = meta.value
+    if (m?.kind === 'text' || m?.kind === 'markdown') {
+      const c = m.content ?? ''
+      editorText.value = c
+      editorBaseline.value = c
+    } else {
+      editorText.value = ''
+      editorBaseline.value = ''
+    }
+  },
+)
+
+watch(
+  () => [rawUrl.value, meta.value?.kind],
+  () => {
+    if (meta.value?.kind !== 'audio') return
+    audio.resetAudio(audioRef.value)
+  },
+)
+
+watch(selectedRel, () => { mdShowPreview.value = false; htmlShowPreview.value = false })
+
+watch(
+  () => [props.visible, props.paneId, props.embedded],
+  () => {
+    if (props.visible && props.paneId && !props.embedded) void boot()
+  },
+  { immediate: true },
+)
+
+// --- Lifecycle ---
+const { startDrag } = usePaneResize('.file-workspace', layout.direction)
 
 onMounted(() => {
-  window.addEventListener('resize', onResize)
+  window.addEventListener('resize', layout.onResize)
   window.addEventListener('keydown', onEditorSaveKeydown, true)
   window.addEventListener('scroll', onCloseContextScroll, true)
   void getApiBase()
 })
+
 onBeforeUnmount(() => {
-  window.removeEventListener('resize', onResize)
+  window.removeEventListener('resize', layout.onResize)
   window.removeEventListener('keydown', onEditorSaveKeydown, true)
   window.removeEventListener('scroll', onCloseContextScroll, true)
+  fileWatch.disconnectTreeWatchSocket()
 })
-
-function openDrawer() {
-  if (!narrow.value) return
-  drawerOpen.value = true
-}
-
-function toggleDrawer() {
-  if (!narrow.value) return
-  drawerOpen.value = !drawerOpen.value
-}
 
 defineExpose({
   openFromTerminal,
@@ -1681,13 +1157,13 @@ defineExpose({
   startNewFile,
   startNewFolder,
   saveEditor,
-  openDrawer,
-  toggleDrawer,
-  drawerOpen,
-  canGoBack,
-  canGoForward,
-  goBack,
-  goForward,
+  openDrawer: layout.openDrawer,
+  toggleDrawer: layout.toggleDrawer,
+  drawerOpen: layout.drawerOpen,
+  canGoBack: nav.canGoBack,
+  canGoForward: nav.canGoForward,
+  goBack: doGoBack,
+  goForward: doGoForward,
 })
 </script>
 
@@ -1790,22 +1266,8 @@ defineExpose({
   cursor: default;
 }
 
-.file-workspace-toolbar .file-workspace-delete-btn:not(:disabled) {
-  color: var(--color-red, #c91b00);
-}
-
-.file-workspace-toolbar .file-workspace-delete-btn:not(:disabled):hover {
-  color: var(--color-red, #ff453a);
-}
-
-.file-workspace-add-menu {
-  position: relative;
-}
-.file-workspace-add-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 199;
-}
+.file-workspace-add-menu { position: relative; }
+.file-workspace-add-backdrop { position: fixed; inset: 0; z-index: 199; }
 .file-workspace-add-dropdown {
   position: absolute;
   top: calc(100% + 4px);
@@ -1829,9 +1291,7 @@ defineExpose({
   white-space: nowrap;
   border-radius: 0;
 }
-.file-workspace-add-dropdown button:hover {
-  background: rgba(255,255,255,0.06);
-}
+.file-workspace-add-dropdown button:hover { background: rgba(255,255,255,0.06); }
 
 .file-workspace-cwd {
   flex: 1;
@@ -1868,11 +1328,6 @@ defineExpose({
   pointer-events: none;
 }
 
-.file-workspace-body.drawer-mode .file-workspace-preview {
-  flex: 1 1 0;
-  min-height: 0;
-}
-
 .file-workspace-tree-wrap {
   min-width: 120px;
   overflow: auto;
@@ -1889,9 +1344,7 @@ defineExpose({
   transition: background 0.12s;
 }
 
-.file-workspace-tree-splitter:hover {
-  background: var(--accent, #89b4fa);
-}
+.file-workspace-tree-splitter:hover { background: var(--accent, #89b4fa); }
 
 .file-workspace-tree-reveal {
   flex-shrink: 0;
@@ -1930,220 +1383,7 @@ defineExpose({
   z-index: 110;
 }
 
-.file-workspace-body.drawer-mode {
-  position: relative;
-}
-
-.file-explorer-actions {
-  display: flex;
-  gap: 2px;
-  padding: 4px 6px;
-  border-bottom: 1px solid var(--border, #333);
-  flex-shrink: 0;
-  background: var(--tab-bg, #252525);
-}
-
-.file-explorer-icon-btn {
-  flex: 0 0 auto;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  padding: 2px 4px;
-  border-radius: 3px;
-  opacity: 0.85;
-}
-
-.file-explorer-icon-btn:hover {
-  background: var(--tab-hover-bg, #333);
-  opacity: 1;
-}
-
-.file-editor-root {
-  flex: 1 1 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.file-editor-chrome {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--border, #333);
-  background: var(--tab-bg, #252525);
-  flex-shrink: 0;
-}
-
-.file-editor-dirty {
-  font-size: 12px;
-  color: var(--color-orange, #d19a66);
-}
-
-.file-editor-tab {
-  border: none;
-  background: var(--bg, #1a1a1a);
-  color: var(--fg-muted, #888);
-  font-size: 12px;
-  padding: 3px 8px;
-  border-radius: 3px;
-  cursor: pointer;
-}
-
-.file-editor-tab:hover {
-  color: var(--fg, #ccc);
-}
-
-.file-editor-save {
-  margin-left: auto;
-  border: none;
-  background: var(--accent, #0e639c);
-  color: #fff;
-  font-size: 12px;
-  padding: 4px 12px;
-  border-radius: 3px;
-  cursor: pointer;
-}
-
-.file-editor-save:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.file-code-preview {
-  flex: 1 1 0;
-  min-height: 0;
-  display: flex;
-  overflow: hidden;
-  position: relative;
-}
-
-.file-code-line-numbers {
-  flex-shrink: 0;
-  width: clamp(40px, 5vw, 60px);
-  overflow: hidden;
-  background: var(--bg, #1a1a1a);
-  border-right: 1px solid var(--border, #333);
-  user-select: none;
-  margin: 0;
-  padding: clamp(8px, 2vmin, 14px) clamp(6px, 1.5vmin, 12px) clamp(8px, 2vmin, 14px) 0;
-  text-align: right;
-  color: var(--fg-muted, #666);
-  font-family: var(--font-mono);
-  font-size: var(--preview-code-fs, 13px);
-  line-height: 1.45;
-  white-space: pre;
-}
-
-.file-code-editor {
-  flex: 1 1 0;
-  min-height: 0;
-  position: relative;
-  overflow: hidden;
-}
-
-.file-code-highlighted {
-  position: absolute;
-  inset: 0;
-  margin: 0;
-  padding: clamp(8px, 2vmin, 14px);
-  font-family: var(--font-mono);
-  font-size: var(--preview-code-fs, 13px);
-  line-height: 1.45;
-  background: var(--bg-surface, #141414);
-  color: var(--fg, #ccc);
-  white-space: pre;
-  overflow: auto;
-  pointer-events: none;
-  z-index: 1;
-}
-
-.file-code-highlighted code {
-  font-family: inherit;
-  font-size: inherit;
-  background: none;
-  padding: 0;
-}
-
-.file-editor-textarea {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  box-sizing: border-box;
-  border: none;
-  resize: none;
-  margin: 0;
-  padding: clamp(8px, 2vmin, 14px);
-  font-family: var(--font-mono);
-  font-size: var(--preview-code-fs, 13px);
-  line-height: 1.45;
-  background: transparent;
-  color: transparent;
-  caret-color: var(--fg, #ccc);
-  outline: none;
-  z-index: 2;
-  overflow: auto;
-}
-
-.file-editor-textarea:disabled {
-  opacity: 0.65;
-}
-
-.file-editor-textarea::selection {
-  background: rgba(100, 150, 255, 0.3);
-}
-
-.file-code-highlighted :deep(.hljs-keyword) {
-  color: var(--color-magenta, #ca30c7);
-}
-.file-code-highlighted :deep(.hljs-string) {
-  color: var(--color-green, #00c200);
-}
-.file-code-highlighted :deep(.hljs-number) {
-  color: var(--color-yellow, #c7c400);
-}
-.file-code-highlighted :deep(.hljs-comment) {
-  color: var(--fg-muted, #666);
-  font-style: italic;
-}
-.file-code-highlighted :deep(.hljs-title),
-.file-code-highlighted :deep(.hljs-name) {
-  color: var(--color-cyan, #56b6c2);
-}
-.file-code-highlighted :deep(.hljs-attr) {
-  color: var(--color-orange, #d19a66);
-}
-.file-code-highlighted :deep(.hljs-built_in) {
-  color: var(--accent, #89b4fa);
-}
-
-.file-editor-preview {
-  flex: 1 1 0;
-  min-height: 0;
-  overflow: auto;
-}
-
-.file-workspace-tree :deep(.tree-inline-create) {
-  align-items: center;
-}
-
-.file-workspace-tree :deep(.tree-inline-input) {
-  flex: 1;
-  min-width: 0;
-  font-size: 13px;
-  padding: 2px 6px;
-  border: 1px solid var(--accent, #89b4fa);
-  border-radius: 2px;
-  background: var(--bg-surface, #141414);
-  color: var(--fg, #ccc);
-  outline: none;
-  font-family: var(--font-mono);
-}
+.file-workspace-body.drawer-mode { position: relative; }
 
 .file-workspace-tree {
   --tree-base-hpad: 8px;
@@ -2158,13 +1398,10 @@ defineExpose({
   min-height: 100%;
   font-size: 13px;
   line-height: var(--tree-row-height);
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
-    Arial, sans-serif;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
 }
 
-.file-workspace-tree :deep(.tree-rows) {
-  user-select: none;
-}
+.file-workspace-tree :deep(.tree-rows) { user-select: none; }
 
 .file-workspace-tree :deep(.tree-row) {
   display: flex;
@@ -2178,23 +1415,10 @@ defineExpose({
   border-radius: 2px;
 }
 
-.file-workspace-tree :deep(.tree-row:hover) {
-  background: var(--tree-row-hover);
-}
-
-.file-workspace-tree :deep(.tree-row.drop-target) {
-  background: var(--tree-row-selected);
-  outline: 1px solid var(--focus-border, #007fd4);
-  outline-offset: -1px;
-}
-
-.file-workspace-tree :deep(.tree-row:has(.tree-label.sel)) {
-  background: var(--tree-row-selected);
-}
-
-.file-workspace-tree :deep(.tree-row:has(.tree-label.sel):hover) {
-  background: var(--tree-row-selected);
-}
+.file-workspace-tree :deep(.tree-row:hover) { background: var(--tree-row-hover); }
+.file-workspace-tree :deep(.tree-row.drop-target) { background: var(--tree-row-selected); outline: 1px solid var(--focus-border, #007fd4); outline-offset: -1px; }
+.file-workspace-tree :deep(.tree-row:has(.tree-label.sel)) { background: var(--tree-row-selected); }
+.file-workspace-tree :deep(.tree-row:has(.tree-label.sel):hover) { background: var(--tree-row-selected); }
 
 .file-workspace-tree :deep(.tree-twistie) {
   border: none;
@@ -2214,10 +1438,7 @@ defineExpose({
   opacity: 0.9;
 }
 
-.file-workspace-tree :deep(.tree-twistie:focus-visible) {
-  outline: 1px solid var(--accent, #007fd4);
-  outline-offset: -1px;
-}
+.file-workspace-tree :deep(.tree-twistie:focus-visible) { outline: 1px solid var(--accent, #007fd4); outline-offset: -1px; }
 
 .file-workspace-tree :deep(.tree-twistie-placeholder) {
   flex-shrink: 0;
@@ -2228,13 +1449,7 @@ defineExpose({
   pointer-events: none;
 }
 
-.file-workspace-tree :deep(.tree-folder-hit) {
-  display: flex;
-  flex: 1 1 0;
-  align-items: center;
-  min-width: 0;
-  cursor: pointer;
-}
+.file-workspace-tree :deep(.tree-folder-hit) { display: flex; flex: 1 1 0; align-items: center; min-width: 0; cursor: pointer; }
 
 .file-workspace-tree :deep(.tree-label) {
   cursor: pointer;
@@ -2247,467 +1462,28 @@ defineExpose({
   font-weight: 400;
 }
 
-.file-workspace-tree :deep(.tree-label.sel) {
-  color: var(--tree-row-selected-fg);
-}
+.file-workspace-tree :deep(.tree-label.sel) { color: var(--tree-row-selected-fg); }
+.file-workspace-tree :deep(.tree-row:has(.tree-label.sel) .tree-twistie) { color: rgba(255, 255, 255, 0.82); }
+.file-workspace-tree :deep(.tree-row:has(.tree-label.sel) .tree-kind-icon-folder) { color: var(--tree-folder-icon-selected, #e8dcc4); }
+.file-workspace-tree :deep(.tree-row:has(.tree-label.sel) .tree-kind-icon-file) { color: var(--tree-file-icon-selected, #b4e1ff); }
 
-.file-workspace-tree :deep(.tree-row:has(.tree-label.sel) .tree-twistie) {
-  color: rgba(255, 255, 255, 0.82);
-}
+.file-workspace-tree :deep(.tree-kind-icon) { flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: var(--tree-icon-size); height: var(--tree-icon-size); margin-right: 6px; }
+.file-workspace-tree :deep(.tree-kind-icon-folder) { width: var(--tree-icon-size); height: var(--tree-icon-size); color: var(--tree-folder-icon, #dcb67a); }
+.file-workspace-tree :deep(.tree-kind-icon-file) { color: var(--tree-file-icon, #90caf9); }
+.file-workspace-tree :deep(.tree-svg) { width: 100%; height: 100%; max-width: 100%; max-height: 100%; display: block; flex-shrink: 0; }
 
-.file-workspace-tree :deep(.tree-row:has(.tree-label.sel) .tree-kind-icon-folder) {
-  color: var(--tree-folder-icon-selected, #e8dcc4);
-}
-
-.file-workspace-tree :deep(.tree-row:has(.tree-label.sel) .tree-kind-icon-file) {
-  color: var(--tree-file-icon-selected, #b4e1ff);
-}
-
-.file-workspace-tree :deep(.tree-kind-icon) {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--tree-icon-size);
-  height: var(--tree-icon-size);
-  margin-right: 6px;
-}
-
-.file-workspace-tree :deep(.tree-kind-icon-folder) {
-  width: var(--tree-icon-size);
-  height: var(--tree-icon-size);
-  color: var(--tree-folder-icon, #dcb67a);
-}
-
-.file-workspace-tree :deep(.tree-kind-icon-file) {
-  color: var(--tree-file-icon, #90caf9);
-}
-
-.file-workspace-tree :deep(.tree-svg) {
-  width: 100%;
-  height: 100%;
-  max-width: 100%;
-  max-height: 100%;
-  display: block;
-  flex-shrink: 0;
-}
-
-.file-workspace-preview {
-  --preview-code-fs: 13px;
-  --preview-prose-fs: clamp(12px, 2.55vmin, 17px);
-  flex: 1 1 0;
+.file-workspace-tree :deep(.tree-inline-create) { align-items: center; }
+.file-workspace-tree :deep(.tree-inline-input) {
+  flex: 1;
   min-width: 0;
-  min-height: 0;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
+  font-size: 13px;
+  padding: 2px 6px;
+  border: 1px solid var(--accent, #89b4fa);
+  border-radius: 2px;
   background: var(--bg-surface, #141414);
-}
-
-.file-workspace-placeholder {
-  flex: 1 1 0;
-  min-height: min(120px, 35vh);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--fg-muted, #888);
-  font-size: clamp(12px, 2.6vmin, 17px);
-  padding: clamp(8px, 2vmin, 16px);
-  text-align: center;
-}
-
-.file-workspace-placeholder.err {
-  color: var(--color-red, #c91b00);
-}
-
-.file-workspace-preview > img.file-media,
-.file-workspace-preview > video.file-media {
-  flex: 1 1 0;
-  min-height: 0;
-  width: 100%;
-  height: 100%;
-  max-width: 100%;
-  max-height: 100%;
-  align-self: stretch;
-  object-fit: contain;
-}
-
-video.file-media {
-  background: #000;
-}
-
-.file-audio-player {
-  flex: 1 1 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 14px;
-  padding: clamp(12px, 2.4vmin, 22px);
-  box-sizing: border-box;
-  color: var(--fg, #d6d6d6);
-}
-
-.file-audio-el {
-  display: none;
-}
-
-.file-audio-head {
-  display: flex;
-  gap: 14px;
-  align-items: center;
-}
-
-.file-audio-cover {
-  width: clamp(64px, 9vmin, 92px);
-  height: clamp(64px, 9vmin, 92px);
-  border-radius: 14px;
-  background: linear-gradient(140deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.03));
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: clamp(26px, 4.6vmin, 36px);
-  color: rgba(255, 255, 255, 0.85);
-  flex: 0 0 auto;
-}
-
-.file-audio-meta {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.file-audio-title {
-  font-size: clamp(15px, 3vmin, 20px);
-  font-weight: 650;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--fg-bright, #ededed);
-}
-
-.file-audio-sub {
-  font-size: clamp(12px, 2.3vmin, 14px);
-  color: var(--fg-muted, #9a9a9a);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.file-audio-bar {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  gap: 10px;
-  align-items: center;
-}
-
-.file-audio-time {
-  font-variant-numeric: tabular-nums;
-  font-size: 12px;
-  color: var(--fg-muted, #9a9a9a);
-}
-
-.file-audio-seek {
-  width: 100%;
-  accent-color: rgba(255, 255, 255, 0.85);
-}
-
-.file-audio-controls {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.file-audio-btn {
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--fg, #d6d6d6);
-  border-radius: 12px;
-  padding: 8px 10px;
-  line-height: 1;
-  cursor: pointer;
-  user-select: none;
-}
-
-.file-audio-btn.play {
-  padding: 10px 14px;
-  font-weight: 650;
-}
-
-.file-audio-spacer {
-  flex: 1 1 0;
-  min-width: 0;
-}
-
-.file-audio-vol-ico {
-  color: var(--fg-muted, #9a9a9a);
-  font-size: 12px;
-}
-
-.file-audio-vol {
-  width: 140px;
-  max-width: 30vw;
-  accent-color: rgba(255, 255, 255, 0.85);
-}
-
-.file-office {
-  flex: 1 1 0;
-  min-height: 0;
-  overflow: auto;
-  padding: clamp(10px, 2.2vmin, 18px);
   color: var(--fg, #ccc);
-}
-
-.file-office-body :deep(p) {
-  margin: 0.55em 0;
-  line-height: 1.55;
-}
-
-.file-office-body :deep(h1),
-.file-office-body :deep(h2),
-.file-office-body :deep(h3),
-.file-office-body :deep(h4),
-.file-office-body :deep(h5),
-.file-office-body :deep(h6) {
-  margin: 1.05em 0 0.45em;
-  font-weight: 600;
-  line-height: 1.25;
-  color: var(--fg-bright, #e8e8e8);
-}
-
-.file-office-body :deep(table) {
-  border-collapse: collapse;
-  width: 100%;
-  margin: 0.75em 0;
-  font-size: 0.92em;
-}
-
-.file-office-body :deep(td),
-.file-office-body :deep(th) {
-  border: 1px solid var(--border, #444);
-  padding: 0.35em 0.55em;
-  text-align: left;
-  vertical-align: top;
-}
-
-.file-office-body :deep(th) {
-  background: var(--tab-bg, #252525);
-}
-
-.file-pdf {
-  flex: 1 1 0;
-  min-height: min(240px, 45vh);
-  width: 100%;
-  border: none;
-  background: #222;
-}
-
-.file-md {
-  flex: 1 1 0;
-  min-height: 0;
-  overflow: auto;
-  margin: 0;
-  padding: clamp(8px, 2vmin, 16px);
+  outline: none;
   font-family: var(--font-mono);
-  font-size: var(--preview-code-fs, 13px);
-  color: var(--fg, #ccc);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.file-md-body {
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  font-size: var(--preview-prose-fs, clamp(13px, 2.8vw, 16px));
-  line-height: 1.55;
-  white-space: normal;
-  word-break: break-word;
-}
-
-.file-md-body :deep(h1),
-.file-md-body :deep(h2),
-.file-md-body :deep(h3),
-.file-md-body :deep(h4) {
-  margin: 1.1em 0 0.45em;
-  font-weight: 600;
-  line-height: 1.25;
-  color: var(--fg-bright, #e8e8e8);
-}
-
-.file-md-body :deep(h1) {
-  font-size: 1.45em;
-  border-bottom: 1px solid var(--border, #333);
-  padding-bottom: 0.25em;
-}
-
-.file-md-body :deep(h2) {
-  font-size: 1.25em;
-}
-
-.file-md-body :deep(h3) {
-  font-size: 1.08em;
-}
-
-.file-md-body :deep(p) {
-  margin: 0.55em 0;
-}
-
-.file-md-body :deep(a) {
-  color: var(--accent, #89b4fa);
-  text-decoration: none;
-}
-
-.file-md-body :deep(a:hover) {
-  text-decoration: underline;
-}
-
-.file-md-body :deep(ul),
-.file-md-body :deep(ol) {
-  margin: 0.5em 0;
-  padding-left: 1.5em;
-}
-
-.file-md-body :deep(li) {
-  margin: 0.18em 0;
-}
-
-.file-md-body :deep(blockquote) {
-  margin: 0.6em 0;
-  padding: 0.2em 0 0.2em 0.85em;
-  border-left: 3px solid var(--border, #555);
-  color: var(--fg-muted, #aaa);
-}
-
-.file-md-body :deep(hr) {
-  border: none;
-  border-top: 1px solid var(--border, #333);
-  margin: 1em 0;
-}
-
-.file-md-body :deep(table) {
-  border-collapse: collapse;
-  width: 100%;
-  margin: 0.75em 0;
-  font-size: 0.92em;
-}
-
-.file-md-body :deep(th),
-.file-md-body :deep(td) {
-  border: 1px solid var(--border, #444);
-  padding: 0.35em 0.55em;
-  text-align: left;
-}
-
-.file-md-body :deep(th) {
-  background: var(--tab-bg, #252525);
-}
-
-.file-md-body :deep(pre) {
-  margin: 0.65em 0;
-  padding: 10px 12px;
-  overflow: auto;
-  background: var(--bg, #1a1a1a);
-  border: 1px solid var(--border, #333);
-  border-radius: 4px;
-  font-family: var(--font-mono);
-  font-size: var(--preview-code-fs);
-  line-height: 1.45;
-}
-
-.file-md-body :deep(pre code) {
-  font-family: inherit;
-  font-size: inherit;
-  background: none;
-  padding: 0;
-}
-
-.file-md-body :deep(code:not(pre code)) {
-  font-family: var(--font-mono);
-  font-size: 0.88em;
-  padding: 0.12em 0.38em;
-  background: var(--tab-bg, #252525);
-  border-radius: 3px;
-}
-
-.file-md-body :deep(img) {
-  max-width: 100%;
-  height: auto;
-  vertical-align: middle;
-}
-
-.file-md-body :deep(input[type='checkbox']) {
-  margin-right: 0.35em;
-  vertical-align: middle;
-}
-
-.file-md-body :deep(.hljs-keyword) {
-  color: var(--color-magenta, #ca30c7);
-}
-.file-md-body :deep(.hljs-string) {
-  color: var(--color-green, #00c200);
-}
-.file-md-body :deep(.hljs-number) {
-  color: var(--color-yellow, #c7c400);
-}
-.file-md-body :deep(.hljs-comment) {
-  color: var(--fg-muted, #666);
-  font-style: italic;
-}
-.file-md-body :deep(.hljs-title),
-.file-md-body :deep(.hljs-name) {
-  color: var(--color-cyan, #56b6c2);
-}
-.file-md-body :deep(.hljs-attr) {
-  color: var(--color-orange, #d19a66);
-}
-.file-md-body :deep(.hljs-built_in) {
-  color: var(--accent, #89b4fa);
-}
-
-.file-code-wrap {
-  flex: 1 1 0;
-  min-height: 0;
-  overflow: auto;
-  padding: clamp(4px, 1vmin, 8px) 0;
-}
-
-.file-code-table {
-  border-collapse: collapse;
-  width: 100%;
-}
-
-.ln {
-  padding: 0 clamp(6px, 1.5vmin, 12px);
-  text-align: right;
-  color: var(--fg-muted, #666);
-  user-select: none;
-  vertical-align: top;
-  font-size: var(--preview-code-fs);
-  border-right: 1px solid var(--border, #333);
-}
-
-.lc {
-  padding: 0 clamp(8px, 1.8vmin, 14px);
-  white-space: pre;
-  font-family: var(--font-mono);
-  font-size: var(--preview-code-fs);
-  color: var(--fg, #ccc);
-}
-
-.lc :deep(.hljs-keyword) {
-  color: var(--color-magenta, #ca30c7);
-}
-.lc :deep(.hljs-string) {
-  color: var(--color-green, #00c200);
-}
-.lc :deep(.hljs-number) {
-  color: var(--color-yellow, #c7c400);
-}
-.lc :deep(.hljs-comment) {
-  color: var(--fg-muted, #666);
-  font-style: italic;
 }
 </style>
 
@@ -2745,10 +1521,7 @@ video.file-media {
   padding-bottom: calc(8px + env(safe-area-inset-bottom));
 }
 
-.tree-ctx-menu--bottom .tree-ctx-item {
-  padding: 12px 16px;
-  font-size: 15px;
-}
+.tree-ctx-menu--bottom .tree-ctx-item { padding: 12px 16px; font-size: 15px; }
 
 .tree-ctx-item {
   display: flex;
@@ -2769,40 +1542,12 @@ video.file-media {
 }
 
 .tree-ctx-item:hover,
-.tree-ctx-item:focus-visible {
-  background: #094771;
-  color: #ffffff;
-  outline: none;
-}
-
+.tree-ctx-item:focus-visible { background: #094771; color: #ffffff; outline: none; }
 .tree-ctx-item-danger:hover,
-.tree-ctx-item-danger:focus-visible {
-  background: #5a1d1d;
-  color: #ffcccc;
-}
-
-.tree-ctx-label {
-  flex: 1;
-  min-width: 0;
-}
-
-.tree-ctx-kbd {
-  flex-shrink: 0;
-  font-size: 11px;
-  color: #888;
-  font-variant-numeric: tabular-nums;
-}
-
+.tree-ctx-item-danger:focus-visible { background: #5a1d1d; color: #ffcccc; }
+.tree-ctx-label { flex: 1; min-width: 0; }
+.tree-ctx-kbd { flex-shrink: 0; font-size: 11px; color: #888; font-variant-numeric: tabular-nums; }
 .tree-ctx-item:hover .tree-ctx-kbd,
-.tree-ctx-item:focus-visible .tree-ctx-kbd {
-  color: rgba(255, 255, 255, 0.75);
-}
-
-.tree-ctx-sep {
-  height: 1px;
-  margin: 4px 0;
-  background: #3c3c3c;
-  border: none;
-  padding: 0;
-}
+.tree-ctx-item:focus-visible .tree-ctx-kbd { color: rgba(255, 255, 255, 0.75); }
+.tree-ctx-sep { height: 1px; margin: 4px 0; background: #3c3c3c; border: none; padding: 0; }
 </style>
