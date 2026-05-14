@@ -110,6 +110,7 @@ This means an agent can `npm run dev`, write code, and the user can immediately 
 | Customizable shortcut keyboard | ✅ User-defined keys with raw escape sequences | ❌ | ❌ | ❌ | N/A |
 | Multi-server management | ✅ Save & switch between servers | ❌ | ❌ | ❌ | N/A |
 | Multi-pane with tab sync | ✅ DashMap sessions + sync WebSocket | ❌ | ❌ | ❌ | ✅ Local only |
+| Terminal notifications (bell / OSC) | ✅ Detection + sound + panel | ❌ | ❌ | ❌ | ✅ Local only |
 | System monitor (CPU/mem/disk/net) | ✅ Real-time charts | ❌ | ❌ | ❌ | ❌ |
 | Command palette | ✅ | ❌ | ❌ | ❌ | ✅ |
 | Token auth | ✅ | ✅ | ❌ | ✅ | N/A |
@@ -125,6 +126,7 @@ This means an agent can `npm run dev`, write code, and the user can immediately 
 - **File workspace** — browse, edit, upload, and preview files (code highlighting, Markdown, Office docs)
 - **Git change indicators** — gutter decorations for added/modified/deleted lines, inline diff viewer with Stage and Revert; file tree shows git status badges
 - **Web preview** — built-in reverse proxy to preview local dev servers
+- **Notification system** — terminal bell and OSC notification detection, real-time WebSocket push, configurable sound alerts and notification panel
 - **System monitor** — real-time CPU/memory/network charts via vue-chartjs
 - **Command palette** — quick-access command launcher
 - **Customizable shortcut keyboard** — add Ctrl/Esc/custom escape-sequence buttons for mobile & touch devices
@@ -180,6 +182,7 @@ src/               # Rust backend
   workspace.rs     # File workspace API
   proxy.rs         # Reverse proxy for preview
   monitor.rs       # System monitor
+  notification.rs  # Notification broadcast (bell/OSC detection)
   settings.rs      # Settings persistence
   auth.rs          # Authentication
   file_watcher.rs  # File change watching
