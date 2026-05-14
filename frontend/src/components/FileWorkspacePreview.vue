@@ -1126,7 +1126,7 @@ watch(selectedRel, () => { mdShowPreview.value = false; htmlShowPreview.value = 
 watch(
   () => [props.visible, props.paneId, props.embedded],
   () => {
-    if (props.visible && props.paneId && !props.embedded) void boot()
+    if (props.visible && props.paneId) void boot()
   },
   { immediate: true },
 )
