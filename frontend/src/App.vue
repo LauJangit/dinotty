@@ -18,7 +18,7 @@
         v-for="tab in tabs"
         :key="tab.paneId"
         class="tab-page"
-        :class="{ active: tab.paneId === activePaneId, 'has-preview': tab.previewVisible }"
+        :class="{ active: tab.paneId === activePaneId, 'has-preview': tab.previewVisible, ['pos-' + resolvedPosition]: tab.previewVisible }"
       >
         <TerminalPane
           :ref="(el: any) => { if (el) termRefs[tab.paneId] = el }"
@@ -35,6 +35,7 @@
           :address="tab.previewAddress"
           :kind="tab.previewKind"
           :web-url="tab.previewUrl"
+          :panel-position="resolvedPosition"
           @close="closePreview(tab.paneId)"
           @update:address="(v: string) => { tab.previewAddress = v; persist() }"
           @update:kind="(v: 'web' | 'files') => { tab.previewKind = v; persist() }"
@@ -113,6 +114,14 @@ const serverListRef = ref<InstanceType<typeof ServerList>>()
 
 const { settings: appSettings } = useSettings()
 const { t } = useI18n()
+
+const isLandscape = ref(window.innerWidth > window.innerHeight)
+
+const resolvedPosition = computed(() => {
+  const pos = appSettings.panel_position ?? 'auto'
+  if (pos === 'auto') return isLandscape.value ? 'right' : 'bottom'
+  return pos
+})
 
 watch(
   () => appSettings.locale,
@@ -477,8 +486,13 @@ async function connectSyncWS() {
   syncWs.onerror = () => {}
 }
 
+function onOrientationChange() {
+  isLandscape.value = window.innerWidth > window.innerHeight
+}
+
 onMounted(() => {
   document.addEventListener('keydown', onGlobalKeydown)
+  window.addEventListener('resize', onOrientationChange)
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', onViewportResize)
   }
@@ -488,6 +502,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', onGlobalKeydown)
+  window.removeEventListener('resize', onOrientationChange)
   if (window.visualViewport) {
     window.visualViewport.removeEventListener('resize', onViewportResize)
   }
@@ -508,15 +523,13 @@ onBeforeUnmount(() => {
 .tab-page.active.has-preview {
   display: flex;
 }
-@media (orientation: landscape) {
-  .tab-page.active.has-preview {
-    flex-direction: row;
-  }
+.tab-page.active.has-preview.pos-right,
+.tab-page.active.has-preview.pos-left {
+  flex-direction: row;
 }
-@media (orientation: portrait) {
-  .tab-page.active.has-preview {
-    flex-direction: column;
-  }
+.tab-page.active.has-preview.pos-top,
+.tab-page.active.has-preview.pos-bottom {
+  flex-direction: column;
 }
 .tab-page.active.has-preview > .terminal-pane-container {
   flex: 1;
@@ -530,12 +543,20 @@ onBeforeUnmount(() => {
   min-height: 0;
   overflow: hidden;
 }
-@media (orientation: portrait) {
-  .tab-page.active.has-preview > .terminal-pane-container {
-    flex: 2;
-  }
-  .tab-page.active.has-preview > .preview-panel {
-    flex: 1;
-  }
+.tab-page.active.has-preview.pos-left > .terminal-pane-container,
+.tab-page.active.has-preview.pos-top > .terminal-pane-container {
+  order: 1;
+}
+.tab-page.active.has-preview.pos-left > .preview-panel,
+.tab-page.active.has-preview.pos-top > .preview-panel {
+  order: 0;
+}
+.tab-page.active.has-preview.pos-top > .terminal-pane-container,
+.tab-page.active.has-preview.pos-bottom > .terminal-pane-container {
+  flex: 2;
+}
+.tab-page.active.has-preview.pos-top > .preview-panel,
+.tab-page.active.has-preview.pos-bottom > .preview-panel {
+  flex: 1;
 }
 </style>

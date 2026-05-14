@@ -1,4 +1,4 @@
-import type { Ref } from 'vue'
+import { ref, type Ref } from 'vue'
 
 function getPointerPos(e: MouseEvent | TouchEvent): { clientX: number; clientY: number } {
   if ('touches' in e) {
@@ -12,6 +12,7 @@ function startPaneResizeInternal(
   e: MouseEvent | TouchEvent,
   panelSelector: string,
   direction: Ref<'horizontal' | 'vertical'>,
+  reversed: Ref<boolean>,
 ) {
   const el = (e.target as HTMLElement).closest(panelSelector) as HTMLElement
   const parent = el?.parentElement
@@ -34,7 +35,8 @@ function startPaneResizeInternal(
     const rect = parent.getBoundingClientRect()
     const total = horiz ? rect.width : rect.height
     const offset = horiz ? pos.clientX - rect.left : pos.clientY - rect.top
-    const termPct = Math.max(15, Math.min(85, (offset / total) * 100))
+    const raw = Math.max(15, Math.min(85, (offset / total) * 100))
+    const termPct = reversed.value ? 100 - raw : raw
     const termChild = parent.querySelector(':scope > .terminal-pane-container') as HTMLElement
     const previewChild = parent.querySelector(`:scope > ${panelSelector}`) as HTMLElement
     if (termChild) termChild.style.flex = `0 0 ${termPct}%`
@@ -58,10 +60,12 @@ function startPaneResizeInternal(
 export function usePaneResize(
   panelSelector: string,
   direction: Ref<'horizontal' | 'vertical'>,
+  reversed?: Ref<boolean>,
 ) {
+  const rev = reversed ?? ref(false)
   return {
     startDrag(e: MouseEvent | TouchEvent) {
-      startPaneResizeInternal(e, panelSelector, direction)
+      startPaneResizeInternal(e, panelSelector, direction, rev)
     },
   }
 }

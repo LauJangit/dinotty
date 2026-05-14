@@ -20,6 +20,20 @@
     </section>
 
     <section class="settings-section">
+      <h3>{{ t('settings.panelPosition') }}</h3>
+      <div class="settings-row">
+        <select v-model="settings.panel_position" class="shortcut-input" style="flex:1">
+          <option value="auto">{{ t('settings.panelPos.auto') }}</option>
+          <option value="left">{{ t('settings.panelPos.left') }}</option>
+          <option value="right">{{ t('settings.panelPos.right') }}</option>
+          <option value="top">{{ t('settings.panelPos.top') }}</option>
+          <option value="bottom">{{ t('settings.panelPos.bottom') }}</option>
+        </select>
+      </div>
+      <p class="settings-hint">{{ t('settings.panelPositionHint') }}</p>
+    </section>
+
+    <section class="settings-section">
       <h3>{{ t('settings.accessUrl') }}</h3>
       <div class="access-url-row">
         <div class="access-url-display">

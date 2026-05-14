@@ -33,6 +33,8 @@ pub struct Settings {
     #[serde(default = "default_locale")]
     pub locale: String,
     #[serde(default)]
+    pub panel_position: PanelPosition,
+    #[serde(default)]
     pub monitor: MonitorConfig,
 }
 
@@ -58,6 +60,17 @@ impl Default for MonitorConfig {
 
 fn default_locale() -> String {
     "zh".into()
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum PanelPosition {
+    #[default]
+    Auto,
+    Left,
+    Right,
+    Top,
+    Bottom,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -183,6 +196,7 @@ impl Default for Settings {
             action_keyboard: None,
             keyboard_sound: false,
             locale: default_locale(),
+            panel_position: PanelPosition::default(),
             monitor: MonitorConfig::default(),
         }
     }

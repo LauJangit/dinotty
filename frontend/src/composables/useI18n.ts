@@ -115,6 +115,13 @@ const messages: Record<Locale, Record<string, string>> = {
     'settings.tab.monitor': 'Monitor',
     'settings.keyboard.feedback': 'Key Feedback',
     'settings.keyboard.sound': 'Click sound on key press',
+    'settings.panelPosition': 'Panel Position',
+    'settings.panelPositionHint': 'Where the preview panel appears relative to the terminal',
+    'settings.panelPos.auto': 'Auto',
+    'settings.panelPos.left': 'Left',
+    'settings.panelPos.right': 'Right',
+    'settings.panelPos.top': 'Top',
+    'settings.panelPos.bottom': 'Bottom',
   },
   zh: {
     'app.settings': '设置',
@@ -227,6 +234,13 @@ const messages: Record<Locale, Record<string, string>> = {
     'settings.tab.monitor': '监控',
     'settings.keyboard.feedback': '按键反馈',
     'settings.keyboard.sound': '按键音效',
+    'settings.panelPosition': '面板位置',
+    'settings.panelPositionHint': '预览面板相对于终端的位置',
+    'settings.panelPos.auto': '自动',
+    'settings.panelPos.left': '左侧',
+    'settings.panelPos.right': '右侧',
+    'settings.panelPos.top': '上方',
+    'settings.panelPos.bottom': '下方',
   },
 }
 

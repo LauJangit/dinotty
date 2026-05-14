@@ -19,6 +19,7 @@ export interface SettingsData {
   action_keyboard: ActionKeyboardConfig | null
   keyboard_sound: boolean
   locale: string
+  panel_position: 'auto' | 'right' | 'left' | 'top' | 'bottom'
   port?: number | null
   monitor: MonitorConfig
 }
@@ -102,6 +103,7 @@ export const settings = reactive<SettingsData>({
   action_keyboard: null,
   keyboard_sound: false,
   locale: 'zh',
+  panel_position: 'auto',
   monitor: {
     enabled: true,
     cpu: true,

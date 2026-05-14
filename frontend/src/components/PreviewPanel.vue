@@ -1,5 +1,5 @@
 <template>
-  <div v-if="visible" class="preview-panel" :class="direction">
+  <div v-if="visible" class="preview-panel" :class="[direction, { reversed }]">
     <div
       class="preview-panel-divider"
       @mousedown.prevent="startDrag"
@@ -71,6 +71,7 @@ const props = defineProps<{
   address: string
   kind: 'web' | 'files'
   webUrl: string
+  panelPosition: 'left' | 'right' | 'top' | 'bottom'
 }>()
 
 const emit = defineEmits<{
@@ -88,7 +89,6 @@ const treeCollapsed = ref(false)
 const addressInputRef = ref<HTMLInputElement>()
 const localAddress = ref('')
 const navCounter = ref(0)
-const isLandscape = ref(window.innerWidth > window.innerHeight)
 const narrow = ref(isNarrowViewport())
 
 const navHistory = ref<string[]>([])
@@ -137,7 +137,10 @@ function goForward() {
   navCounter.value++
 }
 
-const direction = computed(() => (isLandscape.value ? 'horizontal' : 'vertical'))
+const direction = computed(() =>
+  props.panelPosition === 'left' || props.panelPosition === 'right'
+    ? 'horizontal' : 'vertical'
+)
 
 function filesDrawerRef(): Ref<boolean> | undefined {
   const inst = filesRef.value as { drawerOpen?: Ref<boolean> } | undefined
@@ -178,7 +181,6 @@ function openInBrowser() {
 }
 
 function onResize() {
-  isLandscape.value = window.innerWidth > window.innerHeight
   narrow.value = isNarrowViewport()
 }
 
@@ -284,7 +286,9 @@ function openFromWebUrl(url: string) {
 
 defineExpose({ openFromPath, openFromWebUrl })
 
-const { startDrag } = usePaneResize('.preview-panel', direction)
+const reversed = computed(() => props.panelPosition === 'left' || props.panelPosition === 'top')
+
+const { startDrag } = usePaneResize('.preview-panel', direction, reversed)
 
 function onProxyMessage(e: MessageEvent) {
   if (e.origin !== window.location.origin) return
@@ -356,6 +360,14 @@ onBeforeUnmount(() => {
 
 .preview-panel-divider:hover {
   background: var(--accent, #89b4fa);
+}
+
+.preview-panel.reversed .preview-panel-divider {
+  order: 2;
+}
+
+.preview-panel.reversed .preview-panel-inner {
+  order: 1;
 }
 
 .preview-panel-inner {
