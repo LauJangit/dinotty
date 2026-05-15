@@ -82,6 +82,7 @@ import type { KeyDef, ModState } from './mkbTypes'
 import { useSettings, DEFAULT_ACTION_KEYBOARD } from '../composables/useSettings'
 import { useI18n } from '../composables/useI18n'
 import { mapActionKeys } from '../utils/actionKeyDef'
+import { Keyboard, SquareTerminal } from 'lucide-vue-next'
 
 const props = defineProps<{
   visible: boolean
@@ -124,13 +125,13 @@ const row2: KeyDef[] = [
   { l:'[',sl:'{',s:'[' }, { l:']',sl:'}',s:']' }, { l:'\\',sl:'|',s:'\\', g:1.5, cls:'mkb-mod' },
 ]
 
-const row3: KeyDef[] = [
-  { l:'⌨', sp:'kbswitch', g:1.7, cls:'mkb-mod', id:'mkb-kbswitch' },
+const row3 = computed<KeyDef[]>(() => [
+  { l:'', icon: kbMode.value === 'default' ? SquareTerminal : Keyboard, sp:'kbswitch', g:1.7, cls:'mkb-mod', id:'mkb-kbswitch' },
   { l:'a',s:'a' }, { l:'s',s:'s' }, { l:'d',s:'d' }, { l:'f',s:'f' },
   { l:'g',s:'g' }, { l:'h',s:'h' }, { l:'j',s:'j' }, { l:'k',s:'k' },
   { l:'l',s:'l' }, { l:';',sl:':',s:';' }, { l:"'",sl:'"',s:"'" },
   { l:'↵', s:'\r', g:1.5, cls:'mkb-mod mkb-return' },
-]
+])
 
 const row4zxcv: KeyDef[] = [
   { l:'⇧', sp:'shift', g:2.2, cls:'mkb-mod', id:'mkb-shift' },
@@ -152,19 +153,20 @@ const row5bottom: KeyDef[] = [
   { l:'', s:' ', g:8, id:'mkb-space' },
 ]
 
-const kbswitchAction: KeyDef = {
-  l: '⌨',
+const kbswitchAction = computed<KeyDef>(() => ({
+  l: '',
+  icon: Keyboard,
   sp: 'kbswitch',
   g: 1.5,
   cls: 'mkb-mod mkb-action-back',
   id: 'mkb-kbswitch2',
-}
+}))
 
 const actionFirstRow = computed(() => {
   const cfg = settings.action_keyboard ?? DEFAULT_ACTION_KEYBOARD
   const rows = cfg.rows?.length ? cfg.rows : DEFAULT_ACTION_KEYBOARD.rows
   const first = rows[0] ?? []
-  return [kbswitchAction, ...mapActionKeys(first, false)]
+  return [kbswitchAction.value, ...mapActionKeys(first, false)]
 })
 
 const actionFollowingRows = computed(() => {
