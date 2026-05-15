@@ -1,6 +1,6 @@
 <template>
   <button
-    :class="['mkb-btn', k.cls]"
+    :class="['mkb-btn', k.cls, { 'mkb-active': isModActive }]"
     :id="k.id"
     :style="{ flexGrow: k.g ?? 1, flexBasis: '0' }"
     @touchstart.prevent="onDown"
@@ -46,6 +46,13 @@ const emit = defineEmits<{
   'key-press': [ch: string]
   special: [sp: string]
 }>()
+
+const isModActive = computed(() => {
+  const sp = props.k.sp
+  return sp === 'ctrl' || sp === 'alt' || sp === 'shift'
+    ? props.state[sp]
+    : false
+})
 
 const displayLabel = computed(() => {
   if (props.k.sl && props.state.shift) return props.k.sl

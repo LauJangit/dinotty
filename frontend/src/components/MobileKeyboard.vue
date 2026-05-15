@@ -1,6 +1,17 @@
 <template>
   <div ref="barRef" id="mobile-kb" v-show="visible">
     <div id="mkb-kb-bar">
+      <textarea
+        ref="textInputRef"
+        class="mkb-text-input"
+        :class="{ 'mkb-text-input-focused': textInputFocused }"
+        :placeholder="t('keyboard.textInput.placeholder')"
+        enterkeyhint="send"
+        v-model="textInput"
+        @focus="onTextInputFocus"
+        @blur="onTextInputBlur"
+        @keydown.enter.exact.prevent="sendTextInput"
+      />
       <button
         type="button"
         class="mkb-collapse-btn"
@@ -10,7 +21,7 @@
     </div>
 
     <!-- Main keyboard panel -->
-    <div id="mkb-main-panel" v-show="kbMode === 'default'">
+    <div id="mkb-main-panel" v-show="kbMode === 'default' && !textInputFocused">
       <!-- Row 1: ` 1-0 - = ⌫ -->
       <MkbRow :keys="row1" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
       <!-- Row 2: tab q-p [ ] \ -->
@@ -35,7 +46,7 @@
     </div>
 
     <!-- Action panel -->
-    <div id="mkb-action-panel" v-show="kbMode === 'action'">
+    <div id="mkb-action-panel" v-show="kbMode === 'action' && !textInputFocused">
       <MkbRow :keys="actionFirstRow" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
       <MkbRow
         v-for="(r, i) in actionFollowingRows"
@@ -66,6 +77,7 @@ import MkbRow from './MkbRow.vue'
 import MkbKey from './MkbKey.vue'
 import type { KeyDef, ModState } from './mkbTypes'
 import { useSettings, DEFAULT_ACTION_KEYBOARD } from '../composables/useSettings'
+import { useI18n } from '../composables/useI18n'
 import { mapActionKeys } from '../utils/actionKeyDef'
 
 const props = defineProps<{
@@ -78,8 +90,12 @@ const emit = defineEmits<{
 }>()
 
 const { settings } = useSettings()
+const { t } = useI18n()
 
 const barRef = ref<HTMLElement>()
+const textInputRef = ref<HTMLTextAreaElement>()
+const textInput = ref('')
+const textInputFocused = ref(false)
 const kbMode = ref<'default' | 'action'>('action')
 
 const modState = reactive<ModState>({
@@ -166,6 +182,22 @@ const actionArrowBot: KeyDef[] = [
 
 const actionEnter: KeyDef = { l:'↵', s:'\r', cls:'mkb-mod mkb-action-enter mkb-return' }
 
+function onTextInputFocus() {
+  textInputFocused.value = true
+}
+
+function onTextInputBlur() {
+  setTimeout(() => { textInputFocused.value = false }, 100)
+}
+
+function sendTextInput() {
+  const text = textInput.value
+  if (!text) return
+  props.getSendFn()?.(text + '\r')
+  textInput.value = ''
+  textInputRef.value?.focus()
+}
+
 function onKeyPress(ch: string) {
   let data = ch
   if (data.length !== 1) {
@@ -223,8 +255,18 @@ function onViewportChange() {
   const off = window.innerHeight - (window.visualViewport.offsetTop + vh)
   const sysKbOpen = (naturalVH - vh) > 120
   if (barRef.value) {
-    barRef.value.style.display = (sysKbOpen || !props.visible) ? 'none' : ''
-    if (!sysKbOpen && props.visible) barRef.value.style.bottom = `${Math.max(0, off)}px`
+    if (!props.visible) {
+      barRef.value.style.display = 'none'
+    } else if (sysKbOpen && textInputFocused.value) {
+      // System keyboard open with our input focused: show bar, hide panels via v-show
+      barRef.value.style.display = ''
+      barRef.value.style.bottom = `${Math.max(0, off)}px`
+    } else if (sysKbOpen) {
+      barRef.value.style.display = 'none'
+    } else {
+      barRef.value.style.display = ''
+      barRef.value.style.bottom = `${Math.max(0, off)}px`
+    }
   }
   updateHeight()
 }
