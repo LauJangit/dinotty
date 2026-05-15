@@ -7,6 +7,7 @@ export interface KeyDef {
   cls?: string     // extra CSS class
   id?: string      // DOM id
   repeat?: boolean // key repeat
+  icon?: object    // lucide icon component
 }
 
 export interface ModState {

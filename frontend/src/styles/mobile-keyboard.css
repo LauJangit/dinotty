@@ -346,7 +346,7 @@
   background: var(--border);
 }
 .mkb-text-input-glow.mkb-glow-active {
-  background: conic-gradient(from var(--mkb-glow-angle, 0deg), var(--accent), color-mix(in srgb, var(--accent) 40%, transparent), var(--accent), color-mix(in srgb, var(--accent) 40%, transparent), var(--accent));
+  background: conic-gradient(from var(--mkb-glow-angle, 0deg), rgba(255,255,255,0.6), rgba(255,255,255,0.15), rgba(255,255,255,0.6), rgba(255,255,255,0.15), rgba(255,255,255,0.6));
   animation: mkb-glow-spin 4s linear infinite;
 }
 @keyframes mkb-glow-spin {

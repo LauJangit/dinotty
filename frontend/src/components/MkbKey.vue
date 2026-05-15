@@ -9,7 +9,7 @@
     @touchcancel="onUp"
     @mouseup="onUp"
     @mouseleave="onUp"
-  >{{ displayLabel }}</button>
+  ><component v-if="k.icon" :is="k.icon" :size="20" /><template v-else>{{ displayLabel }}</template></button>
 </template>
 
 <script setup lang="ts">
