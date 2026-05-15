@@ -1,17 +1,19 @@
 <template>
   <div ref="barRef" id="mobile-kb" v-show="visible">
     <div id="mkb-kb-bar">
-      <textarea
-        ref="textInputRef"
-        class="mkb-text-input"
-        :class="{ 'mkb-text-input-focused': textInputFocused }"
-        placeholder=""
-        enterkeyhint="send"
-        v-model="textInput"
-        @focus="onTextInputFocus"
-        @blur="onTextInputBlur"
-        @keydown.enter.exact.prevent="sendTextInput"
-      />
+      <div class="mkb-text-input-glow" :class="{ 'mkb-glow-active': !textInputFocused }">
+        <textarea
+          ref="textInputRef"
+          class="mkb-text-input"
+          :class="{ 'mkb-text-input-focused': textInputFocused }"
+          placeholder=""
+          enterkeyhint="send"
+          v-model="textInput"
+          @focus="onTextInputFocus"
+          @blur="onTextInputBlur"
+          @keydown.enter.exact.prevent="sendTextInput"
+        />
+      </div>
       <button
         v-show="!textInputFocused"
         type="button"

@@ -30,6 +30,8 @@ pub struct Settings {
     pub action_keyboard: Option<ActionKeyboardConfig>,
     #[serde(default)]
     pub keyboard_sound: bool,
+    #[serde(default)]
+    pub show_virtual_keyboard: bool,
     #[serde(default = "default_locale")]
     pub locale: String,
     #[serde(default)]
@@ -56,8 +58,6 @@ pub struct NotificationConfig {
     pub channels: NotificationChannels,
     #[serde(default)]
     pub sounds: NotificationSounds,
-    #[serde(default)]
-    pub panel: PanelConfig,
 }
 
 impl Default for NotificationConfig {
@@ -70,7 +70,6 @@ impl Default for NotificationConfig {
             keyword_match: vec![],
             channels: NotificationChannels::default(),
             sounds: NotificationSounds::default(),
-            panel: PanelConfig::default(),
         }
     }
 }
@@ -122,8 +121,6 @@ pub struct NotificationChannels {
     #[serde(default = "default_true")]
     pub vibration: bool,
     #[serde(default = "default_true")]
-    pub title_flash: bool,
-    #[serde(default = "default_true")]
     pub panel: bool,
     #[serde(default = "default_true")]
     pub tab_indicator: bool,
@@ -131,23 +128,7 @@ pub struct NotificationChannels {
 
 impl Default for NotificationChannels {
     fn default() -> Self {
-        Self { sound: true, vibration: true, title_flash: true, panel: true, tab_indicator: true }
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct PanelConfig {
-    #[serde(default = "default_auto_hide_ms")]
-    pub auto_hide_ms: u32,
-    #[serde(default)]
-    pub pinned: bool,
-}
-
-fn default_auto_hide_ms() -> u32 { 4000 }
-
-impl Default for PanelConfig {
-    fn default() -> Self {
-        Self { auto_hide_ms: 4000, pinned: false }
+        Self { sound: true, vibration: true, panel: true, tab_indicator: true }
     }
 }
 
@@ -363,6 +344,7 @@ impl Default for Settings {
             bookmarks: vec![],
             action_keyboard: None,
             keyboard_sound: false,
+            show_virtual_keyboard: false,
             locale: default_locale(),
             panel_position: PanelPosition::default(),
             monitor: MonitorConfig::default(),

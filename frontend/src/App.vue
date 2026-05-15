@@ -18,7 +18,7 @@
       </template>
     </TabBar>
 
-    <div id="tab-content">
+    <div id="tab-content" @touchend="onTerminalTouch">
       <div
         v-for="tab in tabs"
         :key="tab.paneId"
@@ -68,7 +68,7 @@
     />
 
     <KbToggleButton
-      v-show="!kbVisible"
+      v-show="appSettings.show_virtual_keyboard && !kbVisible"
       :visible="kbVisible"
       @toggle="kbVisible = !kbVisible"
     />
@@ -93,6 +93,7 @@ import type { SyncServerMsg, SyncClientMsg } from './types/protocol'
 import { useSettings } from './composables/useSettings'
 import { getApiBase, wsUrlWithToken } from './composables/apiBase'
 import { isTauri } from './composables/useTransport'
+import { isTouchDevice } from './composables/useTerminal'
 import { useI18n } from './composables/useI18n'
 import { isWebPreviewInput } from './utils/previewRouting'
 import { initMonitorHistory } from './composables/useMonitorHistory'
@@ -348,6 +349,14 @@ function onFileClick(path: string) {
 function getSendFn(): ((data: string) => void) | null {
   if (!activePaneId.value || !termRefs[activePaneId.value]) return null
   return (data: string) => termRefs[activePaneId.value!]?.sendData(data)
+}
+
+function onTerminalTouch(e: TouchEvent) {
+  if (!isTouchDevice()) return
+  const target = e.target as HTMLElement
+  if (target.closest('.terminal-pane-container')) {
+    kbVisible.value = true
+  }
 }
 
 function onServerConnect(host: string, port: number) {

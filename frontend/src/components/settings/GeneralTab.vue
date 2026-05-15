@@ -57,6 +57,18 @@
       </div>
     </section>
 
+    <section class="settings-section">
+      <h3>{{ t('settings.virtualKeyboard') }}</h3>
+      <div class="settings-row">
+        <label>{{ t('settings.virtualKeyboard.show') }}</label>
+        <label class="toggle">
+          <input type="checkbox" v-model="settings.show_virtual_keyboard" />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
+      <p class="settings-hint">{{ t('settings.virtualKeyboard.hint') }}</p>
+    </section>
+
   </div>
 </template>
 

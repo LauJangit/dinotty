@@ -7,6 +7,10 @@ import { isTauri, createTransport, type Transport } from './useTransport'
 import { onThemeChange, settings, onTextChange } from './useSettings'
 import { wsUrlWithToken } from './apiBase'
 
+export function isTouchDevice(): boolean {
+  return 'ontouchstart' in window || navigator.maxTouchPoints > 0
+}
+
 let tauriDragDropRegistered = false
 let lastFocusedInstance: TerminalInstance | null = null
 
@@ -124,6 +128,10 @@ export class TerminalInstance {
     } catch { /* DOM renderer fallback */ }
 
     const textarea = wrapper.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null
+    if (textarea && isTouchDevice()) {
+      textarea.inputMode = 'none'
+      textarea.setAttribute('virtualkeyboardpolicy', 'manual')
+    }
     if (textarea) {
       let compositionJustEnded = false
       let compositionData = ''

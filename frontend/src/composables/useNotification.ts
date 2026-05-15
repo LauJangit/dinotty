@@ -18,7 +18,7 @@ export interface NotificationItem {
 const notifications = ref<NotificationItem[]>([])
 const panelVisible = ref(false)
 const unreadByPane = reactive<Record<string, NotificationType>>({})
-const unreadCount = computed(() => Object.keys(unreadByPane).length)
+const unreadCount = computed(() => notifications.value.length)
 
 let ws: WebSocket | null = null
 let idCounter = 0
@@ -88,11 +88,6 @@ function handleEvent(event: { type: string; pane_id: string; title?: string | nu
     navigator.vibrate(notifType === 'urgent' ? [100, 50, 100, 50, 100] : [100])
   }
 
-  // Title flash
-  if (cfg.channels?.title_flash && document.hidden) {
-    flashTitle(body)
-  }
-
   // Toast notification (reuses panel channel config)
   if (cfg.channels?.panel) {
     showToast(item)
@@ -123,25 +118,6 @@ function showToast(item: NotificationItem) {
     type: toastTypeMap[item.type] ?? TYPE.INFO,
     timeout: item.type === 'urgent' ? 8000 : 5000,
   })
-}
-
-let flashInterval = 0
-
-function flashTitle(msg: string) {
-  if (flashInterval) return
-  const originalTitle = document.title
-  let toggle = false
-  flashInterval = window.setInterval(() => {
-    document.title = toggle ? originalTitle : `🔔 ${msg}`
-    toggle = !toggle
-  }, 1000)
-  const onFocus = () => {
-    clearInterval(flashInterval)
-    flashInterval = 0
-    document.title = originalTitle
-    window.removeEventListener('focus', onFocus)
-  }
-  window.addEventListener('focus', onFocus)
 }
 
 
@@ -186,7 +162,11 @@ export function useNotification() {
     unreadByPane,
     unreadCount,
     dismissOne(id: string) {
+      const item = notifications.value.find((n) => n.id === id)
       notifications.value = notifications.value.filter((n) => n.id !== id)
+      if (item && !notifications.value.some((n) => n.paneId === item.paneId)) {
+        delete unreadByPane[item.paneId]
+      }
     },
     clearAll() {
       notifications.value = []

@@ -18,6 +18,7 @@ export interface SettingsData {
   bookmarks: CommandBookmark[]
   action_keyboard: ActionKeyboardConfig | null
   keyboard_sound: boolean
+  show_virtual_keyboard: boolean
   locale: string
   panel_position: 'auto' | 'right' | 'left' | 'top' | 'bottom'
   port?: number | null
@@ -34,12 +35,12 @@ export interface NotificationConfig {
   channels: {
     sound: boolean
     vibration: boolean
-    title_flash: boolean
+
     panel: boolean
     tab_indicator: boolean
   }
   sounds: Record<string, { source: 'builtin' | 'custom'; value: string; volume: number }>
-  panel: { auto_hide_ms: number; pinned: boolean }
+
 }
 
 export interface MonitorConfig {
@@ -120,6 +121,7 @@ export const settings = reactive<SettingsData>({
   bookmarks: [],
   action_keyboard: null,
   keyboard_sound: false,
+  show_virtual_keyboard: false,
   locale: 'zh',
   panel_position: 'auto',
   monitor: {
@@ -138,7 +140,7 @@ export const settings = reactive<SettingsData>({
     channels: {
       sound: true,
       vibration: true,
-      title_flash: true,
+
       panel: true,
       tab_indicator: true,
     },
@@ -149,7 +151,6 @@ export const settings = reactive<SettingsData>({
       error: { source: 'builtin', value: 'error-buzz', volume: 0.8 },
       urgent: { source: 'builtin', value: 'alarm', volume: 1.0 },
     },
-    panel: { auto_hide_ms: 4000, pinned: false },
   },
 })
 

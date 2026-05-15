@@ -55,17 +55,6 @@
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
-      <div class="settings-row sub">
-        <label>{{ t('notification.autoHide') }}</label>
-        <input type="number" class="num-input" v-model.number="cfg.panel.auto_hide_ms" min="0" max="30000" step="500" /> ms
-      </div>
-      <div class="settings-row">
-        <label>{{ t('notification.titleFlash') }}</label>
-        <label class="toggle">
-          <input type="checkbox" v-model="cfg.channels.title_flash" />
-          <span class="toggle-track"><span class="toggle-thumb"></span></span>
-        </label>
-      </div>
       <div class="settings-row">
         <label>{{ t('notification.tabIndicator') }}</label>
         <label class="toggle">

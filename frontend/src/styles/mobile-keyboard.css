@@ -4,12 +4,14 @@
   position: fixed;
   left: 0; right: 0; bottom: 0;
   z-index: 500;
-  background: #1c1c1e;
-  border-top: 1px solid #38383a;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border);
   padding: 5px 4px env(safe-area-inset-bottom, 0px);
   gap: 4px;
   user-select: none;
   -webkit-user-select: none;
+  --mkb-key-bg: color-mix(in srgb, var(--bg-input), white 10%);
+  --mkb-mod-bg: color-mix(in srgb, var(--bg), white 6%);
 }
 /* ── Row wrapper: main keys + optional right nav column ──── */
 
@@ -44,7 +46,7 @@
   width: 44px;
   height: 44px;
   font-size: 11px;
-  color: #8e8e93;
+  color: var(--fg-muted);
 }
 
 /* ── Keys ─────────────────────────────────────────────────── */
@@ -57,9 +59,9 @@
   font-family: system-ui, -apple-system, sans-serif;
   font-size: 16px;
   font-weight: 400;
-  color: #ffffff;
-  background: #48484a;
-  border: none;
+  color: var(--fg-bright);
+  background: var(--mkb-key-bg);
+  border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 6px;
   height: 44px;
   padding: 0 2px;
@@ -76,34 +78,34 @@
 }
 
 .mkb-btn:active {
-  background: #636366;
+  background: var(--border);
   box-shadow: none;
   transform: translateY(1px);
 }
 
 .mkb-mod {
-  background: #2c2c2e;
+  background: var(--mkb-mod-bg);
   font-size: 12px;
-  color: #ebebf0;
+  color: var(--fg);
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
 }
 
 .mkb-active {
-  background: #0a84ff;
+  background: var(--accent);
   color: #fff;
   box-shadow: 0 0 6px rgba(10, 132, 255, 0.5);
 }
 
 .mkb-btn.active {
-  background: #0a84ff;
+  background: var(--accent);
   color: #fff;
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
 }
 
-.mkb-return { color: #30d158; }
+.mkb-return { color: var(--color-green); }
 
 #mkb-space {
-  background: #48484a;
+  background: var(--mkb-key-bg);
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.45);
 }
 
@@ -206,7 +208,7 @@
 }
 
 .mkb-action-danger {
-  color: #ff6b6b;
+  color: var(--color-bright-red);
   border-color: rgba(255, 107, 107, 0.4);
 }
 
@@ -287,9 +289,9 @@
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  border: 1px solid rgba(255,255,255,0.15);
-  background: #2c2c2e;
-  color: #fff;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg-bright);
   font-size: 20px;
   display: flex;
   align-items: center;
@@ -300,8 +302,8 @@
 }
 
 #kb-toggle-btn.active {
-  background: #3a3a3c;
-  border-color: rgba(255,255,255,0.3);
+  background: var(--bg-input);
+  border-color: var(--accent);
 }
 
 /* ── Keyboard top bar (collapse) ───────────────────────────── */
@@ -314,34 +316,56 @@
 }
 
 .mkb-text-input {
-  flex: 1;
+  position: relative;
+  width: 100%;
   min-width: 0;
   height: 30px;
   padding: 6px 10px;
   font-size: 14px;
   font-family: system-ui, -apple-system, sans-serif;
-  color: #fff;
-  background: #2c2c2e;
-  border: 1px solid rgba(255,255,255,0.15);
-  border-radius: 15px;
+  color: var(--fg-bright);
+  background: var(--bg);
+  border: none;
+  border-radius: 13.5px;
   outline: none;
   -webkit-appearance: none;
   resize: none;
   line-height: 1.4;
   overflow: hidden;
 }
+.mkb-text-input-glow {
+  position: relative;
+  flex: 1;
+  border-radius: 15px;
+  padding: 1px;
+  background: var(--border);
+}
+.mkb-text-input-glow:has(.mkb-text-input-focused) {
+  border-radius: 12px;
+  padding: 1px;
+  background: var(--border);
+}
+.mkb-text-input-glow.mkb-glow-active {
+  background: conic-gradient(from var(--mkb-glow-angle, 0deg), #9ca3af, transparent, #9ca3af, transparent, #9ca3af);
+  animation: mkb-glow-spin 6s linear infinite;
+}
+@keyframes mkb-glow-spin {
+  to { --mkb-glow-angle: 360deg; }
+}
+@property --mkb-glow-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
 .mkb-text-input-focused {
   height: auto;
   min-height: 80px;
   max-height: 120px;
   overflow-y: auto;
-  border-radius: 12px;
+  border-radius: 10.5px;
 }
 .mkb-text-input::placeholder {
-  color: #8e8e93;
-}
-.mkb-text-input:focus {
-  border-color: #0a84ff;
+  color: var(--fg-muted);
 }
 
 .mkb-collapse-btn {
@@ -350,9 +374,9 @@
   font-size: 14px;
   min-width: 36px;
   font-family: system-ui, -apple-system, sans-serif;
-  color: #e5e5ea;
-  background: #3a3a3c;
-  border: 1px solid rgba(255,255,255,0.1);
+  color: var(--fg);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
   border-radius: 14px;
   cursor: pointer;
   opacity: 0.85;
@@ -360,7 +384,7 @@
   touch-action: manipulation;
 }
 .mkb-collapse-btn:active {
-  background: #0a84ff;
+  background: var(--accent);
   color: #fff;
 }
 
