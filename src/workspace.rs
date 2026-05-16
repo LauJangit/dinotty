@@ -28,6 +28,15 @@ pub struct PanePathQuery {
 }
 
 #[derive(Deserialize)]
+pub struct WorkspaceListQuery {
+    #[serde(default)]
+    pub pane_id: String,
+    #[serde(default)]
+    pub path: String,
+    pub root: Option<String>,
+}
+
+#[derive(Deserialize)]
 pub struct ResolveQuery {
     pub pane_id: String,
     pub path: String,
@@ -200,15 +209,19 @@ pub async fn workspace_resolve(
 
 pub async fn workspace_list(
     State(manager): State<Arc<SessionManager>>,
-    Query(q): Query<PanePathQuery>,
+    Query(q): Query<WorkspaceListQuery>,
 ) -> impl IntoResponse {
-    let session = match get_session(&manager, &q.pane_id) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let root = match workspace_root(&session) {
-        Ok(r) => r,
-        Err(e) => return e,
+    let root = if q.root.as_deref() == Some("/") {
+        PathBuf::from("/")
+    } else {
+        let session = match get_session(&manager, &q.pane_id) {
+            Ok(s) => s,
+            Err(e) => return e,
+        };
+        match workspace_root(&session) {
+            Ok(r) => r,
+            Err(e) => return e,
+        }
     };
     let target = match normalize_join(&root, &q.path) {
         Ok(p) => p,

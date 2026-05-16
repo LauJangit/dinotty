@@ -4,7 +4,7 @@
       <div class="fp-modal">
         <div class="fp-header">
           <div class="fp-breadcrumb">
-            <span class="fp-crumb-home" @click="navigateTo('')">{{ cwdLabel || '~/' }}</span>
+            <span class="fp-crumb-home" @click="navigateTo('')">{{ cwdLabel || '/' }}</span>
           </div>
           <button class="fp-close-btn" @click="close">✕</button>
         </div>
@@ -59,7 +59,7 @@ const selectedName = ref<string>('')
 
 async function fetchList(rel: string) {
   const { authFetch, apiUrl } = await import('../composables/apiBase')
-  const q = new URLSearchParams({ pane_id: props.paneId, path: rel })
+  const q = new URLSearchParams({ pane_id: props.paneId, path: rel, root: '/' })
   try {
     const res = await authFetch(apiUrl(`/api/workspace/list?${q}`))
     if (res.ok) {

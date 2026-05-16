@@ -40,6 +40,14 @@
       <button class="mkb-tool-btn" @mousedown.prevent="showFilePicker = true">
         <FolderOpen :size="18" />
       </button>
+      <button
+        v-if="globalSelectedPath"
+        class="mkb-tool-btn mkb-path-chip"
+        @mousedown.prevent="onFilePickerSelect(globalSelectedPath!)"
+      >
+        <FileText :size="14" />
+        <span class="mkb-path-label">{{ globalSelectedPath!.split('/').pop() }}</span>
+      </button>
     </div>
 
     <!-- Swipeable panels container -->
@@ -143,7 +151,8 @@ import { useSettings, DEFAULT_ACTION_KEYBOARD } from '../composables/useSettings
 import { useI18n } from '../composables/useI18n'
 import { useHistory } from '../composables/useHistory'
 import { mapActionKeys } from '../utils/actionKeyDef'
-import { Keyboard, SquareTerminal, FolderOpen } from 'lucide-vue-next'
+import { Keyboard, SquareTerminal, FolderOpen, FileText } from 'lucide-vue-next'
+import { useSelectedPath } from '../composables/useSelectedPath'
 
 const props = defineProps<{
   visible: boolean
@@ -158,6 +167,7 @@ const emit = defineEmits<{
 const { settings } = useSettings()
 const { t } = useI18n()
 const { suggestions, fetchSuggestions, fetchDebounced } = useHistory()
+const { selectedPath: globalSelectedPath } = useSelectedPath()
 
 const showHistoryPanel = ref(false)
 const allSuggestions = ref<import('../composables/useHistory').SuggestionItem[]>([])
@@ -495,6 +505,12 @@ function onViewportChange() {
 
 watch(() => props.visible, (v) => {
   nextTick(() => updateHeight())
+})
+
+watch(globalSelectedPath, () => {
+  if (globalSelectedPath.value && props.visible) {
+    emit('update:visible', false)
+  }
 })
 
 onMounted(() => {

@@ -301,6 +301,7 @@ import FilePreviewContent from './workspace/FilePreviewContent.vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import officeParser from 'officeparser'
+import { useSelectedPath } from '../composables/useSelectedPath'
 
 const props = withDefaults(
   defineProps<{ visible: boolean; paneId: string; embedded?: boolean }>(),
@@ -543,12 +544,15 @@ function absolutePath(rel: string): string {
   return rel ? `${root}/${rel}` : root
 }
 
+const { selectedPath: globalSelectedPath } = useSelectedPath()
+
 function onSelectDir(rel: string) {
   selectedRel.value = rel
   selectedIsDir.value = true
   meta.value = null
   previewErr.value = ''
   nav.pushNav(rel, true)
+  globalSelectedPath.value = absolutePath(rel)
   emit('navigate', absolutePath(rel))
 }
 
@@ -562,6 +566,7 @@ async function onSelectFile(rel: string) {
   officeErr.value = ''
   officeHtml.value = ''
   nav.pushNav(rel, false)
+  globalSelectedPath.value = absolutePath(rel)
   emit('navigate', absolutePath(rel))
   try {
     await getApiBase()
