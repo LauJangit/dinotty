@@ -284,20 +284,20 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { useI18n } from '../composables/useI18n'
-import { getApiBase, apiUrl, authFetch, getAuthToken } from '../composables/apiBase'
-import { usePaneResize } from '../composables/usePaneResize'
-import { useFileNavigation } from '../composables/useFileNavigation'
-import { useAudioPlayer } from '../composables/useAudioPlayer'
-import { useFileWorkspaceLayout } from '../composables/useFileWorkspaceLayout'
-import { useFileWatch } from '../composables/useFileWatch'
-import { TreeRows } from './workspace/TreeRows'
-import type { DirEntry } from './workspace/TreeRows'
-import FilePreviewContent from './workspace/FilePreviewContent.vue'
+import { useI18n } from '../../composables/useI18n'
+import { getApiBase, apiUrl, authFetch, getAuthToken } from '../../composables/apiBase'
+import { usePaneResize } from '../../composables/usePaneResize'
+import { useFileNavigation } from '../../composables/useFileNavigation'
+import { useAudioPlayer } from '../../composables/useAudioPlayer'
+import { useFileWorkspaceLayout } from '../../composables/useFileWorkspaceLayout'
+import { useFileWatch } from '../../composables/useFileWatch'
+import { TreeRows } from '../workspace/TreeRows'
+import type { DirEntry } from '../workspace/TreeRows'
+import FilePreviewContent from '../workspace/FilePreviewContent.vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import officeParser from 'officeparser'
-import { useSelectedPath } from '../composables/useSelectedPath'
+import { useSelectedPath } from '../../composables/useSelectedPath'
 
 const props = withDefaults(
   defineProps<{ visible: boolean; paneId: string; embedded?: boolean }>(),
@@ -1402,7 +1402,7 @@ defineExpose({
 </style>
 
 <style>
-@import '../styles/tree-rows.css';
+@import '../../styles/tree-rows.css';
 
 .tree-ctx-backdrop {
   position: fixed;

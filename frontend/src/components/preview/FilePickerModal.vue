@@ -38,8 +38,8 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { TreeRows, absJoinWorkspaceRoot } from './workspace/TreeRows'
-import type { DirEntry } from './workspace/TreeRows'
+import { TreeRows, absJoinWorkspaceRoot } from '../workspace/TreeRows'
+import type { DirEntry } from '../workspace/TreeRows'
 
 const props = defineProps<{
   visible: boolean
@@ -58,7 +58,7 @@ const selectedPath = ref<string>('')
 const selectedName = ref<string>('')
 
 async function fetchList(rel: string) {
-  const { authFetch, apiUrl } = await import('../composables/apiBase')
+  const { authFetch, apiUrl } = await import('../../composables/apiBase')
   const q = new URLSearchParams({ pane_id: props.paneId, path: rel, root: '/' })
   try {
     const res = await authFetch(apiUrl(`/api/workspace/list?${q}`))
@@ -121,7 +121,7 @@ watch(() => props.visible, (v) => {
 </script>
 
 <style>
-@import '../styles/tree-rows.css';
+@import '../../styles/tree-rows.css';
 </style>
 
 <style scoped>

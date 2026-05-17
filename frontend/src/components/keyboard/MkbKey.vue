@@ -15,7 +15,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { KeyDef, ModState } from './mkbTypes'
-import { settings } from '../composables/useSettings'
+import { settings } from '../../composables/useSettings'
 
 let audioCtx: AudioContext | null = null
 

@@ -36,8 +36,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import type { SuggestionItem } from '../composables/useHistory'
-import { useHistory } from '../composables/useHistory'
+import type { SuggestionItem } from '../../composables/useHistory'
+import { useHistory } from '../../composables/useHistory'
 
 const props = defineProps<{
   items: SuggestionItem[]
