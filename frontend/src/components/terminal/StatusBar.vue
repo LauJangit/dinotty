@@ -29,9 +29,9 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { Cpu, MemoryStick, HardDrive, Wifi } from 'lucide-vue-next'
-import { monitorData } from '../composables/useMonitor'
-import { cpuHistory, memHistory, netRxHistory, netTxHistory } from '../composables/useMonitorHistory'
-import { useSettings } from '../composables/useSettings'
+import { monitorData } from '../../composables/useMonitor'
+import { cpuHistory, memHistory, netRxHistory, netTxHistory } from '../../composables/useMonitorHistory'
+import { useSettings } from '../../composables/useSettings'
 import MonitorPopover from './MonitorPopover.vue'
 
 const data = monitorData
