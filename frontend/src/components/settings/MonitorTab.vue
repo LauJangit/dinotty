@@ -73,7 +73,7 @@ import { Line } from 'vue-chartjs'
 import { useSettings } from '../../composables/useSettings'
 import { useI18n } from '../../composables/useI18n'
 import { monitorData } from '../../composables/useMonitor'
-import { cpuHistory, memHistory, netRxHistory, netTxHistory } from '../../composables/useMonitorHistory'
+import { cpuHistory, memHistory, netRxHistory, netTxHistory } from '../../composables/useMonitor'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip)
 

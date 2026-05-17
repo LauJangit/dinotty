@@ -152,7 +152,7 @@ import { useI18n } from '../../composables/useI18n'
 import { useHistory } from '../../composables/useHistory'
 import { mapActionKeys } from '../../utils/actionKeyDef'
 import { Keyboard, SquareTerminal, FolderOpen, FileText } from 'lucide-vue-next'
-import { useSelectedPath } from '../../composables/useSelectedPath'
+import { useSelectedPath } from '../../composables/useFileNavigation'
 
 const props = defineProps<{
   visible: boolean

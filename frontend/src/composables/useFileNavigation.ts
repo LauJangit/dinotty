@@ -1,5 +1,12 @@
 import { ref, computed, type Ref, type ComputedRef } from 'vue'
 
+// Global selected path state (shared across components)
+const selectedPath = ref<string | null>(null)
+
+export function useSelectedPath() {
+  return { selectedPath }
+}
+
 export interface FileNavigation {
   navHistory: Ref<{ rel: string; isDir: boolean }[]>
   navIndex: Ref<number>

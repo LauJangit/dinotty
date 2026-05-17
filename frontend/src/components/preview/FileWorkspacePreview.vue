@@ -297,7 +297,7 @@ import FilePreviewContent from '../workspace/FilePreviewContent.vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import officeParser from 'officeparser'
-import { useSelectedPath } from '../../composables/useSelectedPath'
+import { useSelectedPath } from '../../composables/useFileNavigation'
 
 const props = withDefaults(
   defineProps<{ visible: boolean; paneId: string; embedded?: boolean }>(),

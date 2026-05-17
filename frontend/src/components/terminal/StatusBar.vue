@@ -30,7 +30,7 @@
 import { computed, ref } from 'vue'
 import { Cpu, MemoryStick, HardDrive, Wifi } from 'lucide-vue-next'
 import { monitorData } from '../../composables/useMonitor'
-import { cpuHistory, memHistory, netRxHistory, netTxHistory } from '../../composables/useMonitorHistory'
+import { cpuHistory, memHistory, netRxHistory, netTxHistory } from '../../composables/useMonitor'
 import { useSettings } from '../../composables/useSettings'
 import MonitorPopover from './MonitorPopover.vue'
 
