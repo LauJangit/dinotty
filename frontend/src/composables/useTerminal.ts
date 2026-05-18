@@ -54,7 +54,7 @@ export class TerminalInstance {
   private _resizeObserver: ResizeObserver | null = null
   private _themeUnsub: (() => void) | null = null
   private _textUnsub: (() => void) | null = null
-  private _refitTimer: ReturnType<typeof setTimeout> | null = null
+  private _refitRaf: number = 0
   private _lastCols = 0
   private _lastRows = 0
   private _visibilityHandler: (() => void) | null = null
@@ -267,7 +267,7 @@ export class TerminalInstance {
   destroy() {
     this._destroyed = true
     if (this._reconnectTimer) clearTimeout(this._reconnectTimer)
-    if (this._refitTimer) clearTimeout(this._refitTimer)
+    if (this._refitRaf) cancelAnimationFrame(this._refitRaf)
     this._resizeObserver?.disconnect()
     if (this._visibilityHandler) {
       document.removeEventListener('visibilitychange', this._visibilityHandler)
@@ -412,8 +412,11 @@ export class TerminalInstance {
 
   _refit() {
     if (!this.fitAddon || !this._wrapper) return
-    if (this._refitTimer) clearTimeout(this._refitTimer)
-    this._refitTimer = setTimeout(() => this._doFitAndResize(), 100)
+    if (this._refitRaf) return
+    this._refitRaf = requestAnimationFrame(() => {
+      this._refitRaf = 0
+      this._doFitAndResize()
+    })
   }
 
   private _doFitAndResize(force = false) {
