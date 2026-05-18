@@ -129,7 +129,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useSettings } from '../../composables/useSettings'
 import { useI18n } from '../../composables/useI18n'
-import { playSound, getBuiltinSoundNames, type NotificationType } from '../../composables/useNotificationSound'
+import { playSound, getBuiltinSoundNames, type NotificationType } from '../../composables/useNotification'
 import { getApiBase, authFetch } from '../../composables/apiBase'
 
 const { settings } = useSettings()

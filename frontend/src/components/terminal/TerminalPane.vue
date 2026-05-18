@@ -6,7 +6,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
-import { TerminalInstance } from '../composables/useTerminal'
+import { TerminalInstance } from '../../composables/useTerminal'
 
 const props = defineProps<{
   paneId: string

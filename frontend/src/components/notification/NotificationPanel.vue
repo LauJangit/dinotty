@@ -23,8 +23,8 @@
 </template>
 
 <script setup lang="ts">
-import { useNotification } from '../composables/useNotification'
-import { useI18n } from '../composables/useI18n'
+import { useNotification } from '../../composables/useNotification'
+import { useI18n } from '../../composables/useI18n'
 import NotificationCard from './NotificationCard.vue'
 
 defineProps<{

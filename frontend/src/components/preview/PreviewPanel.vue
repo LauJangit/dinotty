@@ -59,12 +59,12 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount, unref, type Ref } from 'vue'
 import FileWorkspacePreview from './FileWorkspacePreview.vue'
-import { isWebPreviewInput, normalizeWebUrl, urlToPreviewSrc } from '../utils/previewRouting'
-import { getApiBase, getAuthToken } from '../composables/apiBase'
-import { useI18n } from '../composables/useI18n'
+import { isWebPreviewInput, normalizeWebUrl, urlToPreviewSrc } from '../../utils/previewRouting'
+import { getApiBase, getAuthToken } from '../../composables/apiBase'
+import { useI18n } from '../../composables/useI18n'
 import { ChevronLeft, ChevronRight, RotateCw, ArrowRight, ExternalLink, PanelLeftClose, PanelLeftOpen, Upload, Download, X } from 'lucide-vue-next'
-import { isNarrowViewport } from '../utils/viewport'
-import { usePaneResize } from '../composables/usePaneResize'
+import { isNarrowViewport } from '../../utils/viewport'
+import { usePaneResize } from '../../composables/usePaneResize'
 
 const props = defineProps<{
   visible: boolean
