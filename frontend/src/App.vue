@@ -7,6 +7,7 @@
       @activate="activateTab"
       @close="closeTab"
       @new="newTab"
+      @reorder="reorderTab"
     >
       <template #right>
         <button type="button" class="tab-bar-icon-btn" :title="t('app.preview')" @click="openPreview" @touchend.prevent="openPreview"><PanelRight :size="16" /></button>
@@ -248,6 +249,15 @@ function activateTab(paneId: string) {
   sendSync({ type: 'activate_tab', pane_id: paneId })
   persist()
   nextTick(() => focusActive())
+}
+
+function reorderTab(fromId: string, toId: string) {
+  const fromIdx = tabs.value.findIndex((t) => t.paneId === fromId)
+  const toIdx = tabs.value.findIndex((t) => t.paneId === toId)
+  if (fromIdx === -1 || toIdx === -1) return
+  const [moved] = tabs.value.splice(fromIdx, 1)
+  tabs.value.splice(toIdx, 0, moved)
+  persist()
 }
 
 function closeTab(paneId: string) {
