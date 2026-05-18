@@ -88,15 +88,35 @@ pub fn create_session(
     tokio::task::spawn_blocking(move || {
         let mut reader = reader;
         let mut buf = [0u8; 4096];
+        let mut utf8_tail: Vec<u8> = Vec::new();
         loop {
             match reader.read(&mut buf) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
                     let data = &buf[..n];
                     session_clone.screen.lock().unwrap().feed(data);
-                    let s = String::from_utf8_lossy(data).to_string();
-                    session_clone.broadcast(&s);
                     session_clone.on_pty_output(data);
+
+                    utf8_tail.extend_from_slice(data);
+                    let valid_up_to = match std::str::from_utf8(&utf8_tail) {
+                        Ok(s) => {
+                            session_clone.broadcast(s);
+                            utf8_tail.clear();
+                            continue;
+                        }
+                        Err(e) => e.valid_up_to(),
+                    };
+                    if valid_up_to > 0 {
+                        let s = unsafe { std::str::from_utf8_unchecked(&utf8_tail[..valid_up_to]) };
+                        session_clone.broadcast(s);
+                    }
+                    utf8_tail.drain(..valid_up_to);
+                    // Keep only the trailing incomplete bytes (max 3 for UTF-8)
+                    if utf8_tail.len() > 3 {
+                        // Invalid sequence — flush as replacement and reset
+                        session_clone.broadcast("\u{FFFD}");
+                        utf8_tail.clear();
+                    }
                 }
             }
         }

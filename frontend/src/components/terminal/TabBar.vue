@@ -5,7 +5,13 @@
         v-for="tab in tabs"
         :key="tab.paneId"
         class="tab"
-        :class="{ active: tab.paneId === activePaneId }"
+        :class="{ active: tab.paneId === activePaneId, 'drag-over': dragOverId === tab.paneId }"
+        draggable="true"
+        @dragstart="onDragStart($event, tab.paneId)"
+        @dragover.prevent="onDragOver(tab.paneId)"
+        @dragleave="onDragLeave(tab.paneId)"
+        @drop.prevent="onDrop(tab.paneId)"
+        @dragend="onDragEnd"
         @click="$emit('activate', tab.paneId)"
         @touchend.prevent="$emit('activate', tab.paneId)"
       >
@@ -20,6 +26,7 @@
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue'
 import { X, Plus } from 'lucide-vue-next'
 
 export interface TabInfo {
@@ -35,14 +42,56 @@ withDefaults(defineProps<{
   indicators: () => ({})
 })
 
-defineEmits<{
+const emit = defineEmits<{
   activate: [paneId: string]
   close: [paneId: string]
   new: []
+  reorder: [fromId: string, toId: string]
 }>()
+
+const dragFromId = ref<string | null>(null)
+const dragOverId = ref<string | null>(null)
+
+function onDragStart(e: DragEvent, paneId: string) {
+  dragFromId.value = paneId
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+  }
+}
+
+function onDragOver(paneId: string) {
+  if (dragFromId.value && dragFromId.value !== paneId) {
+    dragOverId.value = paneId
+  }
+}
+
+function onDragLeave(paneId: string) {
+  if (dragOverId.value === paneId) {
+    dragOverId.value = null
+  }
+}
+
+function onDrop(paneId: string) {
+  if (dragFromId.value && dragFromId.value !== paneId) {
+    emit('reorder', dragFromId.value, paneId)
+  }
+  dragFromId.value = null
+  dragOverId.value = null
+}
+
+function onDragEnd() {
+  dragFromId.value = null
+  dragOverId.value = null
+}
 </script>
 
 <style scoped>
+.tab[draggable="true"] {
+  cursor: grab;
+}
+.tab.drag-over {
+  border-left: 2px solid var(--accent, #4d7fff);
+}
 .tab-notif-dot {
   width: 7px;
   height: 7px;

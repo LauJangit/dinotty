@@ -145,14 +145,14 @@ import MkbRow from './MkbRow.vue'
 import MkbKey from './MkbKey.vue'
 import SuggestionBar from './SuggestionBar.vue'
 import HistoryPanel from './HistoryPanel.vue'
-import FilePickerModal from './FilePickerModal.vue'
+import FilePickerModal from '../preview/FilePickerModal.vue'
 import type { KeyDef, ModState } from './mkbTypes'
-import { useSettings, DEFAULT_ACTION_KEYBOARD } from '../composables/useSettings'
-import { useI18n } from '../composables/useI18n'
-import { useHistory } from '../composables/useHistory'
-import { mapActionKeys } from '../utils/actionKeyDef'
+import { useSettings, DEFAULT_ACTION_KEYBOARD } from '../../composables/useSettings'
+import { useI18n } from '../../composables/useI18n'
+import { useHistory } from '../../composables/useHistory'
+import { mapActionKeys } from '../../utils/actionKeyDef'
 import { Keyboard, SquareTerminal, FolderOpen, FileText } from 'lucide-vue-next'
-import { useSelectedPath } from '../composables/useSelectedPath'
+import { useSelectedPath } from '../../composables/useFileNavigation'
 
 const props = defineProps<{
   visible: boolean
@@ -170,7 +170,7 @@ const { suggestions, fetchSuggestions, fetchDebounced } = useHistory()
 const { selectedPath: globalSelectedPath } = useSelectedPath()
 
 const showHistoryPanel = ref(false)
-const allSuggestions = ref<import('../composables/useHistory').SuggestionItem[]>([])
+const allSuggestions = ref<import('../../composables/useHistory').SuggestionItem[]>([])
 const showFilePicker = ref(false)
 const barRef = ref<HTMLElement>()
 const swipeContainerRef = ref<HTMLElement>()
@@ -428,7 +428,7 @@ function onSuggestionEdit(command: string) {
 }
 
 async function onExpandHistory() {
-  const { authFetch, apiUrl } = await import('../composables/apiBase')
+  const { authFetch, apiUrl } = await import('../../composables/apiBase')
   try {
     const res = await authFetch(apiUrl('/api/history?limit=100'))
     if (res.ok) allSuggestions.value = await res.json()

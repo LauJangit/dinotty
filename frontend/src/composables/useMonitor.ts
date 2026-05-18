@@ -143,3 +143,46 @@ export function stopMonitor() {
   if (ws) { ws.close(1000); ws = null }
   monitorConnected.value = false
 }
+
+// ── Monitor History ──────────────────────────────────────────────
+
+const MAX_HISTORY = 60
+
+export const cpuHistory = ref<number[]>([])
+export const memHistory = ref<number[]>([])
+export const netRxHistory = ref<number[]>([])
+export const netTxHistory = ref<number[]>([])
+
+let historyInitialized = false
+
+function pushHistory<T>(arr: T[], val: T) {
+  arr.push(val)
+  if (arr.length > MAX_HISTORY) arr.shift()
+}
+
+function processEntry(d: MonitorData) {
+  pushHistory(cpuHistory.value, d.cpu.usage)
+  pushHistory(memHistory.value, d.memory.usage)
+  const rx = d.network.reduce((s, n) => s + n.rx_rate, 0)
+  const tx = d.network.reduce((s, n) => s + n.tx_rate, 0)
+  pushHistory(netRxHistory.value, rx)
+  pushHistory(netTxHistory.value, tx)
+}
+
+export function initMonitorHistory() {
+  if (historyInitialized) return
+  historyInitialized = true
+  startMonitor()
+
+  onMonitorHistory((history) => {
+    cpuHistory.value = []
+    memHistory.value = []
+    netRxHistory.value = []
+    netTxHistory.value = []
+    for (const d of history) {
+      processEntry(d)
+    }
+  })
+
+  onMonitorData(processEntry)
+}

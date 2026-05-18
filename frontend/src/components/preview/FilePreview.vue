@@ -22,7 +22,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import MonacoEditor from './workspace/MonacoEditor.vue'
+import MonacoEditor from '../workspace/MonacoEditor.vue'
 
 const visible = ref(false)
 const filePath = ref('')

@@ -75,30 +75,30 @@ pub struct MetaResponse {
     pub message: Option<String>,
 }
 
-fn json_err(status: StatusCode, msg: &str) -> Response {
-    (
-        status,
-        Json(serde_json::json!({ "error": msg })),
-    )
-        .into_response()
+macro_rules! try_res {
+    ($e:expr) => { match $e { Ok(v) => v, Err(e) => return e } };
 }
 
-fn get_session(
-    manager: &SessionManager,
-    pane_id: &str,
-) -> Result<Arc<crate::session::Session>, Response> {
-    manager
+fn json_err(status: StatusCode, msg: &str) -> Response {
+    (status, Json(serde_json::json!({ "error": msg }))).into_response()
+}
+
+fn get_root(manager: &SessionManager, pane_id: &str) -> Result<PathBuf, Response> {
+    let session = manager
         .sessions
         .get(pane_id)
         .map(|r| Arc::clone(r.value()))
-        .ok_or_else(|| json_err(StatusCode::NOT_FOUND, "unknown pane"))
+        .ok_or_else(|| json_err(StatusCode::NOT_FOUND, "unknown pane"))?;
+    let state = session.cwd_state.lock().unwrap();
+    Ok(state.cwd.canonicalize().unwrap_or_else(|_| state.cwd.clone()))
 }
 
-fn workspace_root(session: &crate::session::Session) -> Result<PathBuf, Response> {
-    let state = session.cwd_state.lock().unwrap();
-    match state.cwd.canonicalize() {
-        Ok(c) => Ok(c),
-        Err(_) => Ok(state.cwd.clone()),
+impl MetaResponse {
+    fn media(kind: &'static str, mime: &'static str) -> Self {
+        Self { kind, content: None, language: None, truncated: false, mime: Some(mime.to_string()), message: None }
+    }
+    fn unsupported() -> Self {
+        Self { kind: "unsupported", content: None, language: None, truncated: false, mime: None, message: Some("binary file".into()) }
     }
 }
 
@@ -177,30 +177,15 @@ pub async fn workspace_resolve(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<ResolveQuery>,
 ) -> impl IntoResponse {
-    let session = match get_session(&manager, &q.pane_id) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let root = match workspace_root(&session) {
-        Ok(r) => r,
-        Err(e) => return e,
-    };
-    let home = dirs::home_dir();
+    let root = try_res!(get_root(&manager, &q.pane_id));
     let joined = if Path::new(&q.path).is_absolute() {
-        resolve_user_path(home, &q.path)
+        resolve_user_path(dirs::home_dir(), &q.path)
     } else {
-        match normalize_join(&root, &q.path) {
-            Ok(p) => p,
-            Err(e) => return e,
-        }
+        try_res!(normalize_join(&root, &q.path))
     };
-    let canon = match joined.canonicalize() {
-        Ok(c) => c,
-        Err(_) => return json_err(StatusCode::NOT_FOUND, "path not found"),
-    };
-    if let Err(e) = path_must_be_under(&root, &canon) {
-        return e;
-    }
+    let canon = joined.canonicalize().map_err(|_| json_err(StatusCode::NOT_FOUND, "path not found"));
+    let canon = try_res!(canon);
+    try_res!(path_must_be_under(&root, &canon));
     let Some(rel) = rel_from_root(&root, &canon) else {
         return json_err(StatusCode::BAD_REQUEST, "bad path");
     };
@@ -214,25 +199,13 @@ pub async fn workspace_list(
     let root = if q.root.as_deref() == Some("/") {
         PathBuf::from("/")
     } else {
-        let session = match get_session(&manager, &q.pane_id) {
-            Ok(s) => s,
-            Err(e) => return e,
-        };
-        match workspace_root(&session) {
-            Ok(r) => r,
-            Err(e) => return e,
-        }
+        try_res!(get_root(&manager, &q.pane_id))
     };
-    let target = match normalize_join(&root, &q.path) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let target = try_res!(normalize_join(&root, &q.path));
     if !target.exists() {
         return json_err(StatusCode::NOT_FOUND, "not found");
     }
-    if let Err(e) = path_must_be_under(&root, &target) {
-        return e;
-    }
+    try_res!(path_must_be_under(&root, &target));
     if !target.is_dir() {
         return json_err(StatusCode::BAD_REQUEST, "not a directory");
     }
@@ -405,24 +378,12 @@ pub async fn workspace_meta(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<PanePathQuery>,
 ) -> impl IntoResponse {
-    let session = match get_session(&manager, &q.pane_id) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let root = match workspace_root(&session) {
-        Ok(r) => r,
-        Err(e) => return e,
-    };
-    let target = match normalize_join(&root, &q.path) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let root = try_res!(get_root(&manager, &q.pane_id));
+    let target = try_res!(normalize_join(&root, &q.path));
     if !target.is_file() {
         return json_err(StatusCode::BAD_REQUEST, "not a file");
     }
-    if let Err(e) = path_must_be_under(&root, &target) {
-        return e;
-    }
+    try_res!(path_must_be_under(&root, &target));
     let meta = match std::fs::metadata(&target) {
         Ok(m) => m,
         Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
@@ -431,37 +392,13 @@ pub async fn workspace_meta(
         return json_err(StatusCode::BAD_REQUEST, "file too large");
     }
     if let Some((kind, mime)) = media_kind(&target) {
-        return Json(MetaResponse {
-            kind,
-            content: None,
-            language: None,
-            truncated: false,
-            mime: Some(mime.to_string()),
-            message: None,
-        })
-        .into_response();
+        return Json(MetaResponse::media(kind, mime)).into_response();
     }
     if let Some((kind, mime)) = office_kind(&target) {
-        return Json(MetaResponse {
-            kind,
-            content: None,
-            language: None,
-            truncated: false,
-            mime: Some(mime.to_string()),
-            message: None,
-        })
-        .into_response();
+        return Json(MetaResponse::media(kind, mime)).into_response();
     }
     if skip_text_preview(&target) {
-        return Json(MetaResponse {
-            kind: "unsupported",
-            content: None,
-            language: None,
-            truncated: false,
-            mime: None,
-            message: Some("binary file".into()),
-        })
-        .into_response();
+        return Json(MetaResponse::unsupported()).into_response();
     }
     let bytes = match std::fs::read(&target) {
         Ok(b) => b,
@@ -475,17 +412,7 @@ pub async fn workspace_meta(
     };
     let text = match std::str::from_utf8(slice) {
         Ok(t) => t.to_string(),
-        Err(_) => {
-            return Json(MetaResponse {
-                kind: "unsupported",
-                content: None,
-                language: None,
-                truncated: false,
-                mime: None,
-                message: Some("binary file".into()),
-            })
-            .into_response();
-        }
+        Err(_) => return Json(MetaResponse::unsupported()).into_response(),
     };
     let lang = detect_language(&target);
     let kind = if lang == "markdown" {
@@ -511,24 +438,12 @@ pub async fn workspace_raw(
     Query(q): Query<PanePathQuery>,
     req_headers: HeaderMap,
 ) -> impl IntoResponse {
-    let session = match get_session(&manager, &q.pane_id) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let root = match workspace_root(&session) {
-        Ok(r) => r,
-        Err(e) => return e,
-    };
-    let target = match normalize_join(&root, &q.path) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let root = try_res!(get_root(&manager, &q.pane_id));
+    let target = try_res!(normalize_join(&root, &q.path));
     if !target.is_file() {
         return json_err(StatusCode::BAD_REQUEST, "not a file");
     }
-    if let Err(e) = path_must_be_under(&root, &target) {
-        return e;
-    }
+    try_res!(path_must_be_under(&root, &target));
     let meta = match tokio::fs::metadata(&target).await {
         Ok(m) => m,
         Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
@@ -559,57 +474,46 @@ pub async fn workspace_raw(
         return (StatusCode::OK, headers, Body::empty()).into_response();
     }
 
-    match req_headers
+    let range = req_headers
         .get(header::RANGE)
         .and_then(|v| v.to_str().ok())
-    {
-        Some(range) => match resolve_byte_range(range, len) {
-            ByteRangeResult::Partial { start, end } => {
-                use tokio::io::{AsyncReadExt, AsyncSeekExt};
-                let mut file = match tokio::fs::File::open(&target).await {
-                    Ok(f) => f,
-                    Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-                };
-                let chunk_len = (end - start + 1) as usize;
-                let mut chunk = vec![0u8; chunk_len];
-                if let Err(e) = file.seek(std::io::SeekFrom::Start(start)).await {
-                    return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
-                }
-                if let Err(e) = file.read_exact(&mut chunk).await {
-                    return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
-                }
-                let cr = format!("bytes {start}-{end}/{len}");
-                if let Ok(hv) = HeaderValue::from_str(&cr) {
-                    headers.insert(header::CONTENT_RANGE, hv);
-                }
-                headers.insert(
-                    header::CONTENT_LENGTH,
-                    HeaderValue::from_str(&chunk_len.to_string())
-                        .unwrap_or_else(|_| HeaderValue::from_static("0")),
-                );
-                (StatusCode::PARTIAL_CONTENT, headers, Body::from(chunk)).into_response()
+        .map(|r| resolve_byte_range(r, len))
+        .unwrap_or(ByteRangeResult::Full);
+
+    match range {
+        ByteRangeResult::Partial { start, end } => {
+            use tokio::io::{AsyncReadExt, AsyncSeekExt};
+            let mut file = match tokio::fs::File::open(&target).await {
+                Ok(f) => f,
+                Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+            };
+            let chunk_len = (end - start + 1) as usize;
+            let mut chunk = vec![0u8; chunk_len];
+            if let Err(e) = file.seek(std::io::SeekFrom::Start(start)).await {
+                return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
             }
-            ByteRangeResult::NotSatisfiable => {
-                let cr = format!("bytes */{len}");
-                if let Ok(hv) = HeaderValue::from_str(&cr) {
-                    headers.insert(header::CONTENT_RANGE, hv);
-                }
-                (StatusCode::RANGE_NOT_SATISFIABLE, headers, Body::empty()).into_response()
+            if let Err(e) = file.read_exact(&mut chunk).await {
+                return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
             }
-            ByteRangeResult::Full => {
-                let bytes = match tokio::fs::read(&target).await {
-                    Ok(b) => b,
-                    Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-                };
-                headers.insert(
-                    header::CONTENT_LENGTH,
-                    HeaderValue::from_str(&len.to_string())
-                        .unwrap_or_else(|_| HeaderValue::from_static("0")),
-                );
-                (StatusCode::OK, headers, Body::from(bytes)).into_response()
+            let cr = format!("bytes {start}-{end}/{len}");
+            if let Ok(hv) = HeaderValue::from_str(&cr) {
+                headers.insert(header::CONTENT_RANGE, hv);
             }
-        },
-        None => {
+            headers.insert(
+                header::CONTENT_LENGTH,
+                HeaderValue::from_str(&chunk_len.to_string())
+                    .unwrap_or_else(|_| HeaderValue::from_static("0")),
+            );
+            (StatusCode::PARTIAL_CONTENT, headers, Body::from(chunk)).into_response()
+        }
+        ByteRangeResult::NotSatisfiable => {
+            let cr = format!("bytes */{len}");
+            if let Ok(hv) = HeaderValue::from_str(&cr) {
+                headers.insert(header::CONTENT_RANGE, hv);
+            }
+            (StatusCode::RANGE_NOT_SATISFIABLE, headers, Body::empty()).into_response()
+        }
+        ByteRangeResult::Full => {
             let bytes = match tokio::fs::read(&target).await {
                 Ok(b) => b,
                 Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
@@ -649,32 +553,17 @@ pub async fn workspace_create_entry(
     Query(q): Query<CreateEntryQuery>,
     Json(body): Json<CreateEntryBody>,
 ) -> impl IntoResponse {
-    let name = match validate_entry_name(&body.name) {
-        Ok(n) => n,
-        Err(e) => return e,
-    };
+    let name = try_res!(validate_entry_name(&body.name));
     let kind = body.kind.to_lowercase();
     if kind != "file" && kind != "dir" {
         return json_err(StatusCode::BAD_REQUEST, "invalid kind");
     }
-    let session = match get_session(&manager, &q.pane_id) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let root = match workspace_root(&session) {
-        Ok(r) => r,
-        Err(e) => return e,
-    };
-    let parent_dir = match normalize_join(&root, &q.parent) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let root = try_res!(get_root(&manager, &q.pane_id));
+    let parent_dir = try_res!(normalize_join(&root, &q.parent));
     if !parent_dir.is_dir() {
         return json_err(StatusCode::BAD_REQUEST, "parent not a directory");
     }
-    if let Err(e) = path_must_be_under(&root, &parent_dir) {
-        return e;
-    }
+    try_res!(path_must_be_under(&root, &parent_dir));
     let dest = parent_dir.join(name);
     if dest.exists() {
         return json_err(StatusCode::CONFLICT, "already exists");
@@ -709,24 +598,12 @@ pub async fn workspace_put_file(
     if body.content.len() as u64 > MAX_DOWNLOAD {
         return json_err(StatusCode::BAD_REQUEST, "content too large");
     }
-    let session = match get_session(&manager, &q.pane_id) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let root = match workspace_root(&session) {
-        Ok(r) => r,
-        Err(e) => return e,
-    };
-    let target = match normalize_join(&root, &q.path) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let root = try_res!(get_root(&manager, &q.pane_id));
+    let target = try_res!(normalize_join(&root, &q.path));
     if target.exists() && target.is_dir() {
         return json_err(StatusCode::BAD_REQUEST, "is directory");
     }
-    if let Err(e) = parent_dir_must_be_in_workspace(&root, &target) {
-        return e;
-    }
+    try_res!(parent_dir_must_be_in_workspace(&root, &target));
     if let Err(e) = std::fs::write(&target, body.content.as_bytes()) {
         return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
     }
@@ -737,24 +614,12 @@ pub async fn workspace_delete(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<PanePathQuery>,
 ) -> impl IntoResponse {
-    let session = match get_session(&manager, &q.pane_id) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let root = match workspace_root(&session) {
-        Ok(r) => r,
-        Err(e) => return e,
-    };
-    let target = match normalize_join(&root, &q.path) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let root = try_res!(get_root(&manager, &q.pane_id));
+    let target = try_res!(normalize_join(&root, &q.path));
     if !target.exists() {
         return json_err(StatusCode::NOT_FOUND, "not found");
     }
-    if let Err(e) = path_must_be_under(&root, &target) {
-        return e;
-    }
+    try_res!(path_must_be_under(&root, &target));
     let root_canon = match root.canonicalize() {
         Ok(p) => p,
         Err(_) => return json_err(StatusCode::NOT_FOUND, "cwd"),
@@ -790,24 +655,12 @@ pub async fn workspace_rename(
     Query(q): Query<PanePathQuery>,
     Json(body): Json<RenameBody>,
 ) -> impl IntoResponse {
-    let session = match get_session(&manager, &q.pane_id) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let root = match workspace_root(&session) {
-        Ok(r) => r,
-        Err(e) => return e,
-    };
-    let target = match normalize_join(&root, &q.path) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let root = try_res!(get_root(&manager, &q.pane_id));
+    let target = try_res!(normalize_join(&root, &q.path));
     if !target.exists() {
         return json_err(StatusCode::NOT_FOUND, "not found");
     }
-    if let Err(e) = path_must_be_under(&root, &target) {
-        return e;
-    }
+    try_res!(path_must_be_under(&root, &target));
     let new_name = match validate_entry_name(&body.new_name) {
         Ok(n) => n.to_owned(),
         Err(e) => return e,
@@ -837,34 +690,17 @@ pub async fn workspace_move(
     Query(q): Query<PanePathQuery>,
     Json(body): Json<MoveBody>,
 ) -> impl IntoResponse {
-    let session = match get_session(&manager, &q.pane_id) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let root = match workspace_root(&session) {
-        Ok(r) => r,
-        Err(e) => return e,
-    };
-    let source = match normalize_join(&root, &q.path) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let root = try_res!(get_root(&manager, &q.pane_id));
+    let source = try_res!(normalize_join(&root, &q.path));
     if !source.exists() {
         return json_err(StatusCode::NOT_FOUND, "source not found");
     }
-    if let Err(e) = path_must_be_under(&root, &source) {
-        return e;
-    }
-    let dest_dir = match normalize_join(&root, &body.dest) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    try_res!(path_must_be_under(&root, &source));
+    let dest_dir = try_res!(normalize_join(&root, &body.dest));
     if !dest_dir.is_dir() {
         return json_err(StatusCode::BAD_REQUEST, "dest is not a directory");
     }
-    if let Err(e) = path_must_be_under(&root, &dest_dir) {
-        return e;
-    }
+    try_res!(path_must_be_under(&root, &dest_dir));
     let file_name = match source.file_name() {
         Some(n) => n.to_owned(),
         None => return json_err(StatusCode::BAD_REQUEST, "invalid source path"),
@@ -896,24 +732,12 @@ pub async fn workspace_upload(
     Query(q): Query<UploadQuery>,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
-    let session = match get_session(&manager, &q.pane_id) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let root = match workspace_root(&session) {
-        Ok(r) => r,
-        Err(e) => return e,
-    };
-    let dest_dir = match normalize_join(&root, &q.dir) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let root = try_res!(get_root(&manager, &q.pane_id));
+    let dest_dir = try_res!(normalize_join(&root, &q.dir));
     if !dest_dir.is_dir() {
         return json_err(StatusCode::BAD_REQUEST, "target not a directory");
     }
-    if let Err(e) = path_must_be_under(&root, &dest_dir) {
-        return e;
-    }
+    try_res!(path_must_be_under(&root, &dest_dir));
     let mut saved: Vec<String> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
     let mut pending_rel_path: Option<String> = None;
@@ -949,13 +773,8 @@ pub async fn workspace_upload(
             return json_err(StatusCode::BAD_REQUEST, "path must not contain ..");
         }
         let file_dest_dir = if let Some(parent) = rel_path.parent().filter(|p| !p.as_os_str().is_empty()) {
-            let sub = match normalize_join(&dest_dir, &parent.to_string_lossy()) {
-                Ok(p) => p,
-                Err(e) => return e,
-            };
-            if let Err(e) = path_must_be_under(&root, &sub) {
-                return e;
-            }
+            let sub = try_res!(normalize_join(&dest_dir, &parent.to_string_lossy()));
+            try_res!(path_must_be_under(&root, &sub));
             if let Err(e) = std::fs::create_dir_all(&sub) {
                 return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
             }
@@ -1016,14 +835,7 @@ pub async fn workspace_git_status(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<PaneQuery>,
 ) -> impl IntoResponse {
-    let session = match get_session(&manager, &q.pane_id) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let root = match workspace_root(&session) {
-        Ok(r) => r,
-        Err(e) => return e,
-    };
+    let root = try_res!(get_root(&manager, &q.pane_id));
     let output = match std::process::Command::new("git")
         .args(["status", "--porcelain"])
         .current_dir(&root)
@@ -1101,14 +913,7 @@ pub async fn workspace_git_diff(
         })
         .into_response()
     };
-    let session = match get_session(&manager, &q.pane_id) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let root = match workspace_root(&session) {
-        Ok(r) => r,
-        Err(e) => return e,
-    };
+    let root = try_res!(get_root(&manager, &q.pane_id));
     let git_check = std::process::Command::new("git")
         .args(["rev-parse", "--git-dir"])
         .current_dir(&root)
@@ -1128,10 +933,7 @@ pub async fn workspace_git_diff(
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
         _ => return no_git(),
     };
-    let target = match normalize_join(&root, rel) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let target = try_res!(normalize_join(&root, rel));
     let current = match std::fs::read_to_string(&target) {
         Ok(c) => c,
         Err(_) => return no_git(),
@@ -1200,14 +1002,7 @@ pub async fn workspace_git_stage_lines(
     Query(q): Query<PanePathQuery>,
     Json(body): Json<GitStageBody>,
 ) -> impl IntoResponse {
-    let session = match get_session(&manager, &q.pane_id) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let root = match workspace_root(&session) {
-        Ok(r) => r,
-        Err(e) => return e,
-    };
+    let root = try_res!(get_root(&manager, &q.pane_id));
     let rel = q.path.trim().trim_start_matches('/');
     if rel.is_empty() {
         return json_err(StatusCode::BAD_REQUEST, "path required");
@@ -1220,10 +1015,7 @@ pub async fn workspace_git_stage_lines(
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
         _ => String::new(),
     };
-    let target = match normalize_join(&root, rel) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let target = try_res!(normalize_join(&root, rel));
     let current = match std::fs::read_to_string(&target) {
         Ok(c) => c,
         Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
@@ -1318,22 +1110,12 @@ pub async fn workspace_git_revert_lines(
     Query(q): Query<PanePathQuery>,
     Json(body): Json<GitRevertBody>,
 ) -> impl IntoResponse {
-    let session = match get_session(&manager, &q.pane_id) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let root = match workspace_root(&session) {
-        Ok(r) => r,
-        Err(e) => return e,
-    };
+    let root = try_res!(get_root(&manager, &q.pane_id));
     let rel = q.path.trim().trim_start_matches('/');
     if rel.is_empty() {
         return json_err(StatusCode::BAD_REQUEST, "path required");
     }
-    let target = match normalize_join(&root, rel) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
+    let target = try_res!(normalize_join(&root, rel));
     let current = match std::fs::read_to_string(&target) {
         Ok(c) => c,
         Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),

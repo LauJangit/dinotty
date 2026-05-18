@@ -1,5 +1,5 @@
 import type { ActionKey } from '../composables/useSettings'
-import type { KeyDef } from '../components/mkbTypes'
+import type { KeyDef } from '../components/keyboard/mkbTypes'
 
 export function normalizeCaretSend(send: string): string {
   if (send.length !== 2 || send[0] !== '^') return send

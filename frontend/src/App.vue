@@ -7,6 +7,7 @@
       @activate="activateTab"
       @close="closeTab"
       @new="newTab"
+      @reorder="reorderTab"
     >
       <template #right>
         <button type="button" class="tab-bar-icon-btn" :title="t('app.preview')" @click="openPreview" @touchend.prevent="openPreview"><PanelRight :size="16" /></button>
@@ -78,18 +79,18 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import TabBar from './components/TabBar.vue'
-import type { TabInfo } from './components/TabBar.vue'
-import TerminalPane from './components/TerminalPane.vue'
-import CommandPalette from './components/CommandPalette.vue'
-import type { Command } from './components/CommandPalette.vue'
-import MobileKeyboard from './components/MobileKeyboard.vue'
-import KbToggleButton from './components/KbToggleButton.vue'
+import TabBar from './components/terminal/TabBar.vue'
+import type { TabInfo } from './components/terminal/TabBar.vue'
+import TerminalPane from './components/terminal/TerminalPane.vue'
+import CommandPalette from './components/command/CommandPalette.vue'
+import type { Command } from './components/command/CommandPalette.vue'
+import MobileKeyboard from './components/keyboard/MobileKeyboard.vue'
+import KbToggleButton from './components/keyboard/KbToggleButton.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
-import PreviewPanel from './components/PreviewPanel.vue'
-import CommandBookmarks from './components/CommandBookmarks.vue'
+import PreviewPanel from './components/preview/PreviewPanel.vue'
+import CommandBookmarks from './components/command/CommandBookmarks.vue'
 import ServerList from './components/ServerList.vue'
-import StatusBar from './components/StatusBar.vue'
+import StatusBar from './components/terminal/StatusBar.vue'
 import type { SyncServerMsg, SyncClientMsg } from './types/protocol'
 import { useSettings } from './composables/useSettings'
 import { getApiBase, wsUrlWithToken } from './composables/apiBase'
@@ -97,8 +98,8 @@ import { isTauri } from './composables/useTransport'
 import { isTouchDevice } from './composables/useTerminal'
 import { useI18n } from './composables/useI18n'
 import { isWebPreviewInput } from './utils/previewRouting'
-import { initMonitorHistory } from './composables/useMonitorHistory'
-import NotificationPanel from './components/NotificationPanel.vue'
+import { initMonitorHistory } from './composables/useMonitor'
+import NotificationPanel from './components/notification/NotificationPanel.vue'
 import { useNotification } from './composables/useNotification'
 import { Settings, Bell, PanelRight, Plus, X, Star, AppWindow } from 'lucide-vue-next'
 
@@ -165,13 +166,8 @@ function onViewportResize() {
   viewportRefitTimer = window.setTimeout(() => {
     if (activePaneId.value && termRefs[activePaneId.value]) {
       termRefs[activePaneId.value].fit()
-      requestAnimationFrame(() => {
-        if (activePaneId.value && termRefs[activePaneId.value]) {
-          termRefs[activePaneId.value].fit()
-        }
-      })
     }
-  }, 300)
+  }, 100)
 }
 
 const tabList = computed<TabInfo[]>(() =>
@@ -248,6 +244,15 @@ function activateTab(paneId: string) {
   sendSync({ type: 'activate_tab', pane_id: paneId })
   persist()
   nextTick(() => focusActive())
+}
+
+function reorderTab(fromId: string, toId: string) {
+  const fromIdx = tabs.value.findIndex((t) => t.paneId === fromId)
+  const toIdx = tabs.value.findIndex((t) => t.paneId === toId)
+  if (fromIdx === -1 || toIdx === -1) return
+  const [moved] = tabs.value.splice(fromIdx, 1)
+  tabs.value.splice(toIdx, 0, moved)
+  persist()
 }
 
 function closeTab(paneId: string) {

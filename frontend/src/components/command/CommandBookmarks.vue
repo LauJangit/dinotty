@@ -46,7 +46,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { useSettings } from '../composables/useSettings'
+import { useSettings } from '../../composables/useSettings'
 
 const props = defineProps<{
   getSendFn: () => ((data: string) => void) | null

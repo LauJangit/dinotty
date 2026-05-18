@@ -73,7 +73,7 @@ import {
   Filler,
 } from 'chart.js'
 import { Line } from 'vue-chartjs'
-import type { MonitorData } from '../composables/useMonitor'
+import type { MonitorData } from '../../composables/useMonitor'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler)
 
