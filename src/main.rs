@@ -190,6 +190,7 @@ async fn main() {
         .route("/api/workspace/git-diff", get(workspace::workspace_git_diff))
         .route("/api/workspace/git-stage-lines", post(workspace::workspace_git_stage_lines))
         .route("/api/workspace/git-revert-lines", post(workspace::workspace_git_revert_lines))
+        .route("/api/workspace/syntax-check", post(workspace::workspace_syntax_check))
         .route("/ws/history", get(history::ws_history_handler))
         .route("/api/history", get(history::get_history).delete(history::delete_history))
         .route("/api/proxy", any(proxy::external_proxy_handler))
