@@ -365,6 +365,7 @@ function onTerminalTouch(e: TouchEvent) {
     const term = activePaneId.value ? termRefs[activePaneId.value]?.getTerminal() : null
     if (term && term.touchMoved) {
       term.touchMoved = false
+      if (kbVisible.value) kbVisible.value = false
       return
     }
     kbVisible.value = true
