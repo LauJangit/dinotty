@@ -78,7 +78,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, reactive, shallowReactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import TabBar from './components/terminal/TabBar.vue'
 import type { TabInfo } from './components/terminal/TabBar.vue'
 import TerminalPane from './components/terminal/TerminalPane.vue'
@@ -155,7 +155,7 @@ watch(
   { immediate: true },
 )
 
-const termRefs = reactive<Record<string, InstanceType<typeof TerminalPane>>>({})
+const termRefs = shallowReactive<Record<string, InstanceType<typeof TerminalPane>>>({})
 
 let syncWs: WebSocket | null = null
 let suppressSync = false
@@ -362,6 +362,11 @@ function onTerminalTouch(e: TouchEvent) {
   if (!isTouchDevice()) return
   const target = e.target as HTMLElement
   if (target.closest('.terminal-pane-container')) {
+    const term = activePaneId.value ? termRefs[activePaneId.value]?.getTerminal() : null
+    if (term && term.touchMoved) {
+      term.touchMoved = false
+      return
+    }
     kbVisible.value = true
   }
 }

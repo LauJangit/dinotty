@@ -21,8 +21,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import MonacoEditor from '../workspace/MonacoEditor.vue'
+import { ref, defineAsyncComponent } from 'vue'
+const MonacoEditor = defineAsyncComponent(() => import('../workspace/MonacoEditor.vue'))
 
 const visible = ref(false)
 const filePath = ref('')

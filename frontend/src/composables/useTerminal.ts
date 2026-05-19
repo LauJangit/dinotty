@@ -57,7 +57,9 @@ export class TerminalInstance {
   private _refitRaf: number = 0
   private _lastCols = 0
   private _lastRows = 0
+  touchMoved = false
   private _visibilityHandler: (() => void) | null = null
+  private _dragDropCleanup: (() => void) | null = null
 
   onTitleChange: ((title: string) => void) | null = null
   onShellInfo: ((shell: string) => void) | null = null
@@ -275,6 +277,7 @@ export class TerminalInstance {
     this._touchCleanup?.()
     this._focusinCleanup?.()
     this._compositionCleanup?.()
+    this._dragDropCleanup?.()
     this._themeUnsub?.()
     this._textUnsub?.()
     if (this._transport) {
@@ -449,25 +452,27 @@ export class TerminalInstance {
 
     // Listen for custom 'terminal-drop-path' events dispatched by the file tree
     // when Tauri's native layer intercepts HTML5 drop events.
-    wrapper.addEventListener('terminal-drop-path', ((e: CustomEvent) => {
+    const dropPathHandler = ((e: CustomEvent) => {
       const path = e.detail?.path as string
       if (!path) return
       const escaped = /[\s'"\\()&;|<>$!`{}[\]#?*~]/.test(path)
         ? `'${path.replace(/'/g, "'\\''")}'`
         : path
       this.sendData(escaped)
-    }) as EventListener)
+    }) as EventListener
+    wrapper.addEventListener('terminal-drop-path', dropPathHandler)
 
     const xtermEl = wrapper.querySelector('.xterm') as HTMLElement
     const target = xtermEl || wrapper
 
-    target.addEventListener('dragover', (e) => {
+    const dragoverHandler = (e: Event) => {
       e.preventDefault()
       e.stopPropagation()
       ;(e as DragEvent).dataTransfer!.dropEffect = 'copy'
-    }, true)
+    }
+    target.addEventListener('dragover', dragoverHandler, true)
 
-    target.addEventListener('drop', (e: Event) => {
+    const dropHandler = (e: Event) => {
       const de = e as DragEvent
       de.preventDefault()
       de.stopPropagation()
@@ -510,7 +515,14 @@ export class TerminalInstance {
         )
         this.sendData(escaped.join(' '))
       }
-    }, true)
+    }
+    target.addEventListener('drop', dropHandler, true)
+
+    this._dragDropCleanup = () => {
+      wrapper.removeEventListener('terminal-drop-path', dropPathHandler)
+      target.removeEventListener('dragover', dragoverHandler, true)
+      target.removeEventListener('drop', dropHandler, true)
+    }
   }
 
   private _setupTouchScroll(wrapper: HTMLElement) {
@@ -526,6 +538,7 @@ export class TerminalInstance {
       const THRESHOLD = 10
 
       const onTouchStart = (e: TouchEvent) => {
+        this.touchMoved = false
         startX = e.touches[0].clientX
         startY = e.touches[0].clientY
         lastY = startY
@@ -539,6 +552,7 @@ export class TerminalInstance {
           const dy = Math.abs(cy - startY)
           if (dy > THRESHOLD || dx > THRESHOLD) {
             mode = dy > dx ? 'scroll' : 'select'
+            if (mode === 'scroll') this.touchMoved = true
           } else {
             return
           }
@@ -549,10 +563,10 @@ export class TerminalInstance {
         lastY = cy
       }
 
-      screen.addEventListener('touchstart', onTouchStart, { passive: true })
+      wrapper.addEventListener('touchstart', onTouchStart, { passive: true })
       screen.addEventListener('touchmove', onTouchMove, { passive: true })
       this._touchCleanup = () => {
-        screen.removeEventListener('touchstart', onTouchStart)
+        wrapper.removeEventListener('touchstart', onTouchStart)
         screen.removeEventListener('touchmove', onTouchMove)
       }
     })

@@ -1,4 +1,4 @@
-import { ref, reactive, computed, h, watch } from 'vue'
+import { ref, shallowReactive, computed, h, watch } from 'vue'
 import { useToast, TYPE } from 'vue-toastification'
 import { getApiBase, wsUrlWithToken } from './apiBase'
 import { isTauri } from './useTransport'
@@ -90,7 +90,7 @@ export interface NotificationItem {
 
 const notifications = ref<NotificationItem[]>([])
 const panelVisible = ref(false)
-const unreadByPane = reactive<Record<string, NotificationType>>({})
+const unreadByPane = shallowReactive<Record<string, NotificationType>>({})
 const unreadCount = computed(() => notifications.value.length)
 
 let ws: WebSocket | null = null
