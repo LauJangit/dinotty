@@ -50,12 +50,19 @@ const { t } = useI18n()
 const activeTab = ref<'general' | 'theme' | 'text' | 'keyboard' | 'monitor' | 'notification'>('general')
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
-watch(settings, () => {
-  applyCurrentTheme()
-  notifyTextChange()
+function scheduleSave() {
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => saveSettings(), 500)
-}, { deep: true })
+}
+
+// Only trigger DOM-heavy theme application when theme fields actually change
+watch(() => [settings.theme.preset, settings.theme.custom], applyCurrentTheme)
+
+// Only notify terminal text changes when text settings change
+watch(() => ({ ...settings.text }), notifyTextChange)
+
+// Save on any setting change
+watch(settings, scheduleSave, { deep: true })
 
 const tabs = computed(() => [
   { id: 'general' as const, label: t('settings.tab.general'), icon: SettingsIcon },

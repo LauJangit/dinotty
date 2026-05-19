@@ -25,10 +25,13 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    chunkSizeWarningLimit: 4000,
     rollupOptions: {
       output: {
         manualChunks: {
-          'monaco-editor': ['monaco-editor'],
+          'xterm': ['@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-unicode11', '@xterm/addon-webgl'],
+          'chart': ['chart.js', 'vue-chartjs'],
+          'marked': ['marked', 'dompurify'],
         },
       },
     },

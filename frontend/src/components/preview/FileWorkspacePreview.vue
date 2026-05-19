@@ -294,10 +294,36 @@ import { useFileWatch } from '../../composables/useFileWatch'
 import { TreeRows } from '../workspace/TreeRows'
 import type { DirEntry } from '../workspace/TreeRows'
 import FilePreviewContent from '../workspace/FilePreviewContent.vue'
-import { marked } from 'marked'
-import DOMPurify from 'dompurify'
-import officeParser from 'officeparser'
 import { useSelectedPath } from '../../composables/useFileNavigation'
+
+// Lazy-loaded heavy libraries (promise-cache avoids concurrent-init races)
+let _markedPromise: Promise<typeof import('marked')> | null = null
+let _domPurifyPromise: Promise<typeof import('dompurify')> | null = null
+
+function getMarked() {
+  if (!_markedPromise) {
+    _markedPromise = import('marked').then((m) => {
+      m.use({
+        gfm: true,
+        breaks: true,
+        renderer: {
+          code({ text, lang }: { text: string; lang?: string }) {
+            const language = (lang || 'plaintext').trim() || 'plaintext'
+            const safeLang = language.replace(/[^a-z0-9_-]/gi, '') || 'plaintext'
+            return `<pre><code class="language-${safeLang}">${esc(text)}</code></pre>`
+          },
+        },
+      })
+      return m
+    })
+  }
+  return _markedPromise
+}
+
+function getDOMPurify() {
+  if (!_domPurifyPromise) _domPurifyPromise = import('dompurify')
+  return _domPurifyPromise
+}
 
 const props = withDefaults(
   defineProps<{ visible: boolean; paneId: string; embedded?: boolean }>(),
@@ -451,28 +477,19 @@ function esc(s: string) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-const markdownEditorHtml = computed(() => {
-  const src = editorText.value
-  if (!src) return ''
-  try {
-    const html = marked.parse(src, { async: false }) as string
-    return DOMPurify.sanitize(html)
-  } catch {
-    return ''
-  }
-})
+const markdownEditorHtml = ref('')
+let mdDebounceTimer: ReturnType<typeof setTimeout> | null = null
 
-// --- Marked config ---
-marked.use({
-  gfm: true,
-  breaks: true,
-  renderer: {
-    code({ text, lang }: { text: string; lang?: string }) {
-      const language = (lang || 'plaintext').trim() || 'plaintext'
-      const safeLang = language.replace(/[^a-z0-9_-]/gi, '') || 'plaintext'
-      return `<pre><code class="language-${safeLang}">${esc(text)}</code></pre>`
-    },
-  },
+watch(editorText, (src) => {
+  if (mdDebounceTimer) { clearTimeout(mdDebounceTimer); mdDebounceTimer = null }
+  if (!src) { markdownEditorHtml.value = ''; return }
+  mdDebounceTimer = setTimeout(async () => {
+    try {
+      const [m, dp] = await Promise.all([getMarked(), getDOMPurify()])
+      const html = m.parse(src, { async: false }) as string
+      markdownEditorHtml.value = dp.default.sanitize(html)
+    } catch { markdownEditorHtml.value = '' }
+  }, 300)
 })
 
 // --- Navigation ---
@@ -877,10 +894,11 @@ async function loadOfficePreview(rel: string) {
     const res = await authFetch(apiUrl(`/api/workspace/raw?${q}`))
     if (!res.ok) throw new Error('raw')
     const buf = await res.arrayBuffer()
-    const ast: any = await (officeParser as any).parseOffice(buf)
+    const [officeMod, dp] = await Promise.all([import('officeparser'), getDOMPurify()])
+    const ast: any = await (officeMod.default as any).parseOffice(buf)
     const nodes = Array.isArray(ast?.content) ? ast.content : []
     const html = nodes.map(officeNodeToHtml).join('') || `<pre>${esc(ast?.toText?.() || '')}</pre>`
-    officeHtml.value = DOMPurify.sanitize(html)
+    officeHtml.value = dp.default.sanitize(html)
   } catch {
     officeErr.value = 'unsupported'
   } finally {

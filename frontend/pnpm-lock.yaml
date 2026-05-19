@@ -8,9 +8,6 @@ importers:
 
   .:
     dependencies:
-      '@guolao/vue-monaco-editor':
-        specifier: ^1.6.0
-        version: 1.6.0(monaco-editor@0.55.1)(vue@3.5.34(typescript@5.7.2))
       '@xterm/addon-fit':
         specifier: ^0.10.0
         version: 0.10.0(@xterm/xterm@5.5.0)
@@ -239,24 +236,11 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@guolao/vue-monaco-editor@1.6.0':
-    resolution: {integrity: sha512-w2IiJ6eJGGeuIgCK6EKZOAfhHTTUB5aZwslzwGbZ5e89Hb4avx6++GkLTW8p84Sng/arFMjLPPxSBI56cFudyQ==}
-    peerDependencies:
-      '@vue/composition-api': ^1.7.2
-      monaco-editor: '>=0.43.0'
-      vue: ^2.6.14 || >=3.0.0
-    peerDependenciesMeta:
-      '@vue/composition-api':
-        optional: true
-
   '@jridgewell/sourcemap-codec@1.5.5':
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
 
   '@kurkle/color@0.3.4':
     resolution: {integrity: sha512-M5UknZPHRu3DEDWoipU6sE8PdkZ6Z/S+v4dD+Ke8IaNlpdSQah50lz1KtcFBa2vsdOnwbbnxJwVM4wty6udA5w==}
-
-  '@monaco-editor/loader@1.7.0':
-    resolution: {integrity: sha512-gIwR1HrJrrx+vfyOhYmCZ0/JcWqG5kbfG7+d3f/C1LXk2EvzAbHSg3MQ5lO2sMlo9izoAZ04shohfKLVT6crVA==}
 
   '@napi-rs/canvas-android-arm64@0.1.100':
     resolution: {integrity: sha512-hjhCKhntPv9+t4ckHymdx0phYNcVW+GKQR6Lzw2zE+pOVjOplSmtx9nNNknTjbEDLcuLZqA1y8ufKg1XfgftzQ==}
@@ -728,9 +712,6 @@ packages:
     resolution: {integrity: sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==}
     engines: {node: '>=0.10.0'}
 
-  state-local@1.0.7:
-    resolution: {integrity: sha512-HTEHMNieakEnoe33shBYcZ7NX83ACUjCu8c40iOGEZsngj9zRnkqS9j1pqQPXwobB0ZcVTk27REb7COQ0UR59w==}
-
   strtok3@10.3.5:
     resolution: {integrity: sha512-ki4hZQfh5rX0QDLLkOCj+h+CVNkqmp/CMf8v8kZpkNVK6jGQooMytqzLZYUVYIZcFZ6yDB70EfD8POcFXiF5oA==}
     engines: {node: '>=18'}
@@ -814,17 +795,6 @@ packages:
     peerDependencies:
       chart.js: ^4.1.1
       vue: ^3.0.0-0 || ^2.7.0
-
-  vue-demi@0.14.10:
-    resolution: {integrity: sha512-nMZBOwuzabUO0nLgIcc6rycZEebF6eeUfaiQx9+WSk8e29IbLvPU9feI6tqW4kTo3hvoYAJkMh8n8D0fuISphg==}
-    engines: {node: '>=12'}
-    hasBin: true
-    peerDependencies:
-      '@vue/composition-api': ^1.0.0-rc.1
-      vue: ^3.0.0-0 || ^2.6.0
-    peerDependenciesMeta:
-      '@vue/composition-api':
-        optional: true
 
   vue-toastification@2.0.0-rc.5:
     resolution: {integrity: sha512-q73e5jy6gucEO/U+P48hqX+/qyXDozAGmaGgLFm5tXX4wJBcVsnGp4e/iJqlm9xzHETYOilUuwOUje2Qg1JdwA==}
@@ -949,20 +919,9 @@ snapshots:
   '@esbuild/win32-x64@0.25.0':
     optional: true
 
-  '@guolao/vue-monaco-editor@1.6.0(monaco-editor@0.55.1)(vue@3.5.34(typescript@5.7.2))':
-    dependencies:
-      '@monaco-editor/loader': 1.7.0
-      monaco-editor: 0.55.1
-      vue: 3.5.34(typescript@5.7.2)
-      vue-demi: 0.14.10(vue@3.5.34(typescript@5.7.2))
-
   '@jridgewell/sourcemap-codec@1.5.5': {}
 
   '@kurkle/color@0.3.4': {}
-
-  '@monaco-editor/loader@1.7.0':
-    dependencies:
-      state-local: 1.0.7
 
   '@napi-rs/canvas-android-arm64@0.1.100':
     optional: true
@@ -1389,8 +1348,6 @@ snapshots:
 
   source-map-js@1.2.1: {}
 
-  state-local@1.0.7: {}
-
   strtok3@10.3.5:
     dependencies:
       '@tokenizer/token': 0.3.0
@@ -1448,10 +1405,6 @@ snapshots:
   vue-chartjs@5.3.3(chart.js@4.5.1)(vue@3.5.34(typescript@5.7.2)):
     dependencies:
       chart.js: 4.5.1
-      vue: 3.5.34(typescript@5.7.2)
-
-  vue-demi@0.14.10(vue@3.5.34(typescript@5.7.2)):
-    dependencies:
       vue: 3.5.34(typescript@5.7.2)
 
   vue-toastification@2.0.0-rc.5(vue@3.5.34(typescript@5.7.2)):

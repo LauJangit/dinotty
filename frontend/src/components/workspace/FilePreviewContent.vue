@@ -152,9 +152,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, defineAsyncComponent } from 'vue'
 import { useI18n } from '../../composables/useI18n'
-import MonacoEditor from './MonacoEditor.vue'
+const MonacoEditor = defineAsyncComponent(() => import('./MonacoEditor.vue'))
 
 const { t } = useI18n()
 
