@@ -280,6 +280,16 @@
       </template>
     </div>
   </Teleport>
+  <ConfirmModal
+    :visible="!!moveConfirm"
+    :title="t('filePreview.moveTitle')"
+    :message="t('filePreview.moveConfirmMsg')"
+    :target="moveConfirm ? (moveConfirm.destDir || t('filePreview.moveToRoot')) : ''"
+    :confirm-text="t('filePreview.moveTitle')"
+    :cancel-text="t('filePreview.cancel')"
+    @confirm="onMoveConfirm"
+    @cancel="onMoveCancel"
+  />
 </template>
 
 <script setup lang="ts">
@@ -294,6 +304,7 @@ import { useFileWatch } from '../../composables/useFileWatch'
 import { TreeRows } from '../workspace/TreeRows'
 import type { DirEntry } from '../workspace/TreeRows'
 import FilePreviewContent from '../workspace/FilePreviewContent.vue'
+import ConfirmModal from '../ui/ConfirmModal.vue'
 import { useSelectedPath } from '../../composables/useFileNavigation'
 
 // Lazy-loaded heavy libraries (promise-cache avoids concurrent-init races)
@@ -375,6 +386,7 @@ const mdShowPreview = ref(false)
 const htmlShowPreview = ref(false)
 const contextMenu = ref<{ x: number; y: number; rel: string; isDir: boolean } | null>(null)
 const addMenuOpen = ref(false)
+const moveConfirm = ref<{ src: string; destDir: string } | null>(null)
 const fileWorkspaceBodyRef = ref<HTMLElement | null>(null)
 const cacheBustTs = ref<number | null>(null)
 
@@ -730,11 +742,20 @@ async function onInlineRenameCommit(newName: string) {
 
 function onInlineRenameCancel() { inlineRename.value = null }
 
-async function onMoveEntry(payload: { src: string; destDir: string }) {
+function onMoveEntry(payload: { src: string; destDir: string }) {
   const { src, destDir } = payload
   if (!src) return
   const srcParent = parentRelPath(src)
   if (srcParent === destDir) return
+  moveConfirm.value = { src, destDir }
+}
+
+async function executeMove() {
+  const info = moveConfirm.value
+  if (!info) return
+  moveConfirm.value = null
+  const { src, destDir } = info
+  const srcParent = parentRelPath(src)
   await getApiBase()
   const q = new URLSearchParams({ pane_id: props.paneId, path: src })
   const res = await authFetch(apiUrl(`/api/workspace/move?${q}`), {
@@ -757,6 +778,9 @@ async function onMoveEntry(payload: { src: string; destDir: string }) {
   childCache.value = next
   try { await Promise.all([ensureChildren(srcParent), ensureChildren(destDir)]) } catch {}
 }
+
+function onMoveConfirm() { executeMove() }
+function onMoveCancel() { moveConfirm.value = null }
 
 // --- Context menu ---
 function closeContextMenu() { contextMenu.value = null }
