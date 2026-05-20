@@ -142,6 +142,20 @@
 .tab-page.active { display: block; }
 
 
+/* ── Titlebar window controls ─────────────────────────────── */
+.titlebar-btn {
+  border-radius: 50%;
+}
+.titlebar-btn:hover {
+  background: rgba(255,255,255,0.1);
+}
+.titlebar-btn.close-btn:hover {
+  background: #E81010;
+}
+.titlebar-btn.close-btn:hover svg {
+  stroke: #fff;
+}
+
 /* ── Command Palette ─────────────────────────────────────── */
 #palette-backdrop {
   display: none;
