@@ -3,10 +3,10 @@
     :class="['mkb-btn', k.cls, { 'mkb-active': isModActive }]"
     :id="k.id"
     :style="{ flexGrow: k.g ?? 1, flexBasis: '0' }"
-    @touchstart.prevent="onDown"
-    @mousedown.prevent="onDown"
-    @touchend="onUp"
-    @touchcancel="onUp"
+    @touchstart.prevent="onTouchDown"
+    @mousedown.prevent="onMouseDown"
+    @touchend.prevent="onUp"
+    @touchcancel.prevent="onUp"
     @mouseup="onUp"
     @mouseleave="onUp"
   ><component v-if="k.icon" :is="k.icon" :size="20" /><template v-else>{{ displayLabel }}</template></button>
@@ -64,6 +64,7 @@ const displayLabel = computed(() => {
 
 let repeatTimer: ReturnType<typeof setTimeout> | null = null
 let repeatInterval: ReturnType<typeof setInterval> | null = null
+let touchActive = false
 
 function fire() {
   if (props.k.sp) {
@@ -82,7 +83,8 @@ function fire() {
 
 function fireWithFeedback() { feedback(); fire() }
 
-function onDown() {
+function onTouchDown() {
+  touchActive = true
   fireWithFeedback()
   if (props.k.repeat) {
     repeatTimer = setTimeout(() => {
@@ -91,8 +93,23 @@ function onDown() {
   }
 }
 
-function onUp() {
+function onMouseDown() {
+  if (touchActive) return
+  fireWithFeedback()
+  if (props.k.repeat) {
+    repeatTimer = setTimeout(() => {
+      repeatInterval = setInterval(fireWithFeedback, 80)
+    }, 400)
+  }
+}
+
+function onUp(e: Event) {
   if (repeatTimer) { clearTimeout(repeatTimer); repeatTimer = null }
   if (repeatInterval) { clearInterval(repeatInterval); repeatInterval = null }
+  if (e.type === 'touchend' || e.type === 'touchcancel') {
+    setTimeout(() => { touchActive = false }, 300)
+  } else {
+    touchActive = false
+  }
 }
 </script>
