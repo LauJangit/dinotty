@@ -1,0 +1,354 @@
+import type { Component } from 'vue'
+import { reactive, ref, computed, watch, onMounted, onUnmounted, h } from 'vue'
+import { authFetch, apiUrl, wsUrlWithToken } from './apiBase'
+
+// Bypass Vite's static analysis of import()
+// eslint-disable-next-line no-new-func
+const dynamicImport: (url: string) => Promise<any> =
+  new Function('url', 'return import(url)') as (url: string) => Promise<any>
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+export interface PluginManifest {
+  id: string
+  name: string
+  version: string
+  minAppVersion?: string
+  description?: string
+  icon?: string
+  entry?: string
+  bin?: { mode: string; entry: string }
+  commands?: Array<{ id: string; title: string }>
+  styles?: string
+}
+
+export interface Disposable {
+  dispose(): void
+}
+
+export interface PluginContext {
+  reactive: typeof reactive
+  ref: typeof ref
+  computed: typeof computed
+  watch: typeof watch
+  onMounted: typeof onMounted
+  onUnmounted: typeof onUnmounted
+  h: typeof h
+
+  exec: {
+    run(args: string[], options?: { cwd?: string; env?: Record<string, string>; timeout?: number }): Promise<{ code: number; stdout: string; stderr: string }>
+    spawn(args: string[], options?: { cwd?: string; env?: Record<string, string> }): { stdout: ReadableStream<string>; stderr: ReadableStream<string>; kill(): void }
+  }
+
+  terminal: {
+    send(paneId: string, data: string): void
+    activePaneId(): string | null
+    onOutput(callback: (paneId: string, data: string) => void): Disposable
+    createTab(command?: string): Promise<string>
+  }
+
+  settings: {
+    get(): Record<string, any>
+    onDidChange(callback: (settings: Record<string, any>) => void): Disposable
+  }
+
+  storage: {
+    get(key: string): Promise<any>
+    set(key: string, value: any): Promise<void>
+    delete(key: string): Promise<void>
+    list(): Promise<string[]>
+  }
+
+  commands: {
+    register(id: string, handler: () => void): Disposable
+  }
+
+  ui: {
+    notify(message: string, level?: 'info' | 'warn' | 'error'): void
+    confirm(message: string): Promise<boolean>
+  }
+}
+
+export interface PluginExports {
+  component?: Component
+  dispose?: () => void
+}
+
+export interface PluginModule {
+  activate(context: PluginContext): PluginExports | void | Promise<PluginExports | void>
+  deactivate?: () => void
+}
+
+export interface LoadedPlugin {
+  id: string
+  manifest: PluginManifest
+  module: PluginModule
+  exports: PluginExports | null
+  state: 'active' | 'error'
+  error?: string
+}
+
+// ─── Module Scope State ───────────────────────────────────────────────────────
+
+export const loadedPlugins = reactive(new Map<string, LoadedPlugin>())
+const pluginCommands = new Map<string, { pluginId: string; handler: () => void }>()
+
+// ─── Window API Injection Points ──────────────────────────────────────────────
+
+declare global {
+  interface Window {
+    __dinotty_terminal_api?: PluginContext['terminal']
+    __dinotty_ui_notify?: PluginContext['ui']['notify']
+    __dinotty_ui_confirm?: PluginContext['ui']['confirm']
+    __dinotty_settings_listener?: PluginContext['settings']['onDidChange']
+  }
+}
+
+// ─── CSS Management ───────────────────────────────────────────────────────────
+
+function loadPluginCSS(id: string, url: string) {
+  removePluginCSS(id)
+  const el = document.createElement('link')
+  el.rel = 'stylesheet'
+  el.href = url
+  el.dataset.pluginId = id
+  document.head.appendChild(el)
+}
+
+function removePluginCSS(id: string) {
+  document.querySelectorAll(`link[data-plugin-id="${id}"]`).forEach(el => el.remove())
+}
+
+// ─── Loader ───────────────────────────────────────────────────────────────────
+
+export function usePluginLoader() {
+  function createPluginContext(pluginId: string): PluginContext {
+    const exec: PluginContext['exec'] = {
+      async run(args, options) {
+        const res = await authFetch(apiUrl(`/api/plugins/${pluginId}/exec`), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ args, ...options }),
+        })
+        return res.json()
+      },
+      spawn(args) {
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+        const ws = new WebSocket(
+          wsUrlWithToken(
+            `${proto}//${location.host}/api/plugins/${pluginId}/spawn?args=${encodeURIComponent(JSON.stringify(args))}`
+          )
+        )
+        let stdoutCtrl: ReadableStreamDefaultController<string>
+        let stderrCtrl: ReadableStreamDefaultController<string>
+
+        const stdout = new ReadableStream<string>({
+          start(controller) { stdoutCtrl = controller },
+        })
+        const stderr = new ReadableStream<string>({
+          start(controller) { stderrCtrl = controller },
+        })
+
+        const closeStreams = () => {
+          try { stdoutCtrl.close() } catch { /* noop */ }
+          try { stderrCtrl.close() } catch { /* noop */ }
+        }
+
+        ws.onmessage = (e) => {
+          const msg = JSON.parse(e.data)
+          if (msg.type === 'stdout') stdoutCtrl.enqueue(msg.data)
+          if (msg.type === 'stderr') stderrCtrl.enqueue(msg.data)
+          if (msg.type === 'done') closeStreams()
+        }
+        ws.onclose = closeStreams
+        ws.onerror = closeStreams
+
+        return { stdout, stderr, kill: () => ws.close() }
+      },
+    }
+
+    const storage: PluginContext['storage'] = {
+      async get(key) {
+        const res = await authFetch(apiUrl(`/api/plugins/${pluginId}/storage/${encodeURIComponent(key)}`))
+        if (res.status === 404) return undefined
+        return (await res.json()).value
+      },
+      async set(key, value) {
+        await authFetch(apiUrl(`/api/plugins/${pluginId}/storage/${encodeURIComponent(key)}`), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value }),
+        })
+      },
+      async delete(key) {
+        await authFetch(apiUrl(`/api/plugins/${pluginId}/storage/${encodeURIComponent(key)}`), {
+          method: 'DELETE',
+        })
+      },
+      async list() {
+        const res = await authFetch(apiUrl(`/api/plugins/${pluginId}/storage`))
+        return (await res.json()).keys
+      },
+    }
+
+    const commands: PluginContext['commands'] = {
+      register(id, handler) {
+        pluginCommands.set(id, { pluginId, handler })
+        return { dispose: () => pluginCommands.delete(id) }
+      },
+    }
+
+    const context: PluginContext = {
+      reactive, ref, computed, watch, onMounted, onUnmounted, h,
+      exec,
+      terminal: window.__dinotty_terminal_api ?? {
+        send() {},
+        activePaneId: () => null,
+        onOutput: () => ({ dispose() {} }),
+        createTab: async () => '',
+      },
+      settings: {
+        get: () => (window as any).__dinotty_settings_data ?? {},
+        onDidChange: window.__dinotty_settings_listener ?? (() => ({ dispose() {} })),
+      },
+      storage,
+      commands,
+      ui: {
+        notify: window.__dinotty_ui_notify ?? (() => {}),
+        confirm: window.__dinotty_ui_confirm ?? (async () => false),
+      },
+    }
+
+    return context
+  }
+
+  async function loadPlugin(id: string): Promise<LoadedPlugin> {
+    // 1. Fetch manifest
+    console.log(`[plugin] loadPlugin(${id}): fetching manifest`)
+    const manifestRes = await authFetch(apiUrl(`/api/plugins/${id}/plugin.json`))
+    if (!manifestRes.ok) throw new Error(`Plugin ${id}: manifest not found (${manifestRes.status})`)
+    const manifest: PluginManifest = await manifestRes.json()
+    console.log(`[plugin] loadPlugin(${id}): manifest ok, entry=${manifest.entry || './main.js'}`)
+
+    // 2. Dynamic load main.js
+    const entry = manifest.entry || './main.js'
+    const jsUrl = apiUrl(`/api/plugins/${id}/${entry.replace('./', '')}`)
+    console.log(`[plugin] loadPlugin(${id}): importing ${jsUrl}`)
+    let mod: PluginModule
+    try {
+      mod = await dynamicImport(jsUrl)
+    } catch (e: any) {
+      throw new Error(`Plugin ${id}: failed to load ${jsUrl}: ${e.message}`)
+    }
+    console.log(`[plugin] loadPlugin(${id}): module loaded, activate=${typeof mod.activate}`)
+
+    if (typeof mod.activate !== 'function') {
+      throw new Error(`Plugin ${id}: main.js must export activate(context)`)
+    }
+
+    // 3. Load optional CSS
+    if (manifest.styles) {
+      const cssUrl = apiUrl(`/api/plugins/${id}/${manifest.styles.replace('./', '')}`)
+      loadPluginCSS(id, cssUrl)
+    }
+
+    // 4. Activate
+    const context = createPluginContext(id)
+    let exports: PluginExports | null = null
+    try {
+      const ACTIVATE_TIMEOUT_MS = 10_000
+      const result = await Promise.race([
+        mod.activate(context),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`activate() timed out after ${ACTIVATE_TIMEOUT_MS}ms`)), ACTIVATE_TIMEOUT_MS)
+        ),
+      ])
+      exports = (result as PluginExports) || null
+      console.log(`[plugin] loadPlugin(${id}): activated, has component=${!!exports?.component}`)
+    } catch (e: any) {
+      throw new Error(`Plugin ${id}: activate() threw: ${e.message}`)
+    }
+
+    const plugin: LoadedPlugin = { id, manifest, module: mod, exports, state: 'active' }
+    loadedPlugins.set(id, plugin)
+    return plugin
+  }
+
+  async function unloadPlugin(id: string) {
+    const plugin = loadedPlugins.get(id)
+    if (!plugin) return
+
+    try { plugin.module.deactivate?.() } catch { /* noop */ }
+    try { plugin.exports?.dispose?.() } catch { /* noop */ }
+
+    // Clean up commands
+    for (const [cmdId, entry] of pluginCommands) {
+      if (entry.pluginId === id) pluginCommands.delete(cmdId)
+    }
+
+    removePluginCSS(id)
+    loadedPlugins.delete(id)
+  }
+
+  async function loadAll() {
+    try {
+      const res = await authFetch(apiUrl('/api/plugins'))
+      if (!res.ok) {
+        console.warn('[plugin] GET /api/plugins returned', res.status)
+        return
+      }
+      const list: PluginManifest[] = await res.json()
+      console.log('[plugin] loadAll: backend returned', list.length, 'plugins:', list.map(p => p.id))
+
+      for (const manifest of list) {
+        if (loadedPlugins.has(manifest.id)) {
+          console.log('[plugin] loadAll: skipping', manifest.id, '(already loaded)')
+          continue
+        }
+        try {
+          await loadPlugin(manifest.id)
+          console.log('[plugin] loadAll: loaded', manifest.id)
+        } catch (e: any) {
+          console.error(`[plugin] loadAll: failed ${manifest.id}:`, e.message)
+          loadedPlugins.set(manifest.id, {
+            id: manifest.id,
+            manifest,
+            module: { activate() { return {} } },
+            exports: null,
+            state: 'error',
+            error: e.message,
+          })
+        }
+      }
+      console.log('[plugin] loadAll: done. loadedPlugins keys:', [...loadedPlugins.keys()])
+    } catch (e: any) {
+      console.error('[plugin] failed to load plugins:', e.message)
+    }
+  }
+
+  function getPluginContext(pluginId: string): PluginContext {
+    return createPluginContext(pluginId)
+  }
+
+  const allCommands = computed(() => {
+    const result: Array<{ id: string; pluginId: string; handler: () => void }> = []
+    for (const [id, { pluginId, handler }] of pluginCommands) {
+      const plugin = loadedPlugins.get(pluginId)
+      if (plugin?.state === 'active') {
+        result.push({ id, pluginId, handler })
+      }
+    }
+    return result
+  })
+
+  const pluginList = computed(() => {
+    return Array.from(loadedPlugins.values()).map(p => ({
+      id: p.id,
+      name: p.manifest.name,
+      icon: p.manifest.icon,
+      state: p.state,
+    }))
+  })
+
+  return { loadedPlugins, loadPlugin, unloadPlugin, loadAll, allCommands, getPluginContext, pluginList }
+}

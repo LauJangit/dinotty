@@ -21,25 +21,46 @@
       </div>
     </div>
     <button id="tab-new-btn" title="New Tab (⌘T)" @click="$emit('new')" @touchend.prevent="$emit('new')"><Plus :size="16" /></button>
+    <div v-if="plugins.length > 0" class="tab-bar-plugin-wrap">
+      <button type="button" class="tab-bar-icon-btn" title="Plugins" @click="pluginMenuOpen = !pluginMenuOpen" @touchend.prevent="pluginMenuOpen = !pluginMenuOpen"><Blocks :size="16" /></button>
+      <div v-if="pluginMenuOpen" class="plugin-dropdown" @mouseleave="pluginMenuOpen = false">
+        <div
+          v-for="p in plugins"
+          :key="p.id"
+          class="plugin-dropdown-item"
+          @click="$emit('open-plugin', p.id); pluginMenuOpen = false"
+          @touchend.prevent="$emit('open-plugin', p.id); pluginMenuOpen = false"
+        >{{ p.name }}</div>
+      </div>
+    </div>
     <slot name="right"></slot>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { X, Plus } from 'lucide-vue-next'
+import { X, Plus, Blocks } from 'lucide-vue-next'
 
 export interface TabInfo {
   paneId: string
   title: string
 }
 
+export interface PluginInfo {
+  id: string
+  name: string
+  icon?: string
+  state: string
+}
+
 withDefaults(defineProps<{
   tabs: TabInfo[]
   activePaneId: string | null
   indicators?: Record<string, string>
+  plugins?: PluginInfo[]
 }>(), {
-  indicators: () => ({})
+  indicators: () => ({}),
+  plugins: () => ([]),
 })
 
 const emit = defineEmits<{
@@ -47,8 +68,10 @@ const emit = defineEmits<{
   close: [paneId: string]
   new: []
   reorder: [fromId: string, toId: string]
+  'open-plugin': [pluginId: string]
 }>()
 
+const pluginMenuOpen = ref(false)
 const dragFromId = ref<string | null>(null)
 const dragOverId = ref<string | null>(null)
 
@@ -107,5 +130,29 @@ function onDragEnd() {
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
+}
+.tab-bar-plugin-wrap {
+  position: relative;
+}
+.plugin-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  min-width: 160px;
+  background: var(--bg-surface, #1e1e1e);
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  padding: 4px 0;
+  z-index: 500;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+.plugin-dropdown-item {
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.plugin-dropdown-item:hover {
+  background: var(--bg-hover, #2a2a2a);
 }
 </style>

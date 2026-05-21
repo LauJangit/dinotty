@@ -1,0 +1,50 @@
+<template>
+  <div class="plugin-view">
+    <component
+      v-if="plugin.state === 'active' && plugin.exports?.component"
+      :is="plugin.exports.component"
+      :api="api"
+    />
+    <div v-else-if="plugin.state === 'error'" class="plugin-error">
+      <p>Plugin load failed: {{ plugin.error }}</p>
+    </div>
+    <div v-else class="plugin-empty">
+      <p>This plugin does not provide a UI component</p>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, onErrorCaptured } from 'vue'
+import type { LoadedPlugin, PluginContext } from '../../composables/usePluginLoader'
+
+defineProps<{
+  plugin: LoadedPlugin
+  api: PluginContext
+}>()
+
+const hasError = ref(false)
+const errorMsg = ref('')
+
+onErrorCaptured((err: any) => {
+  hasError.value = true
+  errorMsg.value = err?.message || 'Unknown error'
+  return false // prevent propagation
+})
+</script>
+
+<style scoped>
+.plugin-view {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+}
+.plugin-error {
+  padding: 2rem;
+  color: var(--color-red, #ef4444);
+}
+.plugin-empty {
+  padding: 2rem;
+  color: var(--text-muted, #888);
+}
+</style>

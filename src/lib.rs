@@ -10,3 +10,4 @@ pub mod file_watcher;
 pub mod monitor;
 pub mod notification;
 pub mod history;
+pub mod plugin;

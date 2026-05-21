@@ -534,19 +534,25 @@ export class TerminalInstance {
       let startX = 0
       let startY = 0
       let lastY = 0
+      let lastTime = 0
+      let accumulatedDeltaY = 0
       let mode: 'undecided' | 'scroll' | 'select' = 'undecided'
       const THRESHOLD = 10
+      const SCROLL_THRESHOLD = 20 // Minimum delta to trigger scroll event
 
       const onTouchStart = (e: TouchEvent) => {
         this.touchMoved = false
         startX = e.touches[0].clientX
         startY = e.touches[0].clientY
         lastY = startY
+        lastTime = Date.now()
+        accumulatedDeltaY = 0
         mode = 'undecided'
       }
       const onTouchMove = (e: TouchEvent) => {
         const cx = e.touches[0].clientX
         const cy = e.touches[0].clientY
+        const now = Date.now()
         if (mode === 'undecided') {
           const dx = Math.abs(cx - startX)
           const dy = Math.abs(cy - startY)
@@ -558,17 +564,103 @@ export class TerminalInstance {
           }
         }
         if (mode === 'scroll') {
-          viewport.scrollTop += lastY - cy
+          const deltaY = lastY - cy
+          accumulatedDeltaY += deltaY
+
+          // Always try to send wheel events - let xterm.js handle it
+          // This works for both mouse mode and normal mode
+          if (this.xterm && Math.abs(accumulatedDeltaY) >= SCROLL_THRESHOLD) {
+            this._sendWheelEvent(screen, accumulatedDeltaY, cx, cy)
+            accumulatedDeltaY = 0
+          }
         }
         lastY = cy
+        lastTime = now
+      }
+
+      const onTouchEnd = () => {
+        // Send any remaining accumulated delta
+        if (mode === 'scroll' && this.xterm && Math.abs(accumulatedDeltaY) > 5) {
+          const screen = wrapper.querySelector('.xterm-screen') as HTMLElement
+          if (screen) {
+            this._sendWheelEvent(screen, accumulatedDeltaY, lastY, lastY)
+          }
+        }
+        accumulatedDeltaY = 0
       }
 
       wrapper.addEventListener('touchstart', onTouchStart, { passive: true })
       screen.addEventListener('touchmove', onTouchMove, { passive: true })
+      screen.addEventListener('touchend', onTouchEnd, { passive: true })
       this._touchCleanup = () => {
         wrapper.removeEventListener('touchstart', onTouchStart)
         screen.removeEventListener('touchmove', onTouchMove)
+        screen.removeEventListener('touchend', onTouchEnd)
       }
     })
+  }
+
+  private _sendWheelEvent(target: HTMLElement, deltaY: number, clientX: number, clientY: number) {
+    if (!this.xterm || deltaY === 0) return
+
+    console.log('[TouchScroll] Sending wheel event:', { deltaY, clientX, clientY })
+
+    // Try multiple dispatch targets to ensure xterm receives the event
+    const elementsToTry = [
+      // Primary target (xterm-screen where mouse events are captured)
+      target,
+      // Viewport element
+      this._wrapper?.querySelector('.xterm-viewport'),
+      // Xterm helper textarea
+      this._wrapper?.querySelector('.xterm-helper-textarea'),
+      // Main xterm element
+      this._wrapper?.querySelector('.xterm'),
+      // Finally the wrapper itself
+      this._wrapper,
+    ].filter(Boolean) as HTMLElement[]
+
+    // Create event once and dispatch to all targets
+    const wheelEvent = new WheelEvent('wheel', {
+      deltaY: deltaY,
+      deltaX: 0,
+      deltaZ: 0,
+      deltaMode: 0,
+      bubbles: true,
+      cancelable: true,
+      clientX: clientX,
+      clientY: clientY,
+    })
+
+    for (const el of elementsToTry) {
+      el.dispatchEvent(wheelEvent)
+    }
+
+    // Also use xterm's built-in scroll as fallback
+    const lineHeight = this.xterm?.rows ? (target.clientHeight / this.xterm.rows) : 20
+    const lines = Math.round(deltaY / lineHeight)
+    if (lines !== 0 && this.xterm) {
+      console.log('[TouchScroll] Calling scrollLines:', lines)
+      this.xterm.scrollLines(lines)
+    }
+  }
+
+  private _isMouseModeEnabled(): boolean {
+    // Check if xterm has any mouse tracking mode enabled
+    // This is indicated by DECSET modes 1000, 1002, 1003, 1004, 1005, 1006, 1015, 1016
+    // xterm.js stores this in the core service
+    if (!this.xterm) return false
+    try {
+      const core = (this.xterm as any)._core
+      const mouseService = core?.mouseService
+      if (mouseService) {
+        // Check if any mouse tracking is active
+        return mouseService.areMouseEventsActive?.() ?? false
+      }
+      // Alternative: check the modes directly
+      const modes = core?.services?.coreMouseService?._activeProtocol
+      return modes !== 'NONE' && modes !== undefined
+    } catch {
+      return false
+    }
   }
 }
