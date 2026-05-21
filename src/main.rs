@@ -1,4 +1,4 @@
-use dinotty_server::{auth, session, settings, ws, proxy, workspace, file_watcher, monitor, notification, history};
+use dinotty_server::{auth, session, settings, ws, proxy, workspace, file_watcher, monitor, notification, history, plugin};
 
 use axum::{
     body::Body,
@@ -21,6 +21,7 @@ use crate::file_watcher::FileWatcherState;
 use crate::monitor::MonitorState;
 use crate::notification::NotificationBroadcast;
 use crate::history::HistoryState;
+use crate::plugin::PluginManagerState;
 
 async fn index(State(state): State<AppState>) -> impl IntoResponse {
     let content = StaticFiles::get("index.html")
@@ -51,6 +52,7 @@ pub struct AppState {
     pub history: HistoryState,
     pub auth_token: Arc<String>,
     pub port: u16,
+    pub plugins: PluginManagerState,
 }
 
 // Allow extracting Arc<SessionManager> from AppState for ws handlers
@@ -89,6 +91,12 @@ impl axum::extract::FromRef<AppState> for Arc<NotificationBroadcast> {
 impl axum::extract::FromRef<AppState> for HistoryState {
     fn from_ref(state: &AppState) -> Self {
         state.history.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for PluginManagerState {
+    fn from_ref(state: &AppState) -> Self {
+        state.plugins.clone()
     }
 }
 
@@ -166,6 +174,10 @@ async fn main() {
     let notifier = Arc::new(NotificationBroadcast::new());
     let history_state = HistoryState::new();
 
+    let plugins = Arc::new(plugin::PluginManager::new());
+    plugins.scan();
+    tracing::info!("Loaded {} plugins", plugins.list().len());
+
     let state = AppState {
         manager,
         settings: settings::create_settings_state(),
@@ -175,6 +187,7 @@ async fn main() {
         history: history_state,
         auth_token: auth_token.clone(),
         port,
+        plugins,
     };
 
     let app = Router::new()
@@ -209,6 +222,24 @@ async fn main() {
         .route("/api/history", get(history::get_history).delete(history::delete_history))
         .route("/api/proxy", any(proxy::external_proxy_handler))
         .route("/api/info", get(server_info))
+        // Plugin management
+        .route("/api/plugins", get(plugin::list_plugins))
+        .route("/api/plugins/dev-link", post(plugin::dev_link_plugin))
+        .merge(
+            Router::new()
+                .route("/api/plugins/install", post(plugin::install_plugin))
+                .route("/api/plugins/:id/update", post(plugin::update_plugin))
+                .layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024))
+        )
+        .route("/api/plugins/:id", get(plugin::plugin_detail).delete(plugin::delete_plugin))
+        .route("/api/plugins/:id/exec", post(plugin::plugin_exec))
+        .route("/api/plugins/:id/spawn", get(plugin::plugin_spawn_ws))
+        .route("/api/plugins/:id/storage", get(plugin::plugin_storage_list))
+        .route("/api/plugins/:id/storage/:key",
+            get(plugin::plugin_storage_get)
+                .put(plugin::plugin_storage_set)
+                .delete(plugin::plugin_storage_delete))
+        .route("/api/plugins/:id/*path", get(plugin::plugin_asset))
         .route("/preview/:port", any(proxy::proxy_handler_root))
         .route("/preview/:port/", any(proxy::proxy_handler_root))
         .route("/preview/:port/*path", any(proxy::proxy_handler_wildcard))

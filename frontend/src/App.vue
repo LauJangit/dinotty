@@ -4,6 +4,8 @@
       :tabs="tabList"
       :active-pane-id="activePaneId"
       :indicators="notif.unreadByPane"
+      :plugins="pluginList"
+      :on-open-plugin="openPlugin"
       @activate="activateTab"
       @close="closeTab"
       @new="newTab"
@@ -24,29 +26,36 @@
         v-for="tab in tabs"
         :key="tab.paneId"
         class="tab-page"
-        :class="{ active: tab.paneId === activePaneId, 'has-preview': tab.previewVisible, ['pos-' + resolvedPosition]: tab.previewVisible }"
+        :class="{ active: tab.paneId === activePaneId, 'has-preview': tab.type === 'terminal' && tab.previewVisible, ['pos-' + resolvedPosition]: tab.type === 'terminal' && tab.previewVisible }"
       >
-        <TerminalPane
-          :ref="(el: any) => { if (el) termRefs[tab.paneId] = el }"
-          :pane-id="tab.paneId"
-          @title-change="(t: string) => onTitleChange(tab.paneId, t)"
-          @file-click="onFileClick"
-          @preview-link="(url: string) => onPreviewLink(tab.paneId, url)"
-          @link-activate="onLinkActivate"
-        />
-        <PreviewPanel
-          v-if="tab.paneId === activePaneId"
-          :ref="setPreviewPanelRef"
-          :visible="tab.previewVisible"
-          :pane-id="tab.paneId"
-          :address="tab.previewAddress"
-          :kind="tab.previewKind"
-          :web-url="tab.previewUrl"
-          :panel-position="resolvedPosition"
-          @close="closePreview(tab.paneId)"
-          @update:address="(v: string) => { tab.previewAddress = v; persist() }"
-          @update:kind="(v: 'web' | 'files') => { tab.previewKind = v; persist() }"
-          @update:web-url="(v: string) => { tab.previewUrl = v; persist() }"
+        <template v-if="tab.type === 'terminal'">
+          <TerminalPane
+            :ref="(el: any) => { if (el) termRefs[tab.paneId] = el }"
+            :pane-id="tab.paneId"
+            @title-change="(t: string) => onTitleChange(tab.paneId, t)"
+            @file-click="onFileClick"
+            @preview-link="(url: string) => onPreviewLink(tab.paneId, url)"
+            @link-activate="onLinkActivate"
+          />
+          <PreviewPanel
+            v-if="tab.paneId === activePaneId"
+            :ref="setPreviewPanelRef"
+            :visible="tab.previewVisible"
+            :pane-id="tab.paneId"
+            :address="tab.previewAddress"
+            :kind="tab.previewKind"
+            :web-url="tab.previewUrl"
+            :panel-position="resolvedPosition"
+            @close="closePreview(tab.paneId)"
+            @update:address="(v: string) => { tab.previewAddress = v; persist() }"
+            @update:kind="(v: 'web' | 'files') => { tab.previewKind = v; persist() }"
+            @update:web-url="(v: string) => { tab.previewUrl = v; persist() }"
+          />
+        </template>
+        <PluginView
+          v-else-if="tab.type === 'plugin'"
+          :plugin="loadedPlugins.get(tab.pluginId)!"
+          :api="getPluginContext(tab.pluginId)"
         />
       </div>
     </div>
@@ -102,9 +111,12 @@ import { isWebPreviewInput } from './utils/previewRouting'
 import { initMonitorHistory } from './composables/useMonitor'
 import NotificationPanel from './components/notification/NotificationPanel.vue'
 import { useNotification } from './composables/useNotification'
+import { usePluginLoader } from './composables/usePluginLoader'
+import PluginView from './components/plugin/PluginView.vue'
 import { Settings, Bell, PanelRight, Plus, X, Star, AppWindow } from 'lucide-vue-next'
 
-interface Tab {
+interface TerminalTab {
+  type: 'terminal'
   paneId: string
   title: string
   previewVisible: boolean
@@ -112,6 +124,15 @@ interface Tab {
   previewUrl: string
   previewKind: 'web' | 'files'
 }
+
+interface PluginTab {
+  type: 'plugin'
+  paneId: string
+  title: string
+  pluginId: string
+}
+
+type Tab = TerminalTab | PluginTab
 
 const tabs = ref<Tab[]>([])
 const activePaneId = ref<string | null>(null)
@@ -130,6 +151,7 @@ const serverListRef = ref<InstanceType<typeof ServerList>>()
 const { settings: appSettings } = useSettings()
 const { t } = useI18n()
 const notif = useNotification()
+const { loadedPlugins, loadAll, getPluginContext, pluginList, allCommands } = usePluginLoader()
 
 const isLandscape = ref(window.innerWidth > window.innerHeight)
 
@@ -195,19 +217,30 @@ function sendSync(msg: SyncClientMsg) {
 }
 
 function persist() {
-  const state = tabs.value.map((t) => ({
-    paneId: t.paneId,
-    title: t.title,
-    previewVisible: t.previewVisible,
-    previewAddress: t.previewAddress,
-    previewUrl: t.previewUrl,
-    previewKind: t.previewKind,
-  }))
+  const state = tabs.value.map((t) => {
+    if (t.type === 'terminal') {
+      return {
+        type: t.type,
+        paneId: t.paneId,
+        title: t.title,
+        previewVisible: t.previewVisible,
+        previewAddress: t.previewAddress,
+        previewUrl: t.previewUrl,
+        previewKind: t.previewKind,
+      }
+    }
+    return {
+      type: t.type,
+      paneId: t.paneId,
+      title: t.title,
+      pluginId: t.pluginId,
+    }
+  })
   const activeIdx = tabs.value.findIndex((t) => t.paneId === activePaneId.value)
   localStorage.setItem('dinotty_tabs', JSON.stringify({ tabs: state, activeIdx }))
 }
 
-function getSavedTab(paneId: string): Partial<Tab> | null {
+function getSavedTab(paneId: string): any {
   try {
     const raw = localStorage.getItem('dinotty_tabs')
     if (!raw) return null
@@ -227,6 +260,7 @@ const DEFAULT_PREVIEW_URL = ''
 function newTab() {
   const paneId = genPaneId()
   tabs.value.push({
+    type: 'terminal',
     paneId,
     title: 'Terminal',
     previewVisible: false,
@@ -263,12 +297,16 @@ function closeTab(paneId: string) {
     sendSync({ type: 'close_tab', pane_id: oldTab.paneId })
     const newPaneId = genPaneId()
     delete termRefs[oldTab.paneId]
-    oldTab.paneId = newPaneId
-    oldTab.title = 'Terminal'
-    oldTab.previewVisible = false
-    oldTab.previewAddress = ''
-    oldTab.previewUrl = ''
-    oldTab.previewKind = 'web'
+    // Replace with a fresh terminal tab
+    tabs.value[0] = {
+      type: 'terminal',
+      paneId: newPaneId,
+      title: 'Terminal',
+      previewVisible: false,
+      previewAddress: '',
+      previewUrl: '',
+      previewKind: 'web',
+    }
     activePaneId.value = newPaneId
     sendSync({ type: 'create_tab', pane_id: newPaneId })
     persist()
@@ -308,7 +346,7 @@ function onTitleChange(paneId: string, title: string) {
 
 function onPreviewLink(paneId: string, url: string) {
   const tab = tabs.value.find((t) => t.paneId === paneId)
-  if (!tab) return
+  if (!tab || tab.type !== 'terminal') return
   tab.previewKind = 'web'
   tab.previewUrl = url
   tab.previewAddress = url
@@ -318,7 +356,7 @@ function onPreviewLink(paneId: string, url: string) {
 
 function closePreview(paneId: string) {
   const tab = tabs.value.find((t) => t.paneId === paneId)
-  if (tab) {
+  if (tab && tab.type === 'terminal') {
     tab.previewVisible = false
     persist()
   }
@@ -328,7 +366,7 @@ function openPreview() {
   const pid = activePaneId.value
   if (!pid) return
   const tab = tabs.value.find((t) => t.paneId === pid)
-  if (!tab) return
+  if (!tab || tab.type !== 'terminal') return
   if (!tab.previewAddress.trim()) {
     tab.previewKind = 'files'
   }
@@ -347,7 +385,7 @@ function onFileClick(path: string) {
   const pid = activePaneId.value
   if (!pid) return
   const tab = tabs.value.find((t) => t.paneId === pid)
-  if (!tab) return
+  if (!tab || tab.type !== 'terminal') return
   tab.previewKind = 'files'
   tab.previewAddress = path
   tab.previewVisible = true
@@ -405,36 +443,129 @@ function onServerConnect(host: string, port: number) {
   window.location.href = `${proto}//${host}:${port}/`
 }
 
-const paletteCommands = computed<Command[]>(() => [
-  {
-    icon: '＋',
-    title: 'New Tab',
-    subtitle: 'Open a new terminal tab',
-    kbd: ['⌘', 'T'],
-    action: () => newTab(),
+function openPlugin(pluginId: string) {
+  console.log('[openPlugin] called with:', pluginId)
+  try {
+    const paneId = `plugin:${pluginId}`
+    const existing = tabs.value.find(t => t.paneId === paneId)
+    if (existing) {
+      console.log('[openPlugin] tab already exists, activating')
+      activateTab(paneId)
+      return
+    }
+
+    const plugin = loadedPlugins.get(pluginId)
+    console.log('[openPlugin] plugin lookup:', !!plugin, plugin?.state)
+    if (!plugin || plugin.state !== 'active') {
+      const msg = plugin?.state === 'error'
+        ? `Plugin "${pluginId}" failed to load: ${plugin.error ?? 'unknown error'}`
+        : `Plugin "${pluginId}" is not loaded.`
+      console.warn('[openPlugin]', msg)
+      window.__dinotty_ui_notify?.(msg, 'error')
+      return
+    }
+
+    const newTab = {
+      type: 'plugin' as const,
+      paneId,
+      title: plugin.manifest.name,
+      pluginId,
+    }
+    console.log('[openPlugin] pushing tab:', newTab)
+    tabs.value.push(newTab)
+    activePaneId.value = paneId
+    sendSync({ type: 'activate_tab', pane_id: paneId })
+    persist()
+    console.log('[openPlugin] done, tabs count:', tabs.value.length, 'activePaneId:', activePaneId.value)
+    nextTick(() => focusActive())
+  } catch (err) {
+    console.error('[openPlugin] error:', err)
+  }
+}
+
+// Window globals for plugin context
+window.__dinotty_terminal_api = {
+  send(paneId: string, data: string) {
+    termRefs[paneId]?.sendData(data)
   },
-  {
-    icon: '✕',
-    title: 'Close Tab',
-    subtitle: 'Close the current tab',
-    kbd: ['⌘', 'W'],
-    action: () => {
-      if (activePaneId.value) closeTab(activePaneId.value)
+  activePaneId() {
+    return activePaneId.value
+  },
+  onOutput(callback: (paneId: string, data: string) => void) {
+    // TODO: wire up to terminal output broadcasts
+    return { dispose() {} }
+  },
+  async createTab(command?: string) {
+    newTab()
+    return activePaneId.value ?? ''
+  },
+}
+window.__dinotty_ui_notify = (message: string, level?: 'info' | 'warn' | 'error') => {
+  // Use notification system or console
+  if (level === 'error') console.error('[plugin]', message)
+  else console.log('[plugin]', message)
+}
+window.__dinotty_ui_confirm = async (message: string) => window.confirm(message)
+
+const paletteCommands = computed<Command[]>(() => {
+  const base: Command[] = [
+    {
+      icon: '＋',
+      title: 'New Tab',
+      subtitle: 'Open a new terminal tab',
+      kbd: ['⌘', 'T'],
+      action: () => newTab(),
     },
-  },
-  {
-    icon: '★',
-    title: 'Saved Commands',
-    subtitle: 'Open bookmarked commands',
-    action: () => bookmarksRef.value?.open(),
-  },
-  {
-    icon: '⊡',
-    title: 'Open Preview',
-    subtitle: 'URL or path in the address bar',
-    action: () => openPreview(),
-  },
-])
+    {
+      icon: '✕',
+      title: 'Close Tab',
+      subtitle: 'Close the current tab',
+      kbd: ['⌘', 'W'],
+      action: () => {
+        if (activePaneId.value) closeTab(activePaneId.value)
+      },
+    },
+    {
+      icon: '★',
+      title: 'Saved Commands',
+      subtitle: 'Open bookmarked commands',
+      action: () => bookmarksRef.value?.open(),
+    },
+    {
+      icon: '⊡',
+      title: 'Open Preview',
+      subtitle: 'URL or path in the address bar',
+      action: () => openPreview(),
+    },
+  ]
+
+  // Plugin-registered commands
+  for (const cmd of allCommands.value) {
+    const plugin = loadedPlugins.get(cmd.pluginId)
+    // Look up title from manifest commands list
+    const cmdDef = plugin?.manifest.commands?.find(c => c.id === cmd.id)
+    base.push({
+      icon: '◈',
+      title: cmdDef?.title || cmd.id,
+      subtitle: plugin?.manifest.name,
+      action: cmd.handler,
+    })
+  }
+
+  // Plugin open commands
+  for (const p of pluginList.value) {
+    if (p.state === 'active') {
+      base.push({
+        icon: '◈',
+        title: `Open ${p.name}`,
+        subtitle: 'Open plugin tab',
+        action: () => openPlugin(p.id),
+      })
+    }
+  }
+
+  return base
+})
 
 function onGlobalKeydown(e: KeyboardEvent) {
   const cmd = e.metaKey || e.ctrlKey
@@ -492,6 +623,7 @@ async function connectSyncWS() {
         if (!localPaneIds.has(tab.pane_id)) {
           const saved = getSavedTab(tab.pane_id)
           tabs.value.push({
+            type: 'terminal',
             paneId: tab.pane_id,
             title: saved?.title || 'Terminal',
             previewVisible: saved?.previewVisible || false,
@@ -502,11 +634,35 @@ async function connectSyncWS() {
         }
       }
 
+      // Restore plugin tabs from localStorage
+      try {
+        const raw = localStorage.getItem('dinotty_tabs')
+        if (raw) {
+          const { tabs: savedTabs } = JSON.parse(raw)
+          for (const st of savedTabs) {
+            if (st.type === 'plugin' && !tabs.value.some(t => t.paneId === st.paneId)) {
+              tabs.value.push({
+                type: 'plugin',
+                paneId: st.paneId,
+                title: st.title || st.pluginId,
+                pluginId: st.pluginId,
+              })
+            }
+          }
+        }
+      } catch { /* noop */ }
+
       const serverIds = new Set(msg.tabs.map((t) => t.pane_id))
-      tabs.value = tabs.value.filter((t) => serverIds.has(t.paneId))
+      tabs.value = tabs.value.filter((t) => t.type === 'plugin' || serverIds.has(t.paneId))
 
       if (msg.active_pane_id) {
-        activePaneId.value = msg.active_pane_id
+        const cur = tabs.value.find(t => t.paneId === activePaneId.value)
+        console.log('[tab_list] active_pane_id:', msg.active_pane_id, 'current:', activePaneId.value, 'curType:', cur?.type)
+        if (!cur || cur.type !== 'plugin') {
+          activePaneId.value = msg.active_pane_id
+        } else {
+          console.log('[tab_list] skipping override, plugin tab is active')
+        }
       }
 
       if (msg.tabs.length === 0 && tabs.value.length === 0) {
@@ -517,6 +673,7 @@ async function connectSyncWS() {
     } else if (msg.type === 'tab_created') {
       if (!tabs.value.some((t) => t.paneId === msg.pane_id)) {
         tabs.value.push({
+          type: 'terminal',
           paneId: msg.pane_id,
           title: 'Terminal',
           previewVisible: false,
@@ -536,7 +693,9 @@ async function connectSyncWS() {
         persist()
       }
     } else if (msg.type === 'tab_activated') {
-      if (activePaneId.value !== msg.pane_id) {
+      const cur = tabs.value.find(t => t.paneId === activePaneId.value)
+      console.log('[tab_activated] pane_id:', msg.pane_id, 'current:', activePaneId.value, 'curType:', cur?.type)
+      if (activePaneId.value !== msg.pane_id && (!cur || cur.type !== 'plugin')) {
         suppressSync = true
         activePaneId.value = msg.pane_id
         suppressSync = false
@@ -566,6 +725,7 @@ onMounted(() => {
   }
   void connectSyncWS()
   initMonitorHistory()
+  void loadAll()
 })
 
 onBeforeUnmount(() => {

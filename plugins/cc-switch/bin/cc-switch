@@ -1,0 +1,285 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# CC Switch CLI for dinotty plugin
+# Manages Claude Code API provider configurations
+# Usage: cc-switch <command> [args...]
+
+CLAUDE_SETTINGS="$HOME/.claude/settings.json"
+DATA_DIR="$HOME/.dinotty/plugin-data/cc-switch"
+PROVIDERS_FILE="$DATA_DIR/providers.json"
+
+# Ensure data directory and providers file exist
+ensure_data() {
+    mkdir -p "$DATA_DIR"
+    if [ ! -f "$PROVIDERS_FILE" ]; then
+        echo '{"providers":[]}' > "$PROVIDERS_FILE"
+    fi
+}
+
+# Generate a unique ID
+gen_id() {
+    if command -v uuidgen &>/dev/null; then
+        uuidgen | tr '[:upper:]' '[:lower:]' | cut -d'-' -f1
+    else
+        echo "p$(date +%s%N | cut -c1-12)"
+    fi
+}
+
+cmd_list() {
+    ensure_data
+    cat "$PROVIDERS_FILE"
+}
+
+cmd_current() {
+    if [ ! -f "$CLAUDE_SETTINGS" ]; then
+        echo '{"error":"~/.claude/settings.json not found"}'
+        exit 1
+    fi
+    local env_json
+    env_json=$(jq '.env // {}' "$CLAUDE_SETTINGS")
+    echo "$env_json"
+}
+
+cmd_switch() {
+    local id="$1"
+    ensure_data
+
+    # Find provider by id
+    local provider
+    provider=$(jq -r --arg id "$id" '.providers[] | select(.id == $id)' "$PROVIDERS_FILE")
+    if [ -z "$provider" ] || [ "$provider" = "null" ]; then
+        echo "{\"error\":\"provider '$id' not found\"}" >&2
+        exit 1
+    fi
+
+    # Read current settings, update env from provider
+    if [ ! -f "$CLAUDE_SETTINGS" ]; then
+        echo '{"env":{}}' > "$CLAUDE_SETTINGS"
+    fi
+
+    local base_url auth_token model haiku_model sonnet_model opus_model
+    base_url=$(echo "$provider" | jq -r '.base_url // empty')
+    auth_token=$(echo "$provider" | jq -r '.auth_token // empty')
+    model=$(echo "$provider" | jq -r '.model // empty')
+    haiku_model=$(echo "$provider" | jq -r '.haiku_model // empty')
+    sonnet_model=$(echo "$provider" | jq -r '.sonnet_model // empty')
+    opus_model=$(echo "$provider" | jq -r '.opus_model // empty')
+
+    # Build new env object
+    local new_env
+    new_env=$(jq -n \
+        --arg url "$base_url" \
+        --arg token "$auth_token" \
+        --arg model "$model" \
+        --arg haiku "$haiku_model" \
+        --arg sonnet "$sonnet_model" \
+        --arg opus "$opus_model" \
+        '{ ANTHROPIC_BASE_URL: $url, ANTHROPIC_API_KEY: $token, ANTHROPIC_MODEL: $model,
+           ANTHROPIC_DEFAULT_HAIKU_MODEL: (if $haiku == "" then $model else $haiku end),
+           ANTHROPIC_DEFAULT_SONNET_MODEL: (if $sonnet == "" then $model else $sonnet end),
+           ANTHROPIC_DEFAULT_OPUS_MODEL: (if $opus == "" then $model else $opus end)
+         } | with_entries(select(.value != ""))')
+
+    # Update settings.json, preserving other fields
+    local tmp
+    tmp=$(mktemp)
+    jq --argjson env "$new_env" '.env = $env' "$CLAUDE_SETTINGS" > "$tmp" && mv "$tmp" "$CLAUDE_SETTINGS"
+
+    echo "{\"ok\":true,\"id\":\"$id\"}"
+}
+
+cmd_add() {
+    local json="$1"
+    ensure_data
+
+    local id
+    id=$(gen_id)
+
+    local name base_url auth_token model haiku_model sonnet_model opus_model
+    name=$(echo "$json" | jq -r '.name // "Unnamed"')
+    base_url=$(echo "$json" | jq -r '.base_url // ""')
+    auth_token=$(echo "$json" | jq -r '.auth_token // ""')
+    model=$(echo "$json" | jq -r '.model // ""')
+    haiku_model=$(echo "$json" | jq -r '.haiku_model // ""')
+    sonnet_model=$(echo "$json" | jq -r '.sonnet_model // ""')
+    opus_model=$(echo "$json" | jq -r '.opus_model // ""')
+
+    local tmp
+    tmp=$(mktemp)
+    jq --arg id "$id" \
+       --arg name "$name" \
+       --arg url "$base_url" \
+       --arg token "$auth_token" \
+       --arg model "$model" \
+       --arg haiku "$haiku_model" \
+       --arg sonnet "$sonnet_model" \
+       --arg opus "$opus_model" \
+       '.providers += [{
+           id: $id,
+           name: $name,
+           base_url: $url,
+           auth_token: $token,
+           model: $model,
+           haiku_model: $haiku,
+           sonnet_model: $sonnet,
+           opus_model: $opus
+       }]' "$PROVIDERS_FILE" > "$tmp" && mv "$tmp" "$PROVIDERS_FILE"
+
+    echo "{\"ok\":true,\"id\":\"$id\"}"
+}
+
+cmd_update() {
+    local id="$1"
+    local json="$2"
+    ensure_data
+
+    local exists
+    exists=$(jq -r --arg id "$id" '[.providers[] | select(.id == $id)] | length' "$PROVIDERS_FILE")
+    if [ "$exists" = "0" ]; then
+        echo "{\"error\":\"provider '$id' not found\"}" >&2
+        exit 1
+    fi
+
+    local name base_url auth_token model haiku_model sonnet_model opus_model
+    name=$(echo "$json" | jq -r '.name // empty')
+    base_url=$(echo "$json" | jq -r '.base_url // empty')
+    auth_token=$(echo "$json" | jq -r '.auth_token // empty')
+    model=$(echo "$json" | jq -r '.model // empty')
+    haiku_model=$(echo "$json" | jq -r '.haiku_model // empty')
+    sonnet_model=$(echo "$json" | jq -r '.sonnet_model // empty')
+    opus_model=$(echo "$json" | jq -r '.opus_model // empty')
+
+    local tmp
+    tmp=$(mktemp)
+    jq --arg id "$id" \
+       --arg name "$name" \
+       --arg url "$base_url" \
+       --arg token "$auth_token" \
+       --arg model "$model" \
+       --arg haiku "$haiku_model" \
+       --arg sonnet "$sonnet_model" \
+       --arg opus "$opus_model" \
+       '(.providers[] | select(.id == $id)) |=
+         (if $name != "" then .name = $name else . end |
+          if $url != "" then .base_url = $url else . end |
+          if $token != "" then .auth_token = $token else . end |
+          if $model != "" then .model = $model else . end |
+          if $haiku != "" then .haiku_model = $haiku else . end |
+          if $sonnet != "" then .sonnet_model = $sonnet else . end |
+          if $opus != "" then .opus_model = $opus else . end)' \
+       "$PROVIDERS_FILE" > "$tmp" && mv "$tmp" "$PROVIDERS_FILE"
+
+    echo "{\"ok\":true}"
+}
+
+cmd_delete() {
+    local id="$1"
+    ensure_data
+
+    local tmp
+    tmp=$(mktemp)
+    jq --arg id "$id" '.providers = [.providers[] | select(.id != $id)]' "$PROVIDERS_FILE" > "$tmp" && mv "$tmp" "$PROVIDERS_FILE"
+
+    echo "{\"ok\":true}"
+}
+
+cmd_import() {
+    if [ ! -f "$CLAUDE_SETTINGS" ]; then
+        echo '{"error":"~/.claude/settings.json not found"}' >&2
+        exit 1
+    fi
+    ensure_data
+
+    local env_json
+    env_json=$(jq '.env // {}' "$CLAUDE_SETTINGS")
+
+    local base_url auth_token model haiku_model sonnet_model opus_model
+    base_url=$(echo "$env_json" | jq -r '.ANTHROPIC_BASE_URL // ""')
+    auth_token=$(echo "$env_json" | jq -r '.ANTHROPIC_API_KEY // ""')
+    model=$(echo "$env_json" | jq -r '.ANTHROPIC_MODEL // ""')
+    haiku_model=$(echo "$env_json" | jq -r '.ANTHROPIC_DEFAULT_HAIKU_MODEL // ""')
+    sonnet_model=$(echo "$env_json" | jq -r '.ANTHROPIC_DEFAULT_SONNET_MODEL // ""')
+    opus_model=$(echo "$env_json" | jq -r '.ANTHROPIC_DEFAULT_OPUS_MODEL // ""')
+
+    local id
+    id=$(gen_id)
+
+    local tmp
+    tmp=$(mktemp)
+    jq --arg id "$id" \
+       --arg url "$base_url" \
+       --arg token "$auth_token" \
+       --arg model "$model" \
+       --arg haiku "$haiku_model" \
+       --arg sonnet "$sonnet_model" \
+       --arg opus "$opus_model" \
+       '.providers += [{
+           id: $id,
+           name: "Imported",
+           base_url: $url,
+           auth_token: $token,
+           model: $model,
+           haiku_model: $haiku,
+           sonnet_model: $sonnet,
+           opus_model: $opus
+       }]' "$PROVIDERS_FILE" > "$tmp" && mv "$tmp" "$PROVIDERS_FILE"
+
+    echo "{\"ok\":true,\"id\":\"$id\"}"
+}
+
+cmd_next() {
+    ensure_data
+    # Get current base_url from live config
+    local current_url=""
+    if [ -f "$CLAUDE_SETTINGS" ]; then
+        current_url=$(jq -r '.env.ANTHROPIC_BASE_URL // ""' "$CLAUDE_SETTINGS")
+    fi
+
+    # Get list of provider IDs
+    local ids
+    ids=$(jq -r '.providers[].id' "$PROVIDERS_FILE")
+    if [ -z "$ids" ]; then
+        echo '{"error":"no providers configured"}' >&2
+        exit 1
+    fi
+
+    # Find current provider index
+    local current_idx=-1
+    local idx=0
+    while IFS= read -r pid; do
+        local purl
+        purl=$(jq -r --arg id "$pid" '.providers[] | select(.id == $id) | .base_url // ""' "$PROVIDERS_FILE")
+        if [ "$purl" = "$current_url" ]; then
+            current_idx=$idx
+        fi
+        idx=$((idx + 1))
+    done <<< "$ids"
+
+    # Get next provider
+    local total=$idx
+    local next_idx=$(( (current_idx + 1) % total ))
+    local next_id
+    next_id=$(echo "$ids" | sed -n "$((next_idx + 1))p")
+
+    # Switch to it
+    cmd_switch "$next_id"
+}
+
+# Main
+cmd="${1:-help}"
+shift || true
+
+case "$cmd" in
+    list)     cmd_list ;;
+    current)  cmd_current ;;
+    switch)   cmd_switch "${1:?switch requires provider id}" ;;
+    add)      cmd_add "${1:?add requires json}" ;;
+    update)   cmd_update "${1:?update requires id}" "${2:?update requires json}" ;;
+    delete)   cmd_delete "${1:?delete requires id}" ;;
+    import)   cmd_import ;;
+    next)     cmd_next ;;
+    help|*)
+        echo '{"commands":["list","current","switch","add","update","delete","import","next"]}'
+        ;;
+esac
