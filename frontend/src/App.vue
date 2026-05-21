@@ -5,11 +5,11 @@
       :active-pane-id="activePaneId"
       :indicators="notif.unreadByPane"
       :plugins="pluginList"
-      :on-open-plugin="openPlugin"
       @activate="activateTab"
       @close="closeTab"
       @new="newTab"
       @reorder="reorderTab"
+      @open-plugin="openPlugin"
     >
       <template #right>
         <button type="button" class="tab-bar-icon-btn" :title="t('app.preview')" @click="openPreview" @touchend.prevent="openPreview"><PanelRight :size="16" /></button>
