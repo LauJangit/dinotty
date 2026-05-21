@@ -106,17 +106,8 @@ declare global {
 
 // ─── CSS Management ───────────────────────────────────────────────────────────
 
-function loadPluginCSS(id: string, url: string) {
-  removePluginCSS(id)
-  const el = document.createElement('link')
-  el.rel = 'stylesheet'
-  el.href = url
-  el.dataset.pluginId = id
-  document.head.appendChild(el)
-}
-
 function removePluginCSS(id: string) {
-  document.querySelectorAll(`link[data-plugin-id="${id}"]`).forEach(el => el.remove())
+  document.querySelectorAll(`link[data-plugin-id="${id}"], style[data-plugin-id="${id}"]`).forEach(el => el.remove())
 }
 
 // ─── Loader ───────────────────────────────────────────────────────────────────
@@ -230,15 +221,23 @@ export function usePluginLoader() {
     const manifest: PluginManifest = await manifestRes.json()
     console.log(`[plugin] loadPlugin(${id}): manifest ok, entry=${manifest.entry || './main.js'}`)
 
-    // 2. Dynamic load main.js
+    // 2. Fetch main.js via authFetch (includes auth token) then import from blob URL
     const entry = manifest.entry || './main.js'
     const jsUrl = apiUrl(`/api/plugins/${id}/${entry.replace('./', '')}`)
-    console.log(`[plugin] loadPlugin(${id}): importing ${jsUrl}`)
+    console.log(`[plugin] loadPlugin(${id}): fetching ${jsUrl}`)
+    const jsRes = await authFetch(jsUrl)
+    if (!jsRes.ok) throw new Error(`Plugin ${id}: failed to fetch ${entry} (${jsRes.status})`)
+    const jsContent = await jsRes.text()
+    const blob = new Blob([jsContent], { type: 'application/javascript' })
+    const blobUrl = URL.createObjectURL(blob)
     let mod: PluginModule
     try {
-      mod = await dynamicImport(jsUrl)
+      mod = await dynamicImport(blobUrl)
     } catch (e: any) {
+      URL.revokeObjectURL(blobUrl)
       throw new Error(`Plugin ${id}: failed to load ${jsUrl}: ${e.message}`)
+    } finally {
+      URL.revokeObjectURL(blobUrl)
     }
     console.log(`[plugin] loadPlugin(${id}): module loaded, activate=${typeof mod.activate}`)
 
@@ -246,10 +245,17 @@ export function usePluginLoader() {
       throw new Error(`Plugin ${id}: main.js must export activate(context)`)
     }
 
-    // 3. Load optional CSS
+    // 3. Load optional CSS (fetch via authFetch then inject as style element)
     if (manifest.styles) {
       const cssUrl = apiUrl(`/api/plugins/${id}/${manifest.styles.replace('./', '')}`)
-      loadPluginCSS(id, cssUrl)
+      const cssRes = await authFetch(cssUrl)
+      if (cssRes.ok) {
+        const cssText = await cssRes.text()
+        const styleEl = document.createElement('style')
+        styleEl.textContent = cssText
+        styleEl.dataset.pluginId = id
+        document.head.appendChild(styleEl)
+      }
     }
 
     // 4. Activate
