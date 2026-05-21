@@ -23,6 +23,7 @@
         <KeyboardTab v-show="activeTab === 'keyboard'" />
         <MonitorTab v-show="activeTab === 'monitor'" />
         <NotificationTab v-show="activeTab === 'notification'" />
+        <PluginsTab v-show="activeTab === 'plugins'" />
       </div>
 
     </div>
@@ -33,13 +34,14 @@
 import { ref, computed, watch } from 'vue'
 import { useSettings, notifyTextChange } from '../composables/useSettings'
 import { useI18n } from '../composables/useI18n'
-import { Settings as SettingsIcon, Palette, Type, Keyboard, Activity, Bell, X } from 'lucide-vue-next'
+import { Settings as SettingsIcon, Palette, Type, Keyboard, Activity, Bell, Puzzle, X } from 'lucide-vue-next'
 import GeneralTab from './settings/GeneralTab.vue'
 import ThemeTab from './settings/ThemeTab.vue'
 import TextTab from './settings/TextTab.vue'
 import KeyboardTab from './settings/KeyboardTab.vue'
 import MonitorTab from './settings/MonitorTab.vue'
 import NotificationTab from './settings/NotificationTab.vue'
+import PluginsTab from './settings/PluginsTab.vue'
 
 defineProps<{ open: boolean }>()
 defineEmits<{ close: [] }>()
@@ -47,7 +49,7 @@ defineEmits<{ close: [] }>()
 const { settings, saveSettings, applyCurrentTheme } = useSettings()
 const { t } = useI18n()
 
-const activeTab = ref<'general' | 'theme' | 'text' | 'keyboard' | 'monitor' | 'notification'>('general')
+const activeTab = ref<'general' | 'theme' | 'text' | 'keyboard' | 'monitor' | 'notification' | 'plugins'>('general')
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 function scheduleSave() {
@@ -71,6 +73,7 @@ const tabs = computed(() => [
   { id: 'keyboard' as const, label: t('settings.tab.keyboard'), icon: Keyboard },
   { id: 'monitor' as const, label: t('settings.tab.monitor'), icon: Activity },
   { id: 'notification' as const, label: t('settings.tab.notification'), icon: Bell },
+  { id: 'plugins' as const, label: t('settings.tab.plugins'), icon: Puzzle },
 ])
 </script>
 
