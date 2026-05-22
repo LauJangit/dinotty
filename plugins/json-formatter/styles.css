@@ -8,6 +8,7 @@
   font-size: 14px;
   color: var(--text-color, #e0e0e0);
   box-sizing: border-box;
+  container-type: inline-size;
 }
 
 /* Header */
@@ -310,4 +311,54 @@
   border-radius: 3px;
   padding: 0 4px;
   margin-right: 2px;
+}
+
+/* ── Responsive: narrow panel ──────────────────────────────────────────────── */
+@container (max-width: 580px) {
+  .jf-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .jf-header-opts {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  /* Stack panels vertically */
+  .jf-layout {
+    flex-direction: column;
+  }
+  /* Each panel gets a fixed min height instead of flex-stretching */
+  .jf-panel {
+    min-height: 200px;
+    flex: none;
+  }
+  /* Make textareas a fixed height so both fit on screen */
+  .jf-textarea {
+    height: 160px;
+    flex: none;
+  }
+  .jf-tree {
+    flex: none;
+    height: 160px;
+  }
+  /* Action buttons go horizontal */
+  .jf-actions {
+    flex-direction: row;
+    justify-content: center;
+    padding-top: 0;
+    flex-wrap: wrap;
+  }
+}
+
+@container (max-width: 400px) {
+  .jf-root {
+    padding: 10px;
+    font-size: 13px;
+  }
+  .jf-title {
+    font-size: 15px;
+  }
+  .jf-panel-actions {
+    flex-wrap: wrap;
+  }
 }
