@@ -12,7 +12,7 @@
       @open-plugin="openPlugin"
     >
       <template #right>
-        <button type="button" class="tab-bar-icon-btn" :title="t('app.preview')" @click="openPreview" @touchend.prevent="openPreview"><PanelRight :size="16" /></button>
+        <button v-if="activeTabType === 'terminal'" type="button" class="tab-bar-icon-btn" :title="t('app.preview')" @click="openPreview" @touchend.prevent="openPreview"><PanelRight :size="16" /></button>
         <button type="button" class="tab-bar-icon-btn" :title="t('app.settings')" @click="settingsOpen = true" @touchend.prevent="settingsOpen = true"><Settings :size="16" /></button>
         <button v-if="notif.notifications.value.length > 0" type="button" class="tab-bar-icon-btn notif-btn" :title="t('notification.title')" @click="notif.togglePanel()" @touchend.prevent="notif.togglePanel()">
           <Bell :size="16" />
@@ -197,6 +197,10 @@ function onViewportResize() {
 const tabList = computed<TabInfo[]>(() =>
   tabs.value.map((t) => ({ paneId: t.paneId, title: t.title })),
 )
+const activeTabType = computed(() => {
+  const tab = tabs.value.find((t) => t.paneId === activePaneId.value)
+  return tab?.type ?? 'terminal'
+})
 const paneLabels = computed(() => {
   const m: Record<string, string> = {}
   for (const t of tabs.value) m[t.paneId] = t.title
