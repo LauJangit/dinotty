@@ -71,9 +71,9 @@ const tabs = computed(() => [
   { id: 'theme' as const, label: t('settings.tab.theme'), icon: Palette },
   { id: 'text' as const, label: t('settings.tab.text'), icon: Type },
   { id: 'keyboard' as const, label: t('settings.tab.keyboard'), icon: Keyboard },
+  { id: 'plugins' as const, label: t('settings.tab.plugins'), icon: Puzzle },
   { id: 'monitor' as const, label: t('settings.tab.monitor'), icon: Activity },
   { id: 'notification' as const, label: t('settings.tab.notification'), icon: Bell },
-  { id: 'plugins' as const, label: t('settings.tab.plugins'), icon: Puzzle },
 ])
 </script>
 
