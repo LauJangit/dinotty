@@ -135,6 +135,7 @@ pub enum SyncMsg {
     TabCreated { pane_id: String },
     TabClosed { pane_id: String },
     TabActivated { pane_id: String },
+    PluginChanged { plugin_id: String, change: String },
 }
 
 #[derive(Serialize, Clone)]
@@ -161,6 +162,10 @@ impl SessionManager {
         let (tx, rx) = mpsc::unbounded_channel();
         self.sync_clients.lock().unwrap().push(tx);
         rx
+    }
+
+    pub fn broadcast_plugin_changed(&self, plugin_id: String, change: String) {
+        self.broadcast_sync(&SyncMsg::PluginChanged { plugin_id, change });
     }
 
     pub fn tab_list(&self) -> (Vec<TabInfo>, Option<String>) {

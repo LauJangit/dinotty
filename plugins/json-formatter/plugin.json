@@ -1,0 +1,12 @@
+{
+  "id": "json-formatter",
+  "name": "JSON Formatter",
+  "version": "1.0.0",
+  "description": "JSON 格式化、压缩与验证工具",
+  "icon": "braces",
+  "entry": "./main.js",
+  "styles": "./styles.css",
+  "commands": [
+    { "id": "json-formatter.open", "title": "打开 JSON 格式化工具" }
+  ]
+}

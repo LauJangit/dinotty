@@ -106,190 +106,236 @@ declare global {
 
 // ─── CSS Management ───────────────────────────────────────────────────────────
 
-function loadPluginCSS(id: string, url: string) {
-  removePluginCSS(id)
-  const el = document.createElement('link')
-  el.rel = 'stylesheet'
-  el.href = url
-  el.dataset.pluginId = id
-  document.head.appendChild(el)
-}
-
 function removePluginCSS(id: string) {
-  document.querySelectorAll(`link[data-plugin-id="${id}"]`).forEach(el => el.remove())
+  document.querySelectorAll(`link[data-plugin-id="${id}"], style[data-plugin-id="${id}"]`).forEach(el => el.remove())
 }
 
-// ─── Loader ───────────────────────────────────────────────────────────────────
+// ─── Plugin Context Factory (module scope) ───────────────────────────────────
+
+function createPluginContext(pluginId: string): PluginContext {
+  const exec: PluginContext['exec'] = {
+    async run(args, options) {
+      const res = await authFetch(apiUrl(`/api/plugins/${pluginId}/exec`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ args, ...options }),
+      })
+      return res.json()
+    },
+    spawn(args) {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+      const ws = new WebSocket(
+        wsUrlWithToken(
+          `${proto}//${location.host}/api/plugins/${pluginId}/spawn?args=${encodeURIComponent(JSON.stringify(args))}`
+        )
+      )
+      let stdoutCtrl: ReadableStreamDefaultController<string>
+      let stderrCtrl: ReadableStreamDefaultController<string>
+
+      const stdout = new ReadableStream<string>({
+        start(controller) { stdoutCtrl = controller },
+      })
+      const stderr = new ReadableStream<string>({
+        start(controller) { stderrCtrl = controller },
+      })
+
+      const closeStreams = () => {
+        try { stdoutCtrl.close() } catch { /* noop */ }
+        try { stderrCtrl.close() } catch { /* noop */ }
+      }
+
+      ws.onmessage = (e) => {
+        const msg = JSON.parse(e.data)
+        if (msg.type === 'stdout') stdoutCtrl.enqueue(msg.data)
+        if (msg.type === 'stderr') stderrCtrl.enqueue(msg.data)
+        if (msg.type === 'done') closeStreams()
+      }
+      ws.onclose = closeStreams
+      ws.onerror = closeStreams
+
+      return { stdout, stderr, kill: () => ws.close() }
+    },
+  }
+
+  const storage: PluginContext['storage'] = {
+    async get(key) {
+      const res = await authFetch(apiUrl(`/api/plugins/${pluginId}/storage/${encodeURIComponent(key)}`))
+      if (res.status === 404) return undefined
+      return (await res.json()).value
+    },
+    async set(key, value) {
+      await authFetch(apiUrl(`/api/plugins/${pluginId}/storage/${encodeURIComponent(key)}`), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value }),
+      })
+    },
+    async delete(key) {
+      await authFetch(apiUrl(`/api/plugins/${pluginId}/storage/${encodeURIComponent(key)}`), {
+        method: 'DELETE',
+      })
+    },
+    async list() {
+      const res = await authFetch(apiUrl(`/api/plugins/${pluginId}/storage`))
+      return (await res.json()).keys
+    },
+  }
+
+  const commands: PluginContext['commands'] = {
+    register(id, handler) {
+      pluginCommands.set(id, { pluginId, handler })
+      return { dispose: () => pluginCommands.delete(id) }
+    },
+  }
+
+  const context: PluginContext = {
+    reactive, ref, computed, watch, onMounted, onUnmounted, h,
+    exec,
+    terminal: window.__dinotty_terminal_api ?? {
+      send() {},
+      activePaneId: () => null,
+      onOutput: () => ({ dispose() {} }),
+      createTab: async () => '',
+    },
+    settings: {
+      get: () => (window as any).__dinotty_settings_data ?? {},
+      onDidChange: window.__dinotty_settings_listener ?? (() => ({ dispose() {} })),
+    },
+    storage,
+    commands,
+    ui: {
+      notify: window.__dinotty_ui_notify ?? (() => {}),
+      confirm: window.__dinotty_ui_confirm ?? (async () => false),
+    },
+  }
+
+  return context
+}
+
+// ─── Plugin Load / Unload (module scope) ─────────────────────────────────────
+
+async function loadPlugin(id: string): Promise<LoadedPlugin> {
+  // 1. Fetch manifest
+  console.log(`[plugin] loadPlugin(${id}): fetching manifest`)
+  const manifestRes = await authFetch(apiUrl(`/api/plugins/${id}/plugin.json`))
+  if (!manifestRes.ok) throw new Error(`Plugin ${id}: manifest not found (${manifestRes.status})`)
+  const manifest: PluginManifest = await manifestRes.json()
+  console.log(`[plugin] loadPlugin(${id}): manifest ok, entry=${manifest.entry || './main.js'}`)
+
+  // 2. Fetch main.js via authFetch (includes auth token) then import from blob URL
+  const entry = manifest.entry || './main.js'
+  const jsUrl = apiUrl(`/api/plugins/${id}/${entry.replace('./', '')}`)
+  console.log(`[plugin] loadPlugin(${id}): fetching ${jsUrl}`)
+  const jsRes = await authFetch(jsUrl)
+  if (!jsRes.ok) throw new Error(`Plugin ${id}: failed to fetch ${entry} (${jsRes.status})`)
+  const jsContent = await jsRes.text()
+  const blob = new Blob([jsContent], { type: 'application/javascript' })
+  const blobUrl = URL.createObjectURL(blob)
+  let mod: PluginModule
+  try {
+    mod = await dynamicImport(blobUrl)
+  } catch (e: any) {
+    URL.revokeObjectURL(blobUrl)
+    throw new Error(`Plugin ${id}: failed to load ${jsUrl}: ${e.message}`)
+  } finally {
+    URL.revokeObjectURL(blobUrl)
+  }
+  console.log(`[plugin] loadPlugin(${id}): module loaded, activate=${typeof mod.activate}`)
+
+  if (typeof mod.activate !== 'function') {
+    throw new Error(`Plugin ${id}: main.js must export activate(context)`)
+  }
+
+  // 3. Load optional CSS (fetch via authFetch then inject as style element)
+  if (manifest.styles) {
+    const cssUrl = apiUrl(`/api/plugins/${id}/${manifest.styles.replace('./', '')}`)
+    console.log(`[plugin] loadPlugin(${id}): loading CSS from ${cssUrl}`)
+    const cssRes = await authFetch(cssUrl)
+    console.log(`[plugin] loadPlugin(${id}): CSS response status=${cssRes.status}`)
+    if (cssRes.ok) {
+      const cssText = await cssRes.text()
+      console.log(`[plugin] loadPlugin(${id}): CSS loaded, ${cssText.length} bytes`)
+      const styleEl = document.createElement('style')
+      styleEl.textContent = cssText
+      styleEl.dataset.pluginId = id
+      document.head.appendChild(styleEl)
+    } else {
+      console.error(`[plugin] loadPlugin(${id}): CSS fetch failed, status=${cssRes.status}`)
+    }
+  } else {
+    console.log(`[plugin] loadPlugin(${id}): no styles defined in manifest`)
+  }
+
+  // 4. Activate
+  const context = createPluginContext(id)
+  let exports: PluginExports | null = null
+  try {
+    const ACTIVATE_TIMEOUT_MS = 10_000
+    const result = await Promise.race([
+      mod.activate(context),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`activate() timed out after ${ACTIVATE_TIMEOUT_MS}ms`)), ACTIVATE_TIMEOUT_MS)
+      ),
+    ])
+    exports = (result as PluginExports) || null
+    console.log(`[plugin] loadPlugin(${id}): activated, has component=${!!exports?.component}`)
+  } catch (e: any) {
+    throw new Error(`Plugin ${id}: activate() threw: ${e.message}`)
+  }
+
+  const plugin: LoadedPlugin = { id, manifest, module: mod, exports, state: 'active' }
+  loadedPlugins.set(id, plugin)
+  return plugin
+}
+
+async function unloadPlugin(id: string) {
+  const plugin = loadedPlugins.get(id)
+  if (!plugin) return
+
+  try { plugin.module.deactivate?.() } catch { /* noop */ }
+  try { plugin.exports?.dispose?.() } catch { /* noop */ }
+
+  // Clean up commands
+  for (const [cmdId, entry] of pluginCommands) {
+    if (entry.pluginId === id) pluginCommands.delete(cmdId)
+  }
+
+  removePluginCSS(id)
+  loadedPlugins.delete(id)
+}
+
+// ─── Hot-reload handler (called from App.vue sync WS) ───────────────────────
+
+let reloadTimer: ReturnType<typeof setTimeout> | null = null
+const pendingReloads = new Map<string, string>()
+
+export async function handlePluginChanged(pluginId: string, change: string) {
+  // Debounce: collect events for 300ms, then batch-process
+  pendingReloads.set(pluginId, change)
+  if (reloadTimer) clearTimeout(reloadTimer)
+  reloadTimer = setTimeout(async () => {
+    const tasks = Array.from(pendingReloads.entries())
+    pendingReloads.clear()
+    for (const [id, ch] of tasks) {
+      try {
+        if (ch === 'deleted') {
+          await unloadPlugin(id)
+          console.log(`[plugin] hot-reload: unloaded ${id}`)
+        } else {
+          await unloadPlugin(id)
+          await loadPlugin(id)
+          console.log(`[plugin] hot-reload: reloaded ${id} (${ch})`)
+        }
+      } catch (e: any) {
+        console.error(`[plugin] hot-reload failed for ${id}:`, e.message)
+      }
+    }
+  }, 300)
+}
+
+// ─── Loader Composable ───────────────────────────────────────────────────────
 
 export function usePluginLoader() {
-  function createPluginContext(pluginId: string): PluginContext {
-    const exec: PluginContext['exec'] = {
-      async run(args, options) {
-        const res = await authFetch(apiUrl(`/api/plugins/${pluginId}/exec`), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ args, ...options }),
-        })
-        return res.json()
-      },
-      spawn(args) {
-        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-        const ws = new WebSocket(
-          wsUrlWithToken(
-            `${proto}//${location.host}/api/plugins/${pluginId}/spawn?args=${encodeURIComponent(JSON.stringify(args))}`
-          )
-        )
-        let stdoutCtrl: ReadableStreamDefaultController<string>
-        let stderrCtrl: ReadableStreamDefaultController<string>
-
-        const stdout = new ReadableStream<string>({
-          start(controller) { stdoutCtrl = controller },
-        })
-        const stderr = new ReadableStream<string>({
-          start(controller) { stderrCtrl = controller },
-        })
-
-        const closeStreams = () => {
-          try { stdoutCtrl.close() } catch { /* noop */ }
-          try { stderrCtrl.close() } catch { /* noop */ }
-        }
-
-        ws.onmessage = (e) => {
-          const msg = JSON.parse(e.data)
-          if (msg.type === 'stdout') stdoutCtrl.enqueue(msg.data)
-          if (msg.type === 'stderr') stderrCtrl.enqueue(msg.data)
-          if (msg.type === 'done') closeStreams()
-        }
-        ws.onclose = closeStreams
-        ws.onerror = closeStreams
-
-        return { stdout, stderr, kill: () => ws.close() }
-      },
-    }
-
-    const storage: PluginContext['storage'] = {
-      async get(key) {
-        const res = await authFetch(apiUrl(`/api/plugins/${pluginId}/storage/${encodeURIComponent(key)}`))
-        if (res.status === 404) return undefined
-        return (await res.json()).value
-      },
-      async set(key, value) {
-        await authFetch(apiUrl(`/api/plugins/${pluginId}/storage/${encodeURIComponent(key)}`), {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ value }),
-        })
-      },
-      async delete(key) {
-        await authFetch(apiUrl(`/api/plugins/${pluginId}/storage/${encodeURIComponent(key)}`), {
-          method: 'DELETE',
-        })
-      },
-      async list() {
-        const res = await authFetch(apiUrl(`/api/plugins/${pluginId}/storage`))
-        return (await res.json()).keys
-      },
-    }
-
-    const commands: PluginContext['commands'] = {
-      register(id, handler) {
-        pluginCommands.set(id, { pluginId, handler })
-        return { dispose: () => pluginCommands.delete(id) }
-      },
-    }
-
-    const context: PluginContext = {
-      reactive, ref, computed, watch, onMounted, onUnmounted, h,
-      exec,
-      terminal: window.__dinotty_terminal_api ?? {
-        send() {},
-        activePaneId: () => null,
-        onOutput: () => ({ dispose() {} }),
-        createTab: async () => '',
-      },
-      settings: {
-        get: () => (window as any).__dinotty_settings_data ?? {},
-        onDidChange: window.__dinotty_settings_listener ?? (() => ({ dispose() {} })),
-      },
-      storage,
-      commands,
-      ui: {
-        notify: window.__dinotty_ui_notify ?? (() => {}),
-        confirm: window.__dinotty_ui_confirm ?? (async () => false),
-      },
-    }
-
-    return context
-  }
-
-  async function loadPlugin(id: string): Promise<LoadedPlugin> {
-    // 1. Fetch manifest
-    console.log(`[plugin] loadPlugin(${id}): fetching manifest`)
-    const manifestRes = await authFetch(apiUrl(`/api/plugins/${id}/plugin.json`))
-    if (!manifestRes.ok) throw new Error(`Plugin ${id}: manifest not found (${manifestRes.status})`)
-    const manifest: PluginManifest = await manifestRes.json()
-    console.log(`[plugin] loadPlugin(${id}): manifest ok, entry=${manifest.entry || './main.js'}`)
-
-    // 2. Dynamic load main.js
-    const entry = manifest.entry || './main.js'
-    const jsUrl = apiUrl(`/api/plugins/${id}/${entry.replace('./', '')}`)
-    console.log(`[plugin] loadPlugin(${id}): importing ${jsUrl}`)
-    let mod: PluginModule
-    try {
-      mod = await dynamicImport(jsUrl)
-    } catch (e: any) {
-      throw new Error(`Plugin ${id}: failed to load ${jsUrl}: ${e.message}`)
-    }
-    console.log(`[plugin] loadPlugin(${id}): module loaded, activate=${typeof mod.activate}`)
-
-    if (typeof mod.activate !== 'function') {
-      throw new Error(`Plugin ${id}: main.js must export activate(context)`)
-    }
-
-    // 3. Load optional CSS
-    if (manifest.styles) {
-      const cssUrl = apiUrl(`/api/plugins/${id}/${manifest.styles.replace('./', '')}`)
-      loadPluginCSS(id, cssUrl)
-    }
-
-    // 4. Activate
-    const context = createPluginContext(id)
-    let exports: PluginExports | null = null
-    try {
-      const ACTIVATE_TIMEOUT_MS = 10_000
-      const result = await Promise.race([
-        mod.activate(context),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`activate() timed out after ${ACTIVATE_TIMEOUT_MS}ms`)), ACTIVATE_TIMEOUT_MS)
-        ),
-      ])
-      exports = (result as PluginExports) || null
-      console.log(`[plugin] loadPlugin(${id}): activated, has component=${!!exports?.component}`)
-    } catch (e: any) {
-      throw new Error(`Plugin ${id}: activate() threw: ${e.message}`)
-    }
-
-    const plugin: LoadedPlugin = { id, manifest, module: mod, exports, state: 'active' }
-    loadedPlugins.set(id, plugin)
-    return plugin
-  }
-
-  async function unloadPlugin(id: string) {
-    const plugin = loadedPlugins.get(id)
-    if (!plugin) return
-
-    try { plugin.module.deactivate?.() } catch { /* noop */ }
-    try { plugin.exports?.dispose?.() } catch { /* noop */ }
-
-    // Clean up commands
-    for (const [cmdId, entry] of pluginCommands) {
-      if (entry.pluginId === id) pluginCommands.delete(cmdId)
-    }
-
-    removePluginCSS(id)
-    loadedPlugins.delete(id)
-  }
-
   async function loadAll() {
     try {
       const res = await authFetch(apiUrl('/api/plugins'))

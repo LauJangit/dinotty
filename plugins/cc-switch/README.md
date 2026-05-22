@@ -1,6 +1,6 @@
 # CC Switch 插件
 
-dinotty 插件，用于快速切换 Claude Code 的 API Provider 配置。参考 [cc-switch](https://github.com/cc-switch) Tauri 桌面应用的核心功能和 UI 布局实现。
+dinotty 插件，用于快速切换 Claude Code 的 API Provider 配置。基于 [cc-switch](https://github.com/SaladDay/cc-switch-cli) Rust CLI 实现。
 
 ## 功能
 
@@ -8,26 +8,26 @@ dinotty 插件，用于快速切换 Claude Code 的 API Provider 配置。参考
 - 一键切换当前使用的 Provider
 - 从当前 `~/.claude/settings.json` 配置导入为 Provider
 - 循环切换到下一个 Provider
-- Command Palette 集成（`打开 CC Switch`、`切换到下一个 Provider`）
+- Command Palette 集成（`打开 CC Switch`、`切换到下一个 Provider`、`导入当前配置`）
+
+## 依赖
+
+- **cc-switch CLI**: 需要安装 cc-switch Rust CLI 工具
+
+```bash
+# 安装 cc-switch CLI
+curl -fsSL https://github.com/SaladDay/cc-switch-cli/releases/latest/download/install.sh | bash
+
+# 或通过 cargo 安装
+cargo install cc-switch
+```
 
 ## 工作原理
 
-直接读写 `~/.claude/settings.json` 的 `env` 字段来切换 Provider 配置：
+通过调用 cc-switch CLI 来管理 Provider 配置：
 
-```json
-{
-  "env": {
-    "ANTHROPIC_BASE_URL": "https://api.example.com",
-    "ANTHROPIC_API_KEY": "sk-xxx",
-    "ANTHROPIC_MODEL": "claude-sonnet-4-20250514",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4-20250514",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4-20250514",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-sonnet-4-20250514"
-  }
-}
-```
-
-Provider 列表存储在 `~/.dinotty/plugin-data/cc-switch/providers.json`。
+- 配置存储：`~/.claude/cc_auto_switch_setting.json`（cc-switch CLI 的存储位置）
+- 活动配置：`~/.claude/settings.json` 的 `env` 字段
 
 ## 数据结构
 
@@ -56,18 +56,33 @@ interface Provider {
 
 ## CLI 接口
 
-`bin/cc-switch` 是一个 bash 脚本，依赖 `jq`：
+`bin/cc-switch` 是对 cc-switch CLI 的封装，提供统一的 JSON 接口：
 
 | 子命令 | 说明 |
 |--------|------|
 | `list` | 返回 `{ providers: [...] }` |
 | `current` | 返回当前 `~/.claude/settings.json` 的 `env` 对象 |
-| `switch <id>` | 将指定 Provider 的配置写入 `~/.claude/settings.json` |
+| `switch <alias>` | 将指定 Provider 的配置写入 `~/.claude/settings.json` |
 | `add <json>` | 添加新 Provider，返回 `{ ok: true, id: "xxx" }` |
-| `update <id> <json>` | 更新指定 Provider |
-| `delete <id>` | 删除指定 Provider |
+| `update <alias> <json>` | 更新指定 Provider |
+| `delete <alias>` | 删除指定 Provider |
 | `import` | 从当前 `~/.claude/settings.json` 导入为新 Provider |
 | `next` | 循环切换到下一个 Provider |
+
+### Provider 数据结构
+
+```typescript
+interface Provider {
+  id: string           // alias 名称
+  name: string         // 显示名称（与 id 相同）
+  auth_token: string   // API Key
+  base_url: string     // API Base URL
+  model: string        // 主模型
+  haiku_model?: string // Haiku 模型
+  sonnet_model?: string // Sonnet 模型
+  opus_model?: string  // Opus 模型
+}
+```
 
 ## UI 布局
 
@@ -76,8 +91,8 @@ interface Provider {
 │  CC Switch              [导入当前] [切换下一个] [+ 添加] │
 ├─────────────────────────────────────────────────┤
 │  当前配置                                         │
-│  https://token-plan-cn.xiaomimimo.com/anthropic  │
-│  [mimo-v2-pro]                                   │
+│  https://api.example.com                          │
+│  [claude-sonnet-4-20250514]                      │
 ├─────────────────────────────────────────────────┤
 │  ┌───────────────────────────────────────────┐  │
 │  │ Official Anthropic             [启用] [编辑] [删除]│
@@ -85,9 +100,9 @@ interface Provider {
 │  │ [claude-sonnet-4-20250514]                 │  │
 │  └───────────────────────────────────────────┘  │
 │  ┌───────────────────────────────────────────┐  │
-│  │ Imported  使用中                            │  │
-│  │ https://token-plan-cn.xiaomimimo.com/...   │  │
-│  │ [mimo-v2-pro] [Haiku: mimo-v2.5-pro]      │  │
+│  │ MiniMax                       [启用] [编辑] [删除]│
+│  │ https://api.minimax.chat                  │  │
+│  │ [minimax-01] [Haiku: minimax-haiku]      │  │
 │  └───────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────┘
 ```
@@ -104,7 +119,7 @@ plugins/cc-switch/
 ├── README.md           # 本文档
 ├── plugin.json         # 插件清单
 ├── bin/
-│   └── cc-switch       # Bash CLI 脚本
+│   └── cc-switch       # cc-switch CLI 封装脚本
 ├── src/
 │   └── ui.ts           # TypeScript UI 源码
 ├── dist/
@@ -114,28 +129,33 @@ plugins/cc-switch/
 
 ## 安装
 
+1. 确保已安装 cc-switch CLI：
 ```bash
-# 从源码目录构建
+curl -fsSL https://github.com/SaladDay/cc-switch-cli/releases/latest/download/install.sh | bash
+```
+
+2. 构建插件 UI：
+```bash
 cd plugins/cc-switch
 ../../frontend/node_modules/.bin/esbuild src/ui.ts --bundle --format=esm --outfile=dist/main.js --external:none
+```
 
-# 复制到插件目录
-cp -r . ~/.dinotty/plugins/cc-switch/
+3. 链接插件（开发模式）：
+```bash
+ln -s $(pwd) ~/.dinotty/plugins/cc-switch
 chmod +x ~/.dinotty/plugins/cc-switch/bin/cc-switch
 ```
 
-或使用 dev-link（需要 dinotty 后端运行）：
+## 与原 cc-switch CLI 的关系
 
-```bash
-ln -s $(pwd) ~/.dinotty/plugins/cc-switch
-```
+本插件是对 [cc-switch-cli](https://github.com/SaladDay/cc-switch-cli) 的前端封装：
 
-## 与原 cc-switch 的对应关系
-
-| 原 cc-switch（Tauri） | 本插件（dinotty） |
-|----------------------|------------------|
-| SQLite 数据库 | `providers.json` 文件 |
-| Tauri IPC 命令 | `exec.run()` 调用 bash 脚本 |
-| React + shadcn/ui | Vue 3 render functions |
-| Full-screen Panel | 内联表单 |
-| 系统托盘快捷切换 | Command Palette 命令 |
+| 功能 | cc-switch CLI | 本插件 |
+|------|--------------|--------|
+| Provider CRUD | ✅ | ✅ |
+| Provider 切换 | ✅ | ✅ |
+| 配置存储 | SQLite/JSON | ✅ (共用) |
+| 预设模板 | ✅ | ❌ (待实现) |
+| MCP 管理 | ✅ | ❌ (待实现) |
+| 使用统计 | ✅ | ❌ (待实现) |
+| **交互式 UI** | ❌ | ✅ (本插件提供) |

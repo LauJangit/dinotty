@@ -95,10 +95,10 @@
 .cs-card-url {
   font-size: 12px;
   color: var(--text-muted, #888);
+  max-width: 400px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 400px;
 }
 .cs-card-models {
   display: flex;
@@ -224,6 +224,8 @@
   color: var(--text-muted, #888);
   text-transform: uppercase;
   letter-spacing: 0.3px;
+  line-height: 1.6;
+  min-height: 1.1em;
 }
 .cs-input {
   padding: 6px 10px;
@@ -272,3 +274,337 @@
   padding: 40px 20px;
   color: var(--text-muted, #888);
 }
+
+/* Stat badge on card */
+.cs-stat-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-muted, #666);
+}
+.cs-stat-count {
+  background: var(--bg-hover, #2a2a2a);
+  padding: 0 5px;
+  border-radius: 3px;
+  color: var(--text-muted, #aaa);
+}
+.cs-stat-time {
+  font-style: italic;
+}
+
+/* Latency badge on card header */
+.cs-latency {
+  display: inline-block;
+  padding: 0 6px;
+  font-size: 11px;
+  border-radius: 4px;
+  font-weight: 500;
+  margin-left: 6px;
+}
+.cs-latency-ok {
+  background: rgba(52, 211, 153, 0.1);
+  color: #34d399;
+}
+.cs-latency-mid {
+  background: rgba(251, 191, 36, 0.1);
+  color: #fbbf24;
+}
+.cs-latency-slow {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+}
+.cs-latency-err {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+}
+
+/* Stats summary panel */
+.cs-stats-summary {
+  background: var(--bg-surface, #1e1e1e);
+  border: 1px solid var(--border, #333);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+.cs-stats-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.cs-stats-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-color, #e0e0e0);
+}
+.cs-stats-actions {
+  display: flex;
+  gap: 4px;
+}
+.cs-stats-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cs-stats-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.cs-stats-name {
+  width: 100px;
+  flex-shrink: 0;
+  color: var(--text-color, #e0e0e0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cs-stats-bar-wrap {
+  flex: 1;
+  height: 6px;
+  background: var(--bg-hover, #2a2a2a);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.cs-stats-bar {
+  height: 100%;
+  background: var(--accent, #4d7fff);
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+.cs-stats-count {
+  width: 70px;
+  flex-shrink: 0;
+  text-align: right;
+  color: var(--text-muted, #888);
+}
+.cs-stats-last {
+  width: 60px;
+  flex-shrink: 0;
+  text-align: right;
+  color: var(--text-muted, #666);
+  font-style: italic;
+}
+
+/* Stats header */
+.cs-stats-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.cs-stats-subtitle {
+  font-size: 11px;
+  color: var(--text-muted, #666);
+  font-weight: 400;
+}
+
+/* First used column in stats row */
+.cs-stats-first {
+  width: 80px;
+  flex-shrink: 0;
+  text-align: right;
+  color: var(--text-muted, #555);
+  font-size: 11px;
+}
+
+/* Danger-tinted ghost button for reset */
+.cs-btn-danger-ghost {
+  color: var(--text-muted, #888);
+}
+.cs-btn-danger-ghost:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.08);
+  color: #ef4444;
+}
+
+/* Daily activity chart */
+.cs-daily-chart {
+  margin: 10px 0;
+  padding: 10px 0 6px;
+  border-top: 1px solid var(--border, #2a2a2a);
+  border-bottom: 1px solid var(--border, #2a2a2a);
+}
+.cs-daily-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 64px;
+}
+.cs-daily-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  height: 100%;
+}
+.cs-daily-today .cs-daily-label {
+  color: var(--accent, #4d7fff);
+  font-weight: 600;
+}
+.cs-daily-count {
+  font-size: 10px;
+  color: var(--text-muted, #888);
+  line-height: 1;
+  min-height: 12px;
+}
+.cs-daily-bar-wrap {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  min-height: 0;
+}
+.cs-daily-bar {
+  flex: 1;
+  min-height: 2px;
+  background: var(--accent, #4d7fff);
+  opacity: 0.45;
+  border-radius: 2px 2px 0 0;
+  transition: height 0.3s;
+}
+.cs-daily-bar-today {
+  opacity: 0.85;
+}
+.cs-daily-label {
+  font-size: 10px;
+  color: var(--text-muted, #666);
+  line-height: 1;
+}
+
+/* Output token bar (orange, side-by-side with blue input bar) */
+.cs-daily-bar-output {
+  flex: 1;
+  min-height: 2px;
+  background: #f59e0b;
+  opacity: 0.55;
+  border-radius: 2px 2px 0 0;
+  transition: height 0.3s;
+}
+.cs-daily-bar-output.cs-daily-bar-today {
+  opacity: 0.85;
+}
+/* Gap between the two bars */
+.cs-daily-bar-wrap {
+  gap: 2px;
+}
+
+/* Chart legend */
+.cs-chart-legend {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-bottom: 4px;
+  font-size: 10px;
+}
+.cs-legend-in::before {
+  content: '■ ';
+  color: var(--accent, #4d7fff);
+}
+.cs-legend-in {
+  color: var(--text-muted, #888);
+}
+.cs-legend-out::before {
+  content: '■ ';
+  color: #f59e0b;
+}
+.cs-legend-out {
+  color: var(--text-muted, #888);
+}
+
+/* Token summary cards */
+.cs-token-summary {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.cs-token-card {
+  flex: 1;
+  min-width: 80px;
+  background: var(--bg-hover, #2a2a2a);
+  border-radius: 8px;
+  padding: 8px 10px;
+  text-align: center;
+}
+.cs-token-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--accent, #4d7fff);
+  line-height: 1.2;
+}
+.cs-token-out { color: #f59e0b; }
+.cs-token-cache { color: #34d399; }
+.cs-token-req { color: var(--text-color, #e0e0e0); }
+.cs-token-label {
+  font-size: 10px;
+  color: var(--text-muted, #777);
+  margin-top: 3px;
+}
+
+/* Provider stats row token column */
+.cs-stats-token {
+  width: 90px;
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 11px;
+  color: var(--text-muted, #777);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+/* Request log */
+.cs-req-section {
+  margin-top: 10px;
+  border-top: 1px solid var(--border, #2a2a2a);
+  padding-top: 8px;
+}
+.cs-req-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-muted, #888);
+  padding: 4px 0;
+  user-select: none;
+}
+.cs-req-toggle:hover { color: var(--text-color, #e0e0e0); }
+.cs-req-count {
+  background: var(--bg-hover, #2a2a2a);
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 10px;
+}
+.cs-req-arrow { margin-left: auto; font-size: 10px; }
+.cs-req-log {
+  margin-top: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.cs-req-header {
+  display: flex;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted, #666);
+  padding: 3px 4px;
+  border-bottom: 1px solid var(--border, #333);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.cs-req-row {
+  display: flex;
+  gap: 6px;
+  font-size: 11px;
+  padding: 4px 4px;
+  border-radius: 4px;
+  color: var(--text-muted, #aaa);
+}
+.cs-req-row:hover { background: var(--bg-hover, #2a2a2a); }
+.cs-req-col { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cs-req-col-time  { width: 70px; flex-shrink: 0; color: var(--text-muted, #666); }
+.cs-req-col-alias { width: 90px; flex-shrink: 0; }
+.cs-req-col-proj  { flex: 1; color: var(--text-muted, #888); }
+.cs-req-col-tokens { width: 80px; flex-shrink: 0; text-align: right; font-family: 'SF Mono', monospace; }

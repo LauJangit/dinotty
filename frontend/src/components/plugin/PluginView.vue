@@ -38,13 +38,15 @@ onErrorCaptured((err: any) => {
   width: 100%;
   height: 100%;
   overflow: auto;
+  background: var(--bg-main, #1E1E1E);
+  color: var(--text-color, #CCCCCC);
 }
 .plugin-error {
   padding: 2rem;
-  color: var(--color-red, #ef4444);
+  color: var(--color-red, #F44747);
 }
 .plugin-empty {
   padding: 2rem;
-  color: var(--text-muted, #888);
+  color: var(--text-muted, #858585);
 }
 </style>

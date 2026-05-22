@@ -190,6 +190,8 @@ async fn main() {
         plugins,
     };
 
+    state.plugins.watch_changes(state.manager.clone());
+
     let app = Router::new()
         .route("/ws", get(ws::ws_handler))
         .route("/ws/sync", get(ws::sync_handler))

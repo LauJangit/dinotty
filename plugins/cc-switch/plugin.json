@@ -1,16 +1,21 @@
 {
   "id": "cc-switch",
   "name": "CC Switch",
-  "version": "1.0.0",
-  "description": "快速切换 Claude Code API Provider",
+  "version": "2.0.0",
+  "description": "快速切换 Claude Code API Provider (基于 cc-switch CLI)",
   "icon": "repeat",
   "entry": "./main.js",
+  "styles": "./styles.css",
   "bin": {
     "mode": "cli",
     "entry": "./bin/cc-switch"
   },
   "commands": [
     { "id": "cc-switch.open", "title": "打开 CC Switch" },
-    { "id": "cc-switch.next", "title": "切换到下一个 Provider" }
-  ]
+    { "id": "cc-switch.next", "title": "切换到下一个 Provider" },
+    { "id": "cc-switch.import", "title": "导入当前配置" }
+  ],
+  "requirements": {
+    "cli": "cc-switch"
+  }
 }

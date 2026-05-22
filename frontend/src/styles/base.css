@@ -20,6 +20,18 @@
   --accent:       #007AFF;
   --accent-hover: #3395FF;
 
+  /* Aliases for plugin compatibility */
+  --text-color:   var(--fg);
+  --text-primary: var(--fg-bright);
+  --text-secondary: var(--fg);
+  --text-muted:   var(--fg-muted);
+  --bg-main:      var(--bg);
+  --bg-hover:     #2A2A2C;
+  --bg-elevated:   var(--bg-surface);
+  --bg-surface-hover: #333333;
+  --border-hover: #555555;
+  --accent-hover: #3395FF;
+
   /* Tab bar */
   --tab-height:   36px;
   --tab-bg:       #181818;

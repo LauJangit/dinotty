@@ -51,7 +51,13 @@ export interface SyncTabActivated {
   pane_id: string
 }
 
-export type SyncServerMsg = SyncTabList | SyncTabCreated | SyncTabClosed | SyncTabActivated
+export interface SyncPluginChanged {
+  type: 'plugin_changed'
+  plugin_id: string
+  change: string
+}
+
+export type SyncServerMsg = SyncTabList | SyncTabCreated | SyncTabClosed | SyncTabActivated | SyncPluginChanged
 
 export interface SyncCreateTab {
   type: 'create_tab'

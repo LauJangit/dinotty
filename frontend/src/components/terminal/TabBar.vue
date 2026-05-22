@@ -20,7 +20,7 @@
         <button class="tab-close" @click.stop="$emit('close', tab.paneId)" @touchend.stop.prevent="$emit('close', tab.paneId)"><X :size="10" /></button>
       </div>
     </div>
-    <button id="tab-new-btn" title="New Tab (⌘T)" @click="$emit('new')" @touchend.prevent="$emit('new')"><Plus :size="16" /></button>
+    <button id="tab-new-btn" title="New Tab (⌘T)" @click="$emit('new')" @touchend.prevent="$emit('new')"><Terminal :size="16" /></button>
     <div v-if="plugins.length > 0" class="tab-bar-plugin-wrap">
       <button type="button" class="tab-bar-icon-btn" title="Plugins" @click="pluginMenuOpen = !pluginMenuOpen" @touchend.prevent="pluginMenuOpen = !pluginMenuOpen"><Blocks :size="16" /></button>
       <div v-if="pluginMenuOpen" class="plugin-dropdown" @mouseleave="pluginMenuOpen = false">
@@ -39,7 +39,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { X, Plus, Blocks } from 'lucide-vue-next'
+import { X, Terminal, Blocks } from 'lucide-vue-next'
 
 export interface TabInfo {
   paneId: string

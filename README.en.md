@@ -131,6 +131,7 @@ This means an agent can `npm run dev`, write code, and the user can immediately 
 | Command palette | ✅ | ❌ | ❌ | ❌ | ✅ |
 | Token auth | ✅ | ✅ | ❌ | ✅ | N/A |
 | Desktop app | ✅ Tauri | ❌ | ❌ | ❌ | Native |
+| Plugin system | ✅ JS plugins + CLI bridge, hot-reload | ❌ | ❌ | ❌ | ❌ |
 
 **Key differentiator**: Other web terminals (ttyd, gotty, Wetty) are thin WebSocket-to-PTY pipes — they stream raw bytes and have no knowledge of what's on screen. Dinotty runs a **full virtual terminal emulator on the server**, which enables session recovery, screen snapshots, and a level of resilience that other solutions require pairing with tmux/screen to achieve. Combined with the built-in file/web browser, it provides a self-contained environment where coding agents can work and users can verify results — no tool-switching required.
 
@@ -149,6 +150,79 @@ This means an agent can `npm run dev`, write code, and the user can immediately 
 - **Settings & i18n** — persistent settings with multi-language support
 - **Authentication** — token-based access control
 - **Desktop app** — optional Tauri-based native client
+- **Plugin system** — install third-party plugins to extend UI and functionality; ships with CC Switch and JSON Formatter
+
+## Plugin System
+
+Dinotty supports extending functionality through plugins. Plugins run in dedicated tabs, render UI with Vue 3, and have access to built-in APIs for the terminal, notifications, persistent storage, and more.
+
+### Installing Plugins
+
+**Option 1: Upload an archive**
+
+Go to Settings → Plugins and upload a `.tar.gz` package containing a `plugin.json`.
+
+**Option 2: Dev-link a local directory**
+
+```bash
+# Link a local directory as a plugin (development)
+curl -X POST http://127.0.0.1:8999/api/plugins/dev-link \
+  -H "Content-Type: application/json" \
+  -d '{"path": "/your/plugin/dir"}'
+```
+
+**Option 3: Manual placement**
+
+Drop a plugin directory directly into `~/.dinotty/plugins/<plugin-id>/`. The file watcher detects it automatically.
+
+Plugins support **hot-reload** — edit plugin files and the browser picks up changes instantly without restarting the server.
+
+### Plugin Manifest (plugin.json)
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `id` | ✅ | Unique identifier, lowercase letters + hyphens; must match the directory name |
+| `name` | ✅ | Display name |
+| `version` | ✅ | Semantic version string |
+| `entry` | ❌ | JS entry file, defaults to `./main.js` |
+| `styles` | ❌ | CSS file path |
+| `icon` | ❌ | Icon identifier (e.g., `braces`, `repeat`) |
+| `bin` | ❌ | CLI binary config `{ "mode": "cli", "entry": "./bin/xxx" }` |
+| `commands` | ❌ | Commands to register in the command palette `[{ "id": "...", "title": "..." }]` |
+
+### Plugin API
+
+A plugin's JS entry exports an `activate(context)` function. The `context` object provides:
+
+| Category | API | Description |
+|----------|-----|-------------|
+| **Vue** | `ref`, `reactive`, `computed`, `watch`, `h`, `onMounted` | Full Vue 3 reactivity and render API |
+| **Terminal** | `terminal.send(paneId, data)` | Send input to a terminal pane |
+| | `terminal.activePaneId()` | Get the currently active pane ID |
+| | `terminal.createTab(command?)` | Create a new terminal tab |
+| **Storage** | `storage.get(key)` | Read a persisted value |
+| | `storage.set(key, value)` | Write a persisted value |
+| | `storage.list()` | List all stored keys |
+| **Commands** | `commands.register(id, handler)` | Register a command palette command, returns `Disposable` |
+| **CLI exec** | `exec.run(args, options?)` | Run the plugin's CLI binary synchronously (`{code, stdout, stderr}`) |
+| | `exec.spawn(args)` | Stream CLI output over WebSocket (returns `ReadableStream`) |
+| **UI** | `ui.notify(message, level?)` | Show a notification (info / warn / error) |
+| | `ui.confirm(message)` | Show a confirm dialog, returns `Promise<boolean>` |
+| **Settings** | `settings.get()` | Read app settings |
+| | `settings.onDidChange(cb)` | Subscribe to settings changes |
+
+The return value of `activate(context)` may include:
+- `component`: A Vue component rendered in the plugin tab
+- `dispose()`: Cleanup called when the plugin is unloaded
+
+### Built-in Plugins
+
+| Plugin | Description |
+|--------|-------------|
+| **CC Switch** | Manage multiple Claude Code API providers and switch between them with one click. Requires the [cc-switch CLI](https://github.com/SaladDay/cc-switch-cli) |
+| **JSON Formatter** | Format, minify, and validate JSON |
+
+For the full plugin development guide, see [docs/plugin-development.md](docs/plugin-development.md).
 
 ## Tech Stack
 

@@ -12,7 +12,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::process::Command;
+
+use crate::session::SessionManager;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -149,6 +152,95 @@ impl PluginManager {
 
     pub fn list(&self) -> Vec<PluginManifest> {
         self.registry.iter().map(|r| r.manifest.clone()).collect()
+    }
+
+    /// Start a background file watcher on the plugin directory.
+    /// When files change, re-scans and broadcasts `PluginChanged` events via the sync channel.
+    pub fn watch_changes(self: &Arc<Self>, manager: Arc<SessionManager>) {
+        if !self.plugin_dir.exists() {
+            return;
+        }
+        let plugin_dir = self.plugin_dir.clone();
+        let this = Arc::clone(self);
+
+        tokio::spawn(async move {
+            use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+            let mut watcher = match RecommendedWatcher::new(
+                move |res: Result<notify::Event, notify::Error>| {
+                    if let Ok(event) = res {
+                        let _ = tx.send(event);
+                    }
+                },
+                Config::default().with_poll_interval(Duration::from_secs(1)),
+            ) {
+                Ok(w) => w,
+                Err(e) => {
+                    tracing::error!("Failed to create plugin watcher: {}", e);
+                    return;
+                }
+            };
+
+            if let Err(e) = watcher.watch(&plugin_dir, RecursiveMode::Recursive) {
+                tracing::error!("Failed to watch plugin dir: {}", e);
+                return;
+            }
+
+            tracing::info!("Plugin file watcher started on {:?}", plugin_dir);
+
+            // Debounce: collect events for 500ms, then process once
+            loop {
+                let Some(event) = rx.recv().await else {
+                    break;
+                };
+
+                // Check event kind — only react to content changes
+                // (ignore Access events which also match Modify)
+                let dominated_by_access = matches!(event.kind, EventKind::Access(_));
+                if dominated_by_access {
+                    continue;
+                }
+
+                // Drain additional events for 500ms (debounce window)
+                let debounce = tokio::time::sleep(Duration::from_millis(500));
+                tokio::pin!(debounce);
+                loop {
+                    tokio::select! {
+                        _ = &mut debounce => break,
+                        next = rx.recv() => {
+                            if next.is_none() { return; }
+                        }
+                    }
+                }
+
+                // Snapshot old plugin IDs
+                let old_ids: Vec<String> =
+                    this.registry.iter().map(|e| e.key().clone()).collect();
+
+                // Re-scan
+                this.registry.clear();
+                this.scan();
+
+                // Diff
+                let new_ids: Vec<String> =
+                    this.registry.iter().map(|e| e.key().clone()).collect();
+
+                for id in &new_ids {
+                    if !old_ids.contains(id) {
+                        manager.broadcast_plugin_changed(id.clone(), "added".into());
+                    } else {
+                        manager.broadcast_plugin_changed(id.clone(), "updated".into());
+                    }
+                }
+                for id in &old_ids {
+                    if !new_ids.contains(id) {
+                        manager.broadcast_plugin_changed(id.clone(), "deleted".into());
+                    }
+                }
+            }
+        });
     }
 }
 

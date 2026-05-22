@@ -204,42 +204,48 @@ async function onDevLink() {
   font-size: 13px;
 }
 .plugin-card {
-  padding: 12px;
-  margin-bottom: 8px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
   border-radius: 8px;
   border: 1px solid var(--border, #333);
   background: var(--bg-elevated, #222);
 }
 .plugin-card-header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
+  min-height: 24px;
 }
 .plugin-card-name {
   font-weight: 600;
   font-size: 14px;
+  line-height: 1.4;
 }
 .plugin-card-version {
   font-size: 12px;
   color: var(--text-muted, #888);
+  line-height: 1.4;
 }
 .plugin-card-state {
   font-size: 10px;
   padding: 1px 6px;
   border-radius: 4px;
   font-weight: 600;
+  line-height: 1.4;
 }
 .plugin-card-error {
   color: var(--color-red, #ef4444);
   background: rgba(239, 68, 68, 0.15);
 }
 .plugin-card-desc {
-  margin: 4px 0 8px;
+  margin: 6px 0 10px;
   font-size: 12px;
   color: var(--text-secondary, #aaa);
+  line-height: 1.5;
 }
 .plugin-card-actions {
   display: flex;
   gap: 8px;
+  margin-top: 4px;
 }
 </style>
