@@ -32,6 +32,7 @@ pub struct PluginManifest {
     pub bin: Option<BinConfig>,
     pub commands: Option<Vec<CommandDef>>,
     pub styles: Option<String>,
+    pub permissions: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

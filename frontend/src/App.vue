@@ -30,7 +30,7 @@
       >
         <template v-if="tab.type === 'terminal'">
           <TerminalPane
-            :ref="(el: any) => { if (el) termRefs[tab.paneId] = el }"
+            :ref="(el: any) => registerTermRef(tab.paneId, el)"
             :pane-id="tab.paneId"
             @title-change="(t: string) => onTitleChange(tab.paneId, t)"
             @file-click="onFileClick"
@@ -180,6 +180,16 @@ watch(
 )
 
 const termRefs = shallowReactive<Record<string, InstanceType<typeof TerminalPane>>>({})
+const outputListeners = new Set<(paneId: string, data: string) => void>()
+
+function registerTermRef(paneId: string, el: InstanceType<typeof TerminalPane> | null) {
+  if (el) {
+    termRefs[paneId] = el
+    el.setOutputListener((data: string) => {
+      outputListeners.forEach(cb => cb(paneId, data))
+    })
+  }
+}
 
 let syncWs: WebSocket | null = null
 let suppressSync = false
@@ -496,8 +506,8 @@ window.__dinotty_terminal_api = {
     return activePaneId.value
   },
   onOutput(callback: (paneId: string, data: string) => void) {
-    // TODO: wire up to terminal output broadcasts
-    return { dispose() {} }
+    outputListeners.add(callback)
+    return { dispose() { outputListeners.delete(callback) } }
   },
   async createTab(command?: string) {
     newTab()

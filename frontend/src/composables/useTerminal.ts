@@ -67,6 +67,7 @@ export class TerminalInstance {
   onDisconnect: (() => void) | null = null
   onFileClick: ((path: string) => void) | null = null
   onPreviewLink: ((url: string) => void) | null = null
+  onRawOutput: ((data: string) => void) | null = null
 
   constructor(paneId: string) {
     this.paneId = paneId
@@ -303,6 +304,7 @@ export class TerminalInstance {
     this._transport.onMessage((msg) => {
       if (msg.type === 'output') {
         this.xterm!.write(msg.data)
+        this.onRawOutput?.(msg.data)
       } else if (msg.type === 'shell_info') {
         this.onShellInfo?.(msg.shell_type)
       } else if (msg.type === 'reconnected') {
@@ -349,6 +351,7 @@ export class TerminalInstance {
         this._doFitAndResize(true)
       } else if (msg.type === 'output') {
         this.xterm!.write(msg.data)
+        this.onRawOutput?.(msg.data)
       } else if (msg.type === 'shell_info') {
         this.onShellInfo?.(msg.shell_type)
       }
