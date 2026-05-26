@@ -505,6 +505,11 @@ window.__dinotty_terminal_api = {
   activePaneId() {
     return activePaneId.value
   },
+  listPanes() {
+    return tabs.value
+      .filter(t => t.type === 'terminal')
+      .map(t => ({ id: t.paneId, title: t.title, active: t.paneId === activePaneId.value }))
+  },
   onOutput(callback: (paneId: string, data: string) => void) {
     outputListeners.add(callback)
     return { dispose() { outputListeners.delete(callback) } }
