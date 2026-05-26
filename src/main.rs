@@ -172,6 +172,8 @@ async fn main() {
     monitor_state.clone().start_collector();
 
     let notifier = Arc::new(NotificationBroadcast::new());
+    let settings_state = settings::create_settings_state();
+    notifier.set_settings(settings_state.clone());
     let history_state = HistoryState::new();
 
     let plugins = Arc::new(plugin::PluginManager::new());
@@ -180,7 +182,7 @@ async fn main() {
 
     let state = AppState {
         manager,
-        settings: settings::create_settings_state(),
+        settings: settings_state,
         file_watcher: Arc::new(FileWatcherState::new()),
         monitor: monitor_state,
         notifier,
