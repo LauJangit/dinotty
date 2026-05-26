@@ -132,6 +132,8 @@ This means an agent can `npm run dev`, write code, and the user can immediately 
 | Token auth | ✅ | ✅ | ❌ | ✅ | N/A |
 | Desktop app | ✅ Tauri | ❌ | ❌ | ❌ | Native |
 | Plugin system | ✅ JS plugins + CLI bridge, hot-reload | ❌ | ❌ | ❌ | ❌ |
+| Open API (external control) | ✅ HTTP endpoint for remote input | ❌ | ❌ | ❌ | ❌ |
+| Terminal link clicking | ✅ Click links to open in preview panel | ❌ | ❌ | ❌ | ❌ |
 
 **Key differentiator**: Other web terminals (ttyd, gotty, Wetty) are thin WebSocket-to-PTY pipes — they stream raw bytes and have no knowledge of what's on screen. Dinotty runs a **full virtual terminal emulator on the server**, which enables session recovery, screen snapshots, and a level of resilience that other solutions require pairing with tmux/screen to achieve. Combined with the built-in file/web browser, it provides a self-contained environment where coding agents can work and users can verify results — no tool-switching required.
 
@@ -150,7 +152,28 @@ This means an agent can `npm run dev`, write code, and the user can immediately 
 - **Settings & i18n** — persistent settings with multi-language support
 - **Authentication** — token-based access control
 - **Desktop app** — optional Tauri-based native client
-- **Plugin system** — install third-party plugins to extend UI and functionality; ships with CC Switch and JSON Formatter
+- **Plugin system** — install third-party plugins to extend UI and functionality; ships with CC Switch, JSON Formatter, Command Bookmarks, and Text Diff
+- **Open API** — HTTP input endpoint for external device control (Stream Deck, Shortcuts, automation scripts)
+- **Terminal link clicking** — clickable links in terminal open directly in the preview panel
+- **Notification command hooks** — execute custom shell commands when notification events fire
+
+## Open API (External Device Control)
+
+The `POST /api/input` endpoint allows external devices (Stream Deck, iOS Shortcuts, automation scripts, etc.) to send input to the terminal for remote control.
+
+Open API must be enabled in Settings.
+
+```bash
+# Send input to the active pane
+curl -X POST http://127.0.0.1:8999/api/input \
+  -H "Content-Type: application/json" \
+  -d '{"data": "ls -la\n"}'
+
+# Send input to a specific pane
+curl -X POST http://127.0.0.1:8999/api/input \
+  -H "Content-Type: application/json" \
+  -d '{"data": "echo hello\n", "pane_id": "pane-1"}'
+```
 
 ## Plugin System
 
@@ -189,6 +212,8 @@ Plugins support **hot-reload** — edit plugin files and the browser picks up ch
 | `icon` | ❌ | Icon identifier (e.g., `braces`, `repeat`) |
 | `bin` | ❌ | CLI binary config `{ "mode": "cli", "entry": "./bin/xxx" }` |
 | `commands` | ❌ | Commands to register in the command palette `[{ "id": "...", "title": "..." }]` |
+| `permissions` | ❌ | Permissions the plugin requires (e.g., `["terminal.output"]`) |
+| `description` | ❌ | Plugin description, shown in the dropdown menu |
 
 ### Plugin API
 
@@ -200,6 +225,8 @@ A plugin's JS entry exports an `activate(context)` function. The `context` objec
 | **Terminal** | `terminal.send(paneId, data)` | Send input to a terminal pane |
 | | `terminal.activePaneId()` | Get the currently active pane ID |
 | | `terminal.createTab(command?)` | Create a new terminal tab |
+| | `terminal.listPanes()` | Query all terminal panes |
+| | `terminal.onOutput(paneId, cb)` | Subscribe to terminal output broadcast |
 | **Storage** | `storage.get(key)` | Read a persisted value |
 | | `storage.set(key, value)` | Write a persisted value |
 | | `storage.list()` | List all stored keys |
@@ -221,6 +248,8 @@ The return value of `activate(context)` may include:
 |--------|-------------|
 | **CC Switch** | Manage multiple Claude Code API providers and switch between them with one click. Requires the [cc-switch CLI](https://github.com/SaladDay/cc-switch-cli) |
 | **JSON Formatter** | Format, minify, and validate JSON |
+| **Command Bookmarks** | Command bookmarks with batch execution to multiple terminals |
+| **Text Diff** | Text diff comparison tool with line-by-line highlighting |
 
 For the full plugin development guide, see [docs/plugin-development.md](docs/plugin-development.md).
 
@@ -273,6 +302,7 @@ src/               # Rust backend
   proxy.rs         # Reverse proxy for preview
   monitor.rs       # System monitor
   notification.rs  # Notification broadcast (bell/OSC detection)
+  plugin.rs        # Plugin system management
   settings.rs      # Settings persistence
   auth.rs          # Authentication
   file_watcher.rs  # File change watching
