@@ -67,6 +67,7 @@ export class TerminalInstance {
   onDisconnect: (() => void) | null = null
   onFileClick: ((path: string) => void) | null = null
   onPreviewLink: ((url: string) => void) | null = null
+  onRawOutput: ((data: string) => void) | null = null
 
   constructor(paneId: string) {
     this.paneId = paneId
@@ -89,6 +90,16 @@ export class TerminalInstance {
       lineHeight: settings.text.line_height,
       letterSpacing: settings.text.letter_spacing,
       allowProposedApi: true,
+      linkHandler: {
+        activate: (_event, text) => {
+          const uri = text.startsWith('http') ? text : `http://${text}`
+          if (this.onPreviewLink) {
+            this.onPreviewLink(uri)
+          } else {
+            window.open(uri, '_blank')
+          }
+        },
+      },
       theme: {
         background: v('--bg') || '#1A1A1A',
         foreground: v('--fg') || '#C7C7C7',
@@ -303,6 +314,7 @@ export class TerminalInstance {
     this._transport.onMessage((msg) => {
       if (msg.type === 'output') {
         this.xterm!.write(msg.data)
+        this.onRawOutput?.(msg.data)
       } else if (msg.type === 'shell_info') {
         this.onShellInfo?.(msg.shell_type)
       } else if (msg.type === 'reconnected') {
@@ -349,6 +361,7 @@ export class TerminalInstance {
         this._doFitAndResize(true)
       } else if (msg.type === 'output') {
         this.xterm!.write(msg.data)
+        this.onRawOutput?.(msg.data)
       } else if (msg.type === 'shell_info') {
         this.onShellInfo?.(msg.shell_type)
       }

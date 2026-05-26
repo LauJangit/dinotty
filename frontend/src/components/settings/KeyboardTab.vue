@@ -122,6 +122,40 @@
         </label>
       </div>
     </section>
+
+    <section class="settings-section">
+      <h3>{{ t('settings.keyboard.openApi') }}</h3>
+      <p class="settings-hint">{{ t('settings.keyboard.openApiHint') }}</p>
+      <div class="settings-row">
+        <label>{{ t('settings.keyboard.openApiEnabled') }}</label>
+        <label class="toggle">
+          <input type="checkbox" v-model="settings.open_api.enabled" @change="saveSettings()" />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
+
+      <div v-if="settings.open_api.enabled" class="open-api-test">
+        <label class="ak-field">
+          <span>pane_id ({{ t('settings.keyboard.openApiPaneHint') }})</span>
+          <input v-model="openApiPaneId" class="shortcut-input" placeholder="(active pane)" />
+        </label>
+        <label class="ak-field">
+          <span>data</span>
+          <textarea v-model="openApiData" class="shortcut-input ak-send-textarea" rows="2" spellcheck="false" placeholder="hello\n" />
+        </label>
+        <div class="open-api-actions">
+          <button class="settings-save" @click="sendOpenApiTest" :disabled="!openApiData">{{ t('settings.keyboard.openApiSend') }}</button>
+          <span v-if="openApiResult" class="open-api-result" :class="{ error: openApiError }">{{ openApiResult }}</span>
+        </div>
+        <details class="open-api-curl">
+          <summary>curl {{ t('settings.keyboard.openApiExample') }}</summary>
+          <code class="open-api-curl-code">curl -X POST {{ apiBaseUrl }}/api/input \
+  -H "Authorization: Bearer &lt;token&gt;" \
+  -H "Content-Type: application/json" \
+  -d '{"data":"hello\\n"}'</code>
+        </details>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -131,9 +165,41 @@ import { useSettings, DEFAULT_ACTION_KEYBOARD } from '../../composables/useSetti
 import { useI18n } from '../../composables/useI18n'
 import type { ActionKey } from '../../composables/useSettings'
 import { actionKeyToKeyDef } from '../../utils/actionKeyDef'
+import { getApiBase, apiUrl, authFetch } from '../../composables/apiBase'
 
 const { settings, saveSettings } = useSettings()
 const { t } = useI18n()
+
+const openApiPaneId = ref('')
+const openApiData = ref('')
+const openApiResult = ref('')
+const openApiError = ref(false)
+const apiBaseUrl = ref('')
+getApiBase().then(b => { apiBaseUrl.value = b })
+
+async function sendOpenApiTest() {
+  openApiResult.value = ''
+  openApiError.value = false
+  try {
+    const body: Record<string, string> = { data: openApiData.value }
+    if (openApiPaneId.value) body.pane_id = openApiPaneId.value
+    const res = await authFetch(apiUrl('/api/input'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const json = await res.json()
+    if (res.ok) {
+      openApiResult.value = 'OK'
+    } else {
+      openApiError.value = true
+      openApiResult.value = json.error || `HTTP ${res.status}`
+    }
+  } catch (e: any) {
+    openApiError.value = true
+    openApiResult.value = e.message || 'error'
+  }
+}
 
 const actionRows = computed(() => {
   return (settings.action_keyboard ?? DEFAULT_ACTION_KEYBOARD).rows

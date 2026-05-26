@@ -43,6 +43,7 @@ export interface PluginContext {
   terminal: {
     send(paneId: string, data: string): void
     activePaneId(): string | null
+    listPanes(): Array<{ id: string; title: string; active: boolean }>
     onOutput(callback: (paneId: string, data: string) => void): Disposable
     createTab(command?: string): Promise<string>
   }
@@ -194,6 +195,7 @@ function createPluginContext(pluginId: string): PluginContext {
     terminal: window.__dinotty_terminal_api ?? {
       send() {},
       activePaneId: () => null,
+      listPanes: () => [],
       onOutput: () => ({ dispose() {} }),
       createTab: async () => '',
     },
@@ -391,6 +393,7 @@ export function usePluginLoader() {
     return Array.from(loadedPlugins.values()).map(p => ({
       id: p.id,
       name: p.manifest.name,
+      description: p.manifest.description,
       icon: p.manifest.icon,
       state: p.state,
     }))

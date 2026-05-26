@@ -77,6 +77,26 @@
     </section>
 
     <section class="settings-section">
+      <h3 class="section-title">{{ t('notification.hooks') }}</h3>
+      <p class="hook-hint">{{ t('notification.hookEnvHint') }}</p>
+      <div v-for="(hook, idx) in cfg.hooks" :key="idx" class="hook-row">
+        <label class="toggle toggle-sm">
+          <input type="checkbox" v-model="hook.enabled" />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+        <select class="hook-type-select" v-model="hook.notification_type">
+          <option :value="null">{{ t('notification.hookAll') }}</option>
+          <option v-for="nt in notifTypes" :key="nt" :value="nt">{{ t(`notification.type.${nt}`) }}</option>
+        </select>
+        <input type="text" class="hook-cmd-input" v-model="hook.command" :placeholder="t('notification.hookCommand')" />
+        <button class="hook-del-btn" @click="cfg.hooks.splice(idx, 1)">&times;</button>
+      </div>
+      <button class="hook-add-btn" @click="cfg.hooks.push({ enabled: true, notification_type: null, command: '' })">
+        + {{ t('notification.hookAdd') }}
+      </button>
+    </section>
+
+    <section class="settings-section">
       <h3 class="section-title">{{ t('notification.test') }}</h3>
       <div class="api-test">
         <div class="api-method-row">
@@ -393,4 +413,70 @@ async function sendTest() {
 }
 .api-result.ok { color: #49cc90; }
 .api-result.err { color: #ef4444; }
+.hook-hint {
+  font-size: 11px;
+  color: var(--fg-muted, #666);
+  margin: 0 0 8px;
+  font-family: monospace;
+  word-break: break-all;
+}
+.hook-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.toggle-sm .toggle-track {
+  width: 28px;
+  height: 16px;
+  border-radius: 8px;
+}
+.toggle-sm .toggle-thumb {
+  width: 12px;
+  height: 12px;
+  top: 2px;
+  left: 2px;
+}
+.toggle-sm input:checked ~ .toggle-track .toggle-thumb {
+  transform: translateX(12px);
+}
+.hook-type-select {
+  width: 80px;
+  padding: 3px 4px;
+  border: 1px solid var(--border, #333);
+  border-radius: 4px;
+  background: var(--bg, #111);
+  color: var(--fg, #ccc);
+  font-size: 11px;
+}
+.hook-cmd-input {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--border, #333);
+  border-radius: 4px;
+  background: var(--bg, #111);
+  color: var(--fg, #ccc);
+  font-size: 12px;
+  font-family: monospace;
+}
+.hook-del-btn {
+  background: none;
+  border: none;
+  color: var(--fg-muted, #666);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.hook-del-btn:hover { color: #ef4444; }
+.hook-add-btn {
+  background: none;
+  border: 1px dashed var(--border, #333);
+  border-radius: 4px;
+  color: var(--fg-muted, #999);
+  font-size: 12px;
+  padding: 4px 12px;
+  cursor: pointer;
+  width: 100%;
+}
+.hook-add-btn:hover { border-color: var(--fg-muted, #666); color: var(--fg, #ccc); }
 </style>

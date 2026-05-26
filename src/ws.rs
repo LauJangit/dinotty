@@ -3,7 +3,9 @@ use axum::{
         ws::{Message, WebSocket},
         Query, State, WebSocketUpgrade,
     },
+    http::StatusCode,
     response::IntoResponse,
+    Json,
 };
 use futures_util::{SinkExt, StreamExt};
 use portable_pty::PtySize;
@@ -15,6 +17,7 @@ use tracing::{error, info};
 use crate::history::HistoryState;
 use crate::session::{SessionManager, SessionStatus, SyncMsg};
 use crate::notification::NotificationBroadcast;
+use crate::settings::SettingsState;
 
 #[derive(Deserialize)]
 pub struct WsQuery {
@@ -315,3 +318,36 @@ async fn handle_notification_socket(socket: WebSocket, notifier: Arc<Notificatio
     fwd.abort();
 }
 
+#[derive(Deserialize)]
+pub struct InputRequest {
+    pub pane_id: Option<String>,
+    pub data: String,
+}
+
+pub async fn post_input(
+    State((manager, settings)): State<(Arc<SessionManager>, SettingsState)>,
+    Json(req): Json<InputRequest>,
+) -> impl IntoResponse {
+    let s = settings.read().await;
+    if !s.open_api.enabled {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "open_api is disabled" })));
+    }
+    drop(s);
+
+    let pane_id = req.pane_id.unwrap_or_else(|| {
+        manager.active_pane_id.lock().unwrap().clone().unwrap_or_default()
+    });
+
+    if pane_id.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "no active pane" })));
+    }
+
+    match manager.sessions.get(&pane_id) {
+        Some(session) => {
+            let mut w = session.writer.lock().unwrap();
+            let _ = w.write_all(req.data.as_bytes());
+            (StatusCode::OK, Json(serde_json::json!({ "ok": true })))
+        }
+        None => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "pane not found" }))),
+    }
+}

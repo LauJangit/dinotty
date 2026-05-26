@@ -27,6 +27,7 @@ notify = "6"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 dirs = "5"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "gzip", "brotli"] }
+tokio-tungstenite = "0.24"
 bytes = "1"
 regex = "1.12.3"
 unicode-width = "0.2"

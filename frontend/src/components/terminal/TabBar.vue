@@ -30,7 +30,10 @@
           class="plugin-dropdown-item"
           @click="$emit('open-plugin', p.id); pluginMenuOpen = false"
           @touchend.prevent="$emit('open-plugin', p.id); pluginMenuOpen = false"
-        >{{ p.name }}</div>
+        >
+          <span class="plugin-dropdown-name">{{ p.name }}</span>
+          <span v-if="p.description" class="plugin-dropdown-desc">{{ p.description }}</span>
+        </div>
       </div>
     </div>
     <slot name="right"></slot>
@@ -49,6 +52,7 @@ export interface TabInfo {
 export interface PluginInfo {
   id: string
   name: string
+  description?: string
   icon?: string
   state: string
 }
@@ -150,9 +154,22 @@ function onDragEnd() {
   padding: 6px 12px;
   cursor: pointer;
   font-size: 13px;
-  white-space: nowrap;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 .plugin-dropdown-item:hover {
   background: var(--bg-hover, #2a2a2a);
+}
+.plugin-dropdown-name {
+  white-space: nowrap;
+}
+.plugin-dropdown-desc {
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
 }
 </style>

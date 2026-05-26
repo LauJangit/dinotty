@@ -298,6 +298,10 @@ JSON messages over `/ws`:
 | Server → Client | `output` | `data: String` |
 | Server → Client | `shell_info` | `shell_type: String` |
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=xichan96/dinotty&type=Date)](https://star-history.com/#xichan96/dinotty&Date)
+
 ## License
 
 MIT

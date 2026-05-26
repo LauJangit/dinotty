@@ -63,6 +63,10 @@ function sendData(data: string) {
   terminal?.sendData(data)
 }
 
+function setOutputListener(cb: ((data: string) => void) | null) {
+  if (terminal) terminal.onRawOutput = cb
+}
+
 function onConfirm() {
   confirmVisible.value = false
   if (confirmType === 'file') {
@@ -111,7 +115,7 @@ onBeforeUnmount(() => {
   terminal = null
 })
 
-defineExpose({ getTerminal, focus, fit, sendData })
+defineExpose({ getTerminal, focus, fit, sendData, setOutputListener })
 </script>
 
 <style scoped>

@@ -40,6 +40,14 @@ pub struct Settings {
     pub monitor: MonitorConfig,
     #[serde(default)]
     pub notification: NotificationConfig,
+    #[serde(default)]
+    pub open_api: OpenApiConfig,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct OpenApiConfig {
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -58,6 +66,8 @@ pub struct NotificationConfig {
     pub channels: NotificationChannels,
     #[serde(default)]
     pub sounds: NotificationSounds,
+    #[serde(default)]
+    pub hooks: Vec<NotificationHook>,
 }
 
 impl Default for NotificationConfig {
@@ -70,6 +80,7 @@ impl Default for NotificationConfig {
             keyword_match: vec![],
             channels: NotificationChannels::default(),
             sounds: NotificationSounds::default(),
+            hooks: vec![],
         }
     }
 }
@@ -185,6 +196,14 @@ pub enum NotificationType {
     Warning,
     Error,
     Urgent,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct NotificationHook {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    pub notification_type: Option<NotificationType>,
+    pub command: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -349,6 +368,7 @@ impl Default for Settings {
             panel_position: PanelPosition::default(),
             monitor: MonitorConfig::default(),
             notification: NotificationConfig::default(),
+            open_api: OpenApiConfig::default(),
         }
     }
 }

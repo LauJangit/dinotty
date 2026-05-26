@@ -24,6 +24,11 @@ export interface SettingsData {
   port?: number | null
   monitor: MonitorConfig
   notification: NotificationConfig
+  open_api: OpenApiConfig
+}
+
+export interface OpenApiConfig {
+  enabled: boolean
 }
 
 export interface NotificationConfig {
@@ -40,7 +45,13 @@ export interface NotificationConfig {
     tab_indicator: boolean
   }
   sounds: Record<string, { source: 'builtin' | 'custom'; value: string; volume: number }>
+  hooks: NotificationHook[]
+}
 
+export interface NotificationHook {
+  enabled: boolean
+  notification_type: string | null
+  command: string
 }
 
 export interface MonitorConfig {
@@ -151,6 +162,10 @@ export const settings = reactive<SettingsData>({
       error: { source: 'builtin', value: 'error-buzz', volume: 0.8 },
       urgent: { source: 'builtin', value: 'alarm', volume: 1.0 },
     },
+    hooks: [],
+  },
+  open_api: {
+    enabled: false,
   },
 })
 
