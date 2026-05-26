@@ -32,18 +32,34 @@ export function normalizeWebUrl(val: string): string {
   return `http://${v}`
 }
 
+function isPrivateHost(host: string): boolean {
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+    return true
+  }
+  if (!/\.[a-zA-Z]{2,}$/.test(host)) return true
+  if (/\.(local|internal|lan|home|intranet|corp|test)$/i.test(host)) return true
+  return false
+}
+
 export function urlToPreviewSrc(url: string, embeddedHttpOrigin?: string): string {
   if (!url) return 'about:blank'
   try {
     const parsed = new URL(url)
     const host = parsed.hostname
-    if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || /^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
-      const actualHost = (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0')
-        ? window.location.hostname
-        : host
-      const port = parsed.port || '80'
-      return `${parsed.protocol}//${actualHost}:${port}${parsed.pathname}${parsed.search}${parsed.hash}`
+    const port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80')
+
+    if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0') {
+      const basePath = `/preview/${port}${parsed.pathname}${parsed.search}${parsed.hash}`
+      const base = embeddedHttpOrigin?.replace(/\/$/, '')
+      return base ? `${base}${basePath}` : basePath
     }
+
+    if (isPrivateHost(host)) {
+      const basePath = `/preview/${host}/${port}${parsed.pathname}${parsed.search}${parsed.hash}`
+      const base = embeddedHttpOrigin?.replace(/\/$/, '')
+      return base ? `${base}${basePath}` : basePath
+    }
+
     const proxyPath = `/api/proxy?url=${encodeURIComponent(url)}`
     const base = embeddedHttpOrigin?.replace(/\/$/, '')
     return base ? `${base}${proxyPath}` : proxyPath
