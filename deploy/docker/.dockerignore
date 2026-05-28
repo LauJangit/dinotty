@@ -1,0 +1,13 @@
+target/
+frontend/node_modules/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
+.git/
+.claude/
+dist/
+docs/
+src-tauri/
+deploy/
+plugins/cc-switch/bin/
+.env
+*.log
