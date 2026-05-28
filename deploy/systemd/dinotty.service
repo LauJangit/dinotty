@@ -1,0 +1,37 @@
+[Unit]
+Description=Dinotty Web Terminal IDE
+Documentation=https://github.com/zulinliu/dinotty
+After=network-online.target
+Wants=network-online.target
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+User=dinotty
+Group=dinotty
+WorkingDirectory=/var/lib/dinotty
+
+ExecStart=/usr/local/bin/dinotty-server --port ${DINOTTY_PORT}
+
+Restart=always
+RestartSec=5
+
+Environment=DINOTTY_PORT=8999
+EnvironmentFile=-/etc/dinotty/env
+
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+NoNewPrivileges=true
+ReadWritePaths=/var/lib/dinotty /tmp
+BindPaths=/home
+
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dinotty
+
+[Install]
+WantedBy=multi-user.target
