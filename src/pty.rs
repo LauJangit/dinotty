@@ -188,8 +188,18 @@ fi
 }
 
 pub fn get_shell() -> String {
+    // Non-interactive shells that should be skipped
+    const BLOCKED: &[&str] = &[
+        "/sbin/nologin",
+        "/usr/sbin/nologin",
+        "/bin/false",
+        "/usr/bin/false",
+        "/bin/nologin",
+        "/usr/bin/nologin",
+    ];
+
     if let Ok(s) = std::env::var("SHELL") {
-        if std::path::Path::new(&s).exists() {
+        if std::path::Path::new(&s).exists() && !BLOCKED.contains(&s.as_str()) {
             return s;
         }
     }
