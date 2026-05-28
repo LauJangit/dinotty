@@ -11,13 +11,17 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 
-use dinotty_server::workspace;
+use dinotty_server::file_watcher::{self, FileWatcherState};
+use dinotty_server::history;
+use dinotty_server::monitor::{self, MonitorState};
+use dinotty_server::notification::{self, NotificationBroadcast};
+use dinotty_server::plugin::{self, PluginManager, PluginManagerState};
 use dinotty_server::proxy;
 use dinotty_server::session::SessionManager;
 use dinotty_server::settings;
+use dinotty_server::history::HistoryState;
 use dinotty_server::ws;
-use dinotty_server::monitor::{self, MonitorState};
-use dinotty_server::file_watcher::{self, FileWatcherState};
+use dinotty_server::workspace;
 
 #[derive(Embed)]
 #[folder = "../frontend/dist/"]
@@ -29,6 +33,9 @@ pub struct AppState {
     pub settings: settings::SettingsState,
     pub file_watcher: Arc<FileWatcherState>,
     pub monitor: MonitorState,
+    pub notifier: Arc<NotificationBroadcast>,
+    pub history: HistoryState,
+    pub plugins: PluginManagerState,
 }
 
 impl axum::extract::FromRef<AppState> for Arc<SessionManager> {
@@ -52,6 +59,24 @@ impl axum::extract::FromRef<AppState> for (Arc<SessionManager>, Arc<FileWatcherS
 impl axum::extract::FromRef<AppState> for MonitorState {
     fn from_ref(state: &AppState) -> Self {
         state.monitor.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<NotificationBroadcast> {
+    fn from_ref(state: &AppState) -> Self {
+        state.notifier.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for HistoryState {
+    fn from_ref(state: &AppState) -> Self {
+        state.history.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for PluginManagerState {
+    fn from_ref(state: &AppState) -> Self {
+        state.plugins.clone()
     }
 }
 
@@ -85,26 +110,32 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
     let monitor_state = MonitorState::new();
     monitor_state.clone().start_collector();
 
+    let notifier = Arc::new(NotificationBroadcast::new());
+    let history_state = HistoryState::new();
+    let plugins = Arc::new(PluginManager::new());
+    plugins.scan();
+
     let state = AppState {
-        manager,
+        manager: manager.clone(),
         settings: settings::create_settings_state(),
         file_watcher: Arc::new(FileWatcherState::new()),
         monitor: monitor_state,
+        notifier,
+        history: history_state,
+        plugins,
     };
+
+    state.plugins.watch_changes(manager);
 
     let app = Router::new()
         .route("/ws", get(ws::ws_handler))
         .route("/ws/sync", get(ws::sync_handler))
         .route("/ws/watch", get(file_watcher::watch_handler))
         .route("/ws/monitor", get(monitor::ws_monitor_handler))
-        .route(
-            "/api/settings",
-            get(settings::get_settings).put(settings::put_settings),
-        )
-        .route(
-            "/api/settings/background",
-            post(settings::upload_background).get(settings::get_background),
-        )
+        .route("/ws/notify", get(ws::notification_ws_handler))
+        .route("/ws/history", get(history::ws_history_handler))
+        .route("/api/settings", get(settings::get_settings).put(settings::put_settings))
+        .route("/api/settings/background", post(settings::upload_background).get(settings::get_background))
         .route("/api/workspace/resolve", get(workspace::workspace_resolve))
         .route("/api/workspace/list", get(workspace::workspace_list))
         .route("/api/workspace/meta", get(workspace::workspace_meta))
@@ -114,6 +145,17 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
         .route("/api/workspace/file", put(workspace::workspace_put_file))
         .route("/api/workspace/delete", delete(workspace::workspace_delete))
         .route("/api/workspace/rename", post(workspace::workspace_rename))
+        .route("/api/notify", post(notification::post_notify))
+        .route("/api/history", get(history::get_history).delete(history::delete_history))
+        .route("/api/plugins", get(plugin::list_plugins))
+        .route("/api/plugins/dev-link", post(plugin::dev_link_plugin))
+        .route("/api/plugins/install", post(plugin::install_plugin))
+        .route("/api/plugins/:id/update", post(plugin::update_plugin))
+        .route("/api/plugins/:id", get(plugin::plugin_detail).delete(plugin::delete_plugin))
+        .route("/api/plugins/:id/exec", post(plugin::plugin_exec))
+        .route("/api/plugins/:id/spawn", get(plugin::plugin_spawn_ws))
+        .route("/api/plugins/:id/storage", get(plugin::plugin_storage_list))
+        .route("/api/plugins/:id/storage/:key", get(plugin::plugin_storage_get).put(plugin::plugin_storage_set).delete(plugin::plugin_storage_delete))
         .route("/api/proxy", any(proxy::external_proxy_handler))
         .route("/preview/:port", any(proxy::proxy_handler_root))
         .route("/preview/:port/", any(proxy::proxy_handler_root))
