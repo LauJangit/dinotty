@@ -1,0 +1,12 @@
+{
+  "id": "text-diff",
+  "name": "Text Diff",
+  "version": "1.0.0",
+  "description": "文本差异对比工具，支持逐行对比与高亮显示",
+  "icon": "diff",
+  "entry": "./main.js",
+  "styles": "./styles.css",
+  "commands": [
+    { "id": "text-diff.open", "title": "打开文本对比工具" }
+  ]
+}
