@@ -50,23 +50,24 @@
       <h3>{{ t('settings.token') }}</h3>
       <div class="token-row">
         <input
+          ref="tokenInputRef"
           :type="tokenVisible ? 'text' : 'password'"
-          :value="currentToken"
-          readonly
+          :value="tokenEditing ? customToken : currentToken"
+          :readonly="!tokenEditing"
           class="token-input"
+          :placeholder="tokenEditing ? t('settings.token.custom') : ''"
+          @input="customToken = ($event.target as HTMLInputElement).value"
         />
-        <button class="icon-btn" @click="tokenVisible = !tokenVisible">{{ tokenVisible ? t('settings.token.hide') : t('settings.token.show') }}</button>
-        <button class="icon-btn" @click="copyToken">{{ tokenCopied ? '✓' : t('settings.token.copy') }}</button>
-      </div>
-      <div class="token-row" style="margin-top:8px">
-        <input
-          v-model="customToken"
-          type="text"
-          class="token-input"
-          :placeholder="t('settings.token.custom')"
-        />
-        <button class="icon-btn" @click="saveToken" :disabled="customToken.trim().length < 8 || tokenSaving">{{ t('settings.token.save') }}</button>
-        <button class="icon-btn danger" @click="regenerateToken">{{ t('settings.token.regenerate') }}</button>
+        <button class="icon-btn" @click="tokenVisible = !tokenVisible" :title="tokenVisible ? t('settings.token.hide') : t('settings.token.show')"><EyeOff v-if="tokenVisible" :size="14" /><Eye v-else :size="14" /></button>
+        <template v-if="!tokenEditing">
+          <button class="icon-btn" @click="copyToken" :title="t('settings.token.copy')"><Check v-if="tokenCopied" :size="14" /><Copy v-else :size="14" /></button>
+          <button class="icon-btn" @click="startEditToken" :title="t('settings.token.edit')"><Pencil :size="14" /></button>
+          <button class="icon-btn danger" @click="regenerateToken" :title="t('settings.token.regenerate')"><RefreshCw :size="14" /></button>
+        </template>
+        <template v-else>
+          <button class="icon-btn" @click="saveToken" :disabled="customToken.trim().length < 8 || tokenSaving" :title="t('settings.token.save')"><Save :size="14" /></button>
+          <button class="icon-btn" @click="cancelEditToken" :title="t('settings.token.cancel')"><X :size="14" /></button>
+        </template>
       </div>
       <p class="settings-hint">{{ t('settings.token.hint') }}</p>
       <p v-if="tokenError" class="token-error">{{ tokenError }}</p>
@@ -118,7 +119,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
+import { Eye, EyeOff, Copy, Check, Pencil, RefreshCw, Save, X } from 'lucide-vue-next'
 import { useSettings } from '../../composables/useSettings'
 import { useI18n } from '../../composables/useI18n'
 import { themes } from '../../themes'
@@ -162,6 +164,8 @@ const tokenCopied = ref(false)
 const customToken = ref('')
 const tokenSaving = ref(false)
 const tokenError = ref('')
+const tokenEditing = ref(false)
+const tokenInputRef = ref<HTMLInputElement | null>(null)
 
 async function copyToken() {
   await copyToClipboard(currentToken.value)
@@ -169,10 +173,24 @@ async function copyToken() {
   setTimeout(() => { tokenCopied.value = false }, 2000)
 }
 
+function startEditToken() {
+  customToken.value = ''
+  tokenEditing.value = true
+  tokenError.value = ''
+  nextTick(() => tokenInputRef.value?.focus())
+}
+
+function cancelEditToken() {
+  customToken.value = ''
+  tokenEditing.value = false
+  tokenError.value = ''
+}
+
 async function saveToken() {
   const val = customToken.value.trim()
   if (val.length < 8) return
   await applyNewToken(val)
+  tokenEditing.value = false
   customToken.value = ''
 }
 
