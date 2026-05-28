@@ -42,6 +42,10 @@ pub struct Settings {
     pub notification: NotificationConfig,
     #[serde(default)]
     pub open_api: OpenApiConfig,
+    #[serde(skip)]
+    pub auth_token: String,
+    #[serde(default = "default_ip_whitelist")]
+    pub ip_whitelist: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -226,6 +230,10 @@ impl Default for MonitorConfig {
     }
 }
 
+fn default_ip_whitelist() -> Vec<String> {
+    vec!["127.0.0.1".into(), "::1".into()]
+}
+
 fn default_locale() -> String {
     "zh".into()
 }
@@ -369,6 +377,8 @@ impl Default for Settings {
             monitor: MonitorConfig::default(),
             notification: NotificationConfig::default(),
             open_api: OpenApiConfig::default(),
+            auth_token: String::new(),
+            ip_whitelist: default_ip_whitelist(),
         }
     }
 }
@@ -381,6 +391,20 @@ fn config_dir() -> PathBuf {
 
 fn settings_path() -> PathBuf {
     config_dir().join("settings.json")
+}
+
+fn token_path() -> PathBuf {
+    config_dir().join("token")
+}
+
+pub fn load_token() -> Option<String> {
+    std::fs::read_to_string(token_path()).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+pub fn save_token(token: &str) -> Result<(), String> {
+    let dir = config_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::write(token_path(), token).map_err(|e| e.to_string())
 }
 
 fn bg_image_path() -> PathBuf {
@@ -407,6 +431,10 @@ fn save_settings(settings: &Settings) -> Result<(), String> {
     let json = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
     std::fs::write(settings_path(), json).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+pub fn save_settings_sync(settings: &Settings) -> Result<(), String> {
+    save_settings(settings)
 }
 
 pub type SettingsState = Arc<RwLock<Settings>>;
