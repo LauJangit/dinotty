@@ -1,0 +1,35 @@
+services:
+  dinotty:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: dinotty:latest
+    container_name: dinotty
+    restart: unless-stopped
+
+    ports:
+      - "${DINOTTY_PORT:-8999}:8999"
+
+    environment:
+      - DINOTTY_TOKEN=${DINOTTY_TOKEN:-}
+      - DINOTTY_PORT=8999
+      - RUST_LOG=${RUST_LOG:-info}
+      - TZ=${TZ:-UTC}
+
+    volumes:
+      - dinotty-data:/home/dinotty
+      - ${WORKSPACE_DIR:-./workspace}:/workspace
+
+    security_opt:
+      - no-new-privileges:true
+
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8999/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  dinotty-data:
+    driver: local
