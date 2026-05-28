@@ -334,13 +334,20 @@ pub async fn post_input(
     }
     drop(s);
 
-    let pane_id = req.pane_id.unwrap_or_else(|| {
-        manager.active_pane_id.lock().unwrap().clone().unwrap_or_default()
+    let pane_id = req.pane_id.clone().or_else(|| {
+        manager.active_pane_id.lock().unwrap().clone()
     });
 
-    if pane_id.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "no active pane" })));
-    }
+    let pane_id = match pane_id {
+        Some(id) if manager.sessions.contains_key(&id) => id,
+        _ => {
+            // Fall back to first available session
+            match manager.sessions.iter().next() {
+                Some(entry) => entry.key().clone(),
+                None => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "no active pane" }))),
+            }
+        }
+    };
 
     match manager.sessions.get(&pane_id) {
         Some(session) => {

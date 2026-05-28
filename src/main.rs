@@ -2,7 +2,7 @@ use dinotty_server::{auth, session, settings, ws, proxy, workspace, file_watcher
 
 use axum::{
     body::Body,
-    extract::{Path, State},
+    extract::{ConnectInfo, Path, State},
     http::{header, HeaderValue, Response, StatusCode},
     middleware,
     response::{Html, IntoResponse},
@@ -23,13 +23,26 @@ use crate::notification::NotificationBroadcast;
 use crate::history::HistoryState;
 use crate::plugin::PluginManagerState;
 
-async fn index(State(state): State<AppState>) -> impl IntoResponse {
+async fn index(
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
     let content = StaticFiles::get("index.html")
         .expect("index.html must exist in frontend/dist/");
     let html = String::from_utf8_lossy(&content.data);
+
+    // Only embed token if ?token=xxx matches the server token
+    let stored_token = state.auth_token.read().await.clone();
+    let token_value = params.get("token")
+        .filter(|t| {
+            urlencoding::decode(t).map(|d| d == stored_token).unwrap_or(false)
+        })
+        .map(|_| stored_token)
+        .unwrap_or_default();
+
     let tag = format!(
         "<meta name=\"auth-token\" content=\"{}\">\n</head>",
-        &*state.auth_token
+        token_value
     );
     let html = html.replace("</head>", &tag);
     (
@@ -50,7 +63,7 @@ pub struct AppState {
     pub monitor: MonitorState,
     pub notifier: Arc<NotificationBroadcast>,
     pub history: HistoryState,
-    pub auth_token: Arc<String>,
+    pub auth_token: Arc<tokio::sync::RwLock<String>>,
     pub port: u16,
     pub plugins: PluginManagerState,
 }
@@ -117,6 +130,39 @@ async fn static_handler(Path(path): Path<String>) -> impl IntoResponse {
     }
 }
 
+async fn manifest_handler() -> impl IntoResponse {
+    match StaticFiles::get("manifest.json") {
+        Some(content) => {
+            Response::builder()
+                .header(header::CONTENT_TYPE, "application/manifest+json")
+                .body(Body::from(content.data.into_owned()))
+                .unwrap()
+        }
+        None => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::from("not found"))
+            .unwrap(),
+    }
+}
+
+async fn icon_handler(Path(path): Path<String>) -> impl IntoResponse {
+    let lookup = format!("icons/{}", path);
+    match StaticFiles::get(&lookup) {
+        Some(content) => {
+            let mime = mime_guess::from_path(&lookup).first_or_octet_stream();
+            Response::builder()
+                .header(header::CONTENT_TYPE, mime.as_ref())
+                .header(header::CACHE_CONTROL, "public, max-age=86400")
+                .body(Body::from(content.data.into_owned()))
+                .unwrap()
+        }
+        None => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::from("not found"))
+            .unwrap(),
+    }
+}
+
 fn parse_port() -> u16 {
     let args: Vec<String> = std::env::args().collect();
     let mut i = 1;
@@ -147,6 +193,29 @@ async fn server_info(State(state): State<AppState>) -> Json<serde_json::Value> {
     }))
 }
 
+#[derive(serde::Deserialize)]
+struct UpdateTokenRequest {
+    token: String,
+}
+
+async fn update_token(
+    State(state): State<AppState>,
+    Json(body): Json<UpdateTokenRequest>,
+) -> impl IntoResponse {
+    let new_token = body.token.trim().to_string();
+    if new_token.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "token cannot be empty"}))).into_response();
+    }
+    // Update in-memory token
+    *state.auth_token.write().await = new_token.clone();
+    // Persist to dedicated token file
+    if let Err(e) = settings::save_token(&new_token) {
+        tracing::error!("Failed to persist token: {}", e);
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "failed to save"}))).into_response();
+    }
+    StatusCode::OK.into_response()
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::registry()
@@ -160,14 +229,6 @@ async fn main() {
     let manager = Arc::new(SessionManager::new());
     manager.start_cleanup_task();
 
-    let auth_token = {
-        let mut buf = [0u8; 32];
-        rand::fill(&mut buf);
-        let token: String = buf.iter().map(|b| format!("{:02x}", b)).collect();
-        Arc::new(token)
-    };
-    tracing::info!("Auth token: {}", &*auth_token);
-
     let monitor_state = MonitorState::new();
     monitor_state.clone().start_collector();
 
@@ -175,6 +236,22 @@ async fn main() {
     let settings_state = settings::create_settings_state();
     notifier.set_settings(settings_state.clone());
     let history_state = HistoryState::new();
+
+    // Load token from dedicated file, fall back to env var, then generate
+    let initial_token = settings::load_token()
+        .or_else(|| std::env::var("DINOTTY_TOKEN").ok())
+        .unwrap_or_else(|| {
+            let mut buf = [0u8; 32];
+            rand::fill(&mut buf);
+            buf.iter().map(|b| format!("{:02x}", b)).collect()
+        });
+    if settings::load_token().is_none() {
+        if let Err(e) = settings::save_token(&initial_token) {
+            tracing::warn!("Failed to persist auth token: {}", e);
+        }
+    }
+    tracing::info!("Auth token loaded (length={})", initial_token.len());
+    let auth_token = Arc::new(tokio::sync::RwLock::new(initial_token));
 
     let plugins = Arc::new(plugin::PluginManager::new());
     plugins.scan();
@@ -227,6 +304,7 @@ async fn main() {
         .route("/api/history", get(history::get_history).delete(history::delete_history))
         .route("/api/proxy", any(proxy::external_proxy_handler))
         .route("/api/info", get(server_info))
+        .route("/api/token", put(update_token))
         // Plugin management
         .route("/api/plugins", get(plugin::list_plugins))
         .route("/api/plugins/dev-link", post(plugin::dev_link_plugin))
@@ -249,10 +327,27 @@ async fn main() {
         .route("/preview/:port/", any(proxy::proxy_handler_root))
         .route("/preview/:port/*path", any(proxy::proxy_handler_wildcard))
         .route("/assets/*path", get(static_handler))
+        .route("/icons/*path", get(icon_handler))
+        .route("/manifest.json", get(manifest_handler))
+        .route("/logo.png", get(|| async {
+            match StaticFiles::get("logo.png") {
+                Some(content) => {
+                    Response::builder()
+                        .header(header::CONTENT_TYPE, "image/png")
+                        .header(header::CACHE_CONTROL, "public, max-age=86400")
+                        .body(Body::from(content.data.into_owned()))
+                        .unwrap()
+                }
+                None => Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body(Body::from("not found"))
+                    .unwrap(),
+            }
+        }))
         .route("/", get(index))
-        .layer(middleware::from_fn(move |req, next| {
-            let token = auth_token.clone();
-            async move { auth::auth_middleware(req, next, &token).await }
+        .layer(middleware::from_fn_with_state(state.clone(), |State(s): State<AppState>, ConnectInfo(addr): ConnectInfo<SocketAddr>, req, next| async move {
+            let token = s.auth_token.read().await.clone();
+            auth::auth_middleware(req, next, &token, &s.settings, addr.ip()).await
         }))
         .layer(CorsLayer::permissive())
         .with_state(state);
@@ -261,5 +356,5 @@ async fn main() {
     tracing::info!("Listening on http://0.0.0.0:{}", port);
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await.unwrap();
 }

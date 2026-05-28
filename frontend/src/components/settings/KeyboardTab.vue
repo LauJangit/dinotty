@@ -134,19 +134,39 @@
         </label>
       </div>
 
-      <div v-if="settings.open_api.enabled" class="open-api-test">
-        <label class="ak-field">
-          <span>pane_id ({{ t('settings.keyboard.openApiPaneHint') }})</span>
-          <input v-model="openApiPaneId" class="shortcut-input" placeholder="(active pane)" />
-        </label>
-        <label class="ak-field">
-          <span>data</span>
-          <textarea v-model="openApiData" class="shortcut-input ak-send-textarea" rows="2" spellcheck="false" placeholder="hello\n" />
-        </label>
-        <div class="open-api-actions">
-          <button class="settings-save" @click="sendOpenApiTest" :disabled="!openApiData">{{ t('settings.keyboard.openApiSend') }}</button>
-          <span v-if="openApiResult" class="open-api-result" :class="{ error: openApiError }">{{ openApiResult }}</span>
+      <div v-if="settings.open_api.enabled" class="api-test">
+        <div class="api-method-row">
+          <span class="method-badge">POST</span>
+          <span class="api-url">/api/input</span>
+          <div class="mode-tabs">
+            <button :class="{ active: openApiMode === 'form' }" @click="switchOpenApiMode('form')">Form</button>
+            <button :class="{ active: openApiMode === 'raw' }" @click="switchOpenApiMode('raw')">Raw</button>
+          </div>
         </div>
+
+        <template v-if="openApiMode === 'form'">
+          <div class="api-field">
+            <label>pane_id</label>
+            <input type="text" v-model="openApiPaneId" :placeholder="t('settings.keyboard.openApiPaneHint')" />
+          </div>
+          <div class="api-field">
+            <label>data <span class="required">*</span></label>
+            <input type="text" v-model="openApiData" placeholder="hello\n" />
+          </div>
+        </template>
+
+        <template v-else>
+          <textarea class="raw-editor" v-model="openApiRawJson" rows="5" spellcheck="false" />
+          <span v-if="openApiRawError" class="api-result err">{{ openApiRawError }}</span>
+        </template>
+
+        <div class="api-actions">
+          <button class="send-btn" :disabled="!openApiCanSend || openApiSending" @click="sendOpenApiTest">
+            {{ openApiSending ? '...' : '▶ Send' }}
+          </button>
+          <span v-if="openApiResult" class="api-result" :class="openApiResultOk ? 'ok' : 'err'">{{ openApiResult }}</span>
+        </div>
+
         <details class="open-api-curl">
           <summary>curl {{ t('settings.keyboard.openApiExample') }}</summary>
           <code class="open-api-curl-code">curl -X POST {{ apiBaseUrl }}/api/input \
@@ -172,33 +192,75 @@ const { t } = useI18n()
 
 const openApiPaneId = ref('')
 const openApiData = ref('')
+const openApiMode = ref<'form' | 'raw'>('form')
+const openApiRawJson = ref('{\n  "data": "hello\\n"\n}')
+const openApiRawError = ref('')
 const openApiResult = ref('')
-const openApiError = ref(false)
+const openApiResultOk = ref(false)
+const openApiSending = ref(false)
 const apiBaseUrl = ref('')
 getApiBase().then(b => { apiBaseUrl.value = b })
 
+function unescapeData(s: string): string {
+  return s.replace(/\\n/g, '\n').replace(/\\r/g, '\r').replace(/\\t/g, '\t').replace(/\\\\/g, '\\')
+}
+
+const openApiCanSend = computed(() => {
+  if (openApiMode.value === 'form') return !!openApiData.value
+  try { JSON.parse(openApiRawJson.value); return true } catch { return false }
+})
+
+function switchOpenApiMode(mode: 'form' | 'raw') {
+  if (mode === openApiMode.value) return
+  if (mode === 'raw') {
+    const obj: Record<string, string> = { data: openApiData.value }
+    if (openApiPaneId.value) obj.pane_id = openApiPaneId.value
+    openApiRawJson.value = JSON.stringify(obj, null, 2)
+  } else {
+    try {
+      const obj = JSON.parse(openApiRawJson.value)
+      openApiPaneId.value = obj.pane_id ?? ''
+      openApiData.value = obj.data ?? ''
+    } catch {}
+  }
+  openApiRawError.value = ''
+  openApiMode.value = mode
+}
+
 async function sendOpenApiTest() {
   openApiResult.value = ''
-  openApiError.value = false
+  openApiResultOk.value = false
+  openApiSending.value = true
   try {
-    const body: Record<string, string> = { data: openApiData.value }
-    if (openApiPaneId.value) body.pane_id = openApiPaneId.value
+    let payload: Record<string, string>
+    if (openApiMode.value === 'form') {
+      payload = { data: unescapeData(openApiData.value) }
+      if (openApiPaneId.value) payload.pane_id = openApiPaneId.value
+    } else {
+      try {
+        payload = JSON.parse(openApiRawJson.value)
+      } catch (e: any) {
+        openApiRawError.value = e.message
+        openApiSending.value = false
+        return
+      }
+    }
     const res = await authFetch(apiUrl('/api/input'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify(payload),
     })
     const json = await res.json()
     if (res.ok) {
+      openApiResultOk.value = true
       openApiResult.value = 'OK'
     } else {
-      openApiError.value = true
       openApiResult.value = json.error || `HTTP ${res.status}`
     }
   } catch (e: any) {
-    openApiError.value = true
     openApiResult.value = e.message || 'error'
   }
+  openApiSending.value = false
 }
 
 const actionRows = computed(() => {
@@ -523,3 +585,141 @@ function unescapeFromDisplay(s: string): string {
   })
 }
 </script>
+
+<style scoped>
+.api-test {
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-secondary, rgba(255,255,255,0.03));
+}
+.api-method-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border, #333);
+}
+.mode-tabs {
+  margin-left: auto;
+  display: flex;
+  border: 1px solid var(--border, #333);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.mode-tabs button {
+  background: none;
+  border: none;
+  color: var(--fg-muted, #999);
+  font-size: 11px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+.mode-tabs button.active {
+  background: var(--fg-muted, #555);
+  color: var(--bg, #111);
+}
+.raw-editor {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px;
+  border: 1px solid var(--border, #333);
+  border-radius: 4px;
+  background: var(--bg, #111);
+  color: var(--fg, #ccc);
+  font-family: monospace;
+  font-size: 12px;
+  resize: vertical;
+  line-height: 1.5;
+}
+.method-badge {
+  background: #49cc90;
+  color: #000;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 3px;
+  letter-spacing: 0.5px;
+}
+.api-url {
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--fg, #ccc);
+}
+.api-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.api-field label {
+  width: 110px;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-family: monospace;
+  color: var(--fg-muted, #999);
+}
+.api-field .required {
+  color: #ef4444;
+}
+.api-field input,
+.api-field select {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--border, #333);
+  border-radius: 4px;
+  background: var(--bg, #111);
+  color: var(--fg, #ccc);
+  font-size: 12px;
+  font-family: monospace;
+}
+.api-field input::placeholder {
+  color: var(--fg-muted, #555);
+}
+.api-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 4px;
+}
+.send-btn {
+  background: #49cc90;
+  color: #000;
+  border: none;
+  border-radius: 4px;
+  padding: 5px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.send-btn:hover { opacity: 0.85; }
+.send-btn:disabled { opacity: 0.4; cursor: default; }
+.api-result {
+  font-size: 12px;
+  font-family: monospace;
+}
+.api-result.ok { color: #49cc90; }
+.api-result.err { color: #ef4444; }
+.open-api-curl {
+  font-size: 11px;
+  color: var(--fg-muted, #999);
+  margin-top: 4px;
+}
+.open-api-curl summary {
+  cursor: pointer;
+}
+.open-api-curl-code {
+  display: block;
+  margin-top: 6px;
+  padding: 8px;
+  background: var(--bg, #111);
+  border: 1px solid var(--border, #333);
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+</style>
