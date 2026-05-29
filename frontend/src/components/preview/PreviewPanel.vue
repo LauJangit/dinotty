@@ -7,6 +7,11 @@
     ></div>
     <div class="preview-panel-inner">
       <div class="preview-toolbar">
+        <div class="preview-mode-switch">
+          <button type="button" :class="{ active: kind === 'web' }" @click="switchToWeb" :title="t('previewPanel.switchWeb')"><Globe :size="14" /></button>
+          <button type="button" :class="{ active: kind === 'files' }" @click="switchToFiles" :title="t('previewPanel.switchFiles')"><FolderOpen :size="14" /></button>
+        </div>
+        <div class="preview-toolbar-sep"></div>
         <button type="button" :disabled="!canGoBack" @click="goBack" title="Back"><ChevronLeft :size="14" /></button>
         <button type="button" :disabled="!canGoForward" @click="goForward" title="Forward"><ChevronRight :size="14" /></button>
         <button type="button" @click="refresh" title="Refresh"><RotateCw :size="14" /></button>
@@ -62,7 +67,7 @@ import FileWorkspacePreview from './FileWorkspacePreview.vue'
 import { isWebPreviewInput, normalizeWebUrl, urlToPreviewSrc } from '../../utils/previewRouting'
 import { getApiBase, getAuthToken } from '../../composables/apiBase'
 import { useI18n } from '../../composables/useI18n'
-import { ChevronLeft, ChevronRight, RotateCw, ArrowRight, ExternalLink, PanelLeftClose, PanelLeftOpen, Upload, Download, X } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, RotateCw, ArrowRight, ExternalLink, PanelLeftClose, PanelLeftOpen, Upload, Download, X, Globe, FolderOpen } from 'lucide-vue-next'
 import { isNarrowViewport } from '../../utils/viewport'
 import { usePaneResize } from '../../composables/usePaneResize'
 
@@ -218,6 +223,25 @@ async function restoreFilesPreview() {
   await nextTick()
   await nextTick()
   filesRef.value?.openFromTerminal(props.address)
+}
+
+function switchToWeb() {
+  if (props.kind === 'web') return
+  emit('update:kind', 'web')
+  if (!props.webUrl) {
+    nextTick(() => addressInputRef.value?.focus())
+  }
+}
+
+function switchToFiles() {
+  if (props.kind === 'files') return
+  treeCollapsed.value = false
+  emit('update:kind', 'files')
+  void (async () => {
+    await nextTick()
+    await nextTick()
+    if (props.address) filesRef.value?.openFromTerminal(props.address)
+  })()
 }
 
 function go() {
@@ -378,6 +402,44 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+.preview-mode-switch {
+  display: flex;
+  align-items: center;
+  background: var(--bg, #1a1a1a);
+  border: 1px solid var(--border, #333);
+  border-radius: 4px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.preview-mode-switch button {
+  background: none;
+  border: none;
+  color: var(--fg-muted, #888);
+  padding: 2px 7px;
+  cursor: pointer;
+  border-radius: 0;
+  line-height: 1;
+}
+
+.preview-mode-switch button:hover:not(.active) {
+  color: var(--fg, #ccc);
+  background: var(--tab-hover-bg, #333);
+}
+
+.preview-mode-switch button.active {
+  color: var(--accent, #89b4fa);
+  background: var(--tab-active-bg, #2a2a2a);
+}
+
+.preview-toolbar-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--border, #333);
+  flex-shrink: 0;
+  margin: 0 2px;
 }
 
 .preview-toolbar {
