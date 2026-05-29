@@ -1,0 +1,13 @@
+{
+  "id": "skill-manager",
+  "name": "Skill Manager",
+  "version": "1.0.0",
+  "description": "管理 Claude Code Agent Skills (~/.claude/skills/)",
+  "icon": "zap",
+  "entry": "./dist/main.js",
+  "styles": "./styles.css",
+  "commands": [
+    { "id": "skill-manager.open", "title": "打开 Skill Manager" },
+    { "id": "skill-manager.new", "title": "新建 Skill" }
+  ]
+}

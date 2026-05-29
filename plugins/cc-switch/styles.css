@@ -387,6 +387,9 @@
   text-align: right;
   color: var(--text-muted, #666);
   font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Stats header */
@@ -408,6 +411,9 @@
   text-align: right;
   color: var(--text-muted, #555);
   font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Danger-tinted ghost button for reset */
@@ -552,6 +558,79 @@
   font-size: 11px;
   color: var(--text-muted, #777);
   font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+/* Mobile responsive */
+@media (max-width: 520px) {
+  .cc-switch {
+    padding: 10px;
+  }
+
+  /* Header: wrap buttons */
+  .cs-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .cs-header-actions {
+    flex-wrap: wrap;
+  }
+
+  /* Stats header: stack vertically */
+  .cs-stats-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  /* Stats row: hide token and first-used on mobile, let bar shrink */
+  .cs-stats-token,
+  .cs-stats-first {
+    display: none;
+  }
+  .cs-stats-name {
+    width: 80px;
+  }
+  .cs-stats-count {
+    width: 44px;
+    font-size: 11px;
+  }
+  .cs-stats-last {
+    width: 64px;
+    font-size: 10px;
+  }
+
+  /* Card: stack info + actions vertically */
+  .cs-card {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .cs-card-actions {
+    width: 100%;
+    justify-content: flex-end;
+    opacity: 1;
+  }
+
+  /* Form: single column */
+  .cs-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Token summary: 2-col grid */
+  .cs-token-summary {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  /* Request log columns: hide project */
+  .cs-req-col-proj {
+    display: none;
+  }
+  .cs-req-col-time {
+    width: 60px;
+  }
+  .cs-req-col-alias {
+    width: 70px;
+  }
 }
 
 /* Request log */
