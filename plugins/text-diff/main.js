@@ -8,7 +8,7 @@ function activate(context) {
       const left = ref('');
       const right = ref('');
       const showResult = ref(false);
-      const sideBySide = ref(false);
+      const sideBySide = ref(true);
 
       const diff = computed(() => {
         if (!showResult.value) return null;
@@ -104,93 +104,64 @@ function activate(context) {
   return { component };
 }
 
-// Myers diff algorithm (simple O(ND) implementation)
 function computeDiff(a, b) {
-  const aLines = a.split('\n');
-  const bLines = b.split('\n');
+  const aLines = splitLines(a);
+  const bLines = splitLines(b);
   const n = aLines.length;
   const m = bLines.length;
 
-  if (n + m > 50000) {
+  if (n === 0 && m === 0) {
+    return [];
+  }
+
+  if (n + m > 50000 || n * m > 2_000_000) {
     return [{ type: 'ctx', left: 1, right: 1, text: '(文本过长，仅显示简单对比)' }];
   }
 
-  const max = n + m;
-  const vSize = 2 * max + 1;
-  const v = new Int32Array(vSize).fill(-1);
-  const trace = [];
-
-  v[max + 1] = 0;
-  for (let d = 0; d <= max; d++) {
-    const vCopy = v.slice();
-    trace.push(vCopy);
-    for (let k = -d; k <= d; k += 2) {
-      let x;
-      if (k === -d || (k !== d && v[max + k - 1] < v[max + k + 1])) {
-        x = v[max + k + 1];
-      } else {
-        x = v[max + k - 1] + 1;
-      }
-      let y = x - k;
-      while (x < n && y < m && aLines[x] === bLines[y]) {
-        x++; y++;
-      }
-      v[max + k] = x;
-      if (x >= n && y >= m) {
-        return buildResult(trace, max, aLines, bLines);
-      }
+  const dp = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = aLines[i] === bLines[j]
+        ? dp[i + 1][j + 1] + 1
+        : Math.max(dp[i + 1][j], dp[i][j + 1]);
     }
-  }
-  return [];
-}
-
-function buildResult(trace, max, aLines, bLines) {
-  let x = aLines.length;
-  let y = bLines.length;
-  const edits = [];
-
-  for (let d = trace.length - 1; d > 0; d--) {
-    const v = trace[d - 1];
-    const k = x - y;
-    let prevK;
-    if (k === -d || (k !== d && v[max + k - 1] < v[max + k + 1])) {
-      prevK = k + 1;
-    } else {
-      prevK = k - 1;
-    }
-    const prevX = v[max + prevK];
-    const prevY = prevX - prevK;
-
-    while (x > prevX && y > prevY) {
-      x--; y--;
-      edits.unshift({ type: 'ctx', aIdx: x, bIdx: y });
-    }
-    if (x > prevX) {
-      x--;
-      edits.unshift({ type: 'del', aIdx: x });
-    } else if (y > prevY) {
-      y--;
-      edits.unshift({ type: 'add', bIdx: y });
-    }
-  }
-  while (x > 0 && y > 0) {
-    x--; y--;
-    edits.unshift({ type: 'ctx', aIdx: x, bIdx: y });
   }
 
   const result = [];
+  let i = 0, j = 0;
   let leftNum = 0, rightNum = 0;
-  for (const edit of edits) {
-    if (edit.type === 'ctx') {
-      leftNum++; rightNum++;
-      result.push({ type: 'ctx', left: leftNum, right: rightNum, text: aLines[edit.aIdx] });
-    } else if (edit.type === 'del') {
+
+  while (i < n && j < m) {
+    if (aLines[i] === bLines[j]) {
       leftNum++;
-      result.push({ type: 'del', left: leftNum, text: aLines[edit.aIdx] });
+      rightNum++;
+      result.push({ type: 'ctx', left: leftNum, right: rightNum, text: aLines[i] });
+      i++;
+      j++;
+      continue;
+    }
+
+    if (dp[i + 1][j] >= dp[i][j + 1]) {
+      leftNum++;
+      result.push({ type: 'del', left: leftNum, text: aLines[i] });
+      i++;
     } else {
       rightNum++;
-      result.push({ type: 'add', right: rightNum, text: bLines[edit.bIdx] });
+      result.push({ type: 'add', right: rightNum, text: bLines[j] });
+      j++;
     }
+  }
+
+  while (i < n) {
+    leftNum++;
+    result.push({ type: 'del', left: leftNum, text: aLines[i] });
+    i++;
+  }
+
+  while (j < m) {
+    rightNum++;
+    result.push({ type: 'add', right: rightNum, text: bLines[j] });
+    j++;
   }
 
   // Inline char highlighting for adjacent add/del pairs
@@ -203,6 +174,10 @@ function buildResult(trace, max, aLines, bLines) {
   }
 
   return result;
+}
+
+function splitLines(text) {
+  return text === '' ? [] : text.split('\n');
 }
 
 function charDiff(a, b) {

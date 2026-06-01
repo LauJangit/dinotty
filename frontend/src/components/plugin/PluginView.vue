@@ -1,10 +1,13 @@
 <template>
   <div class="plugin-view">
     <component
-      v-if="plugin.state === 'active' && plugin.exports?.component"
+      v-if="plugin.state === 'active' && plugin.exports?.component && !hasError"
       :is="plugin.exports.component"
       :api="api"
     />
+    <div v-else-if="hasError" class="plugin-error">
+      <p>Plugin runtime error: {{ errorMsg }}</p>
+    </div>
     <div v-else-if="plugin.state === 'error'" class="plugin-error">
       <p>Plugin load failed: {{ plugin.error }}</p>
     </div>
