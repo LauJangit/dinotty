@@ -14,6 +14,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
+use tokio::sync::Mutex as TokioMutex;
 
 use crate::session::SessionManager;
 
@@ -93,12 +94,41 @@ pub struct SpawnQuery {
     pub args: String,
 }
 
+#[derive(Deserialize)]
+pub struct ProcessStartRequest {
+    pub args: Vec<String>,
+    pub cwd: Option<String>,
+    pub env: Option<HashMap<String, String>>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProcessState {
+    Running,
+    Exited,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ProcessInfo {
+    pub pid: u32,
+    pub command: String,
+    pub args: Vec<String>,
+    pub state: ProcessState,
+    pub exit_code: Option<i32>,
+}
+
+pub struct ManagedProcess {
+    pub info: ProcessInfo,
+    pub child: Arc<TokioMutex<Option<tokio::process::Child>>>,
+}
+
 // ─── PluginManager ────────────────────────────────────────────────────────────
 
 pub struct PluginManager {
     pub plugin_dir: PathBuf,
     pub data_dir: PathBuf,
     pub registry: DashMap<String, PluginInfo>,
+    pub processes: DashMap<String, DashMap<String, ManagedProcess>>,
 }
 
 pub type PluginManagerState = Arc<PluginManager>;
@@ -110,6 +140,19 @@ impl PluginManager {
             plugin_dir: home.join(".dinotty/plugins"),
             data_dir: home.join(".dinotty/plugin-data"),
             registry: DashMap::new(),
+            processes: DashMap::new(),
+        }
+    }
+
+    /// Kill all managed processes for a given plugin.
+    pub async fn kill_plugin_processes(&self, plugin_id: &str) {
+        if let Some((_, proc_map)) = self.processes.remove(plugin_id) {
+            for entry in proc_map.iter() {
+                let mut child = entry.value().child.lock().await;
+                if let Some(ref mut c) = *child {
+                    let _ = c.kill().await;
+                }
+            }
         }
     }
 
@@ -780,6 +823,9 @@ impl PluginManager {
     }
 
     pub async fn delete(&self, id: &str, keep_data: bool) -> Result<(), String> {
+        // Kill all managed processes before removing the plugin
+        self.kill_plugin_processes(id).await;
+
         let plugin_path = self.plugin_dir.join(id);
         if plugin_path.exists() {
             std::fs::remove_dir_all(&plugin_path).map_err(|e| e.to_string())?;
@@ -843,4 +889,136 @@ pub async fn dev_link_plugin(
     );
 
     Json(manifest).into_response()
+}
+
+// ─── Process Management Handlers ─────────────────────────────────────────────
+
+pub async fn plugin_process_start(
+    Path(id): Path<String>,
+    State((pm, manager)): State<(PluginManagerState, Arc<SessionManager>)>,
+    Json(body): Json<ProcessStartRequest>,
+) -> Response {
+    let info = match pm.registry.get(&id) {
+        Some(i) => i,
+        None => return plugin_err(StatusCode::NOT_FOUND, "plugin not found"),
+    };
+    let bin = match &info.manifest.bin {
+        Some(b) if b.mode == "cli" => b,
+        _ => return plugin_err(StatusCode::BAD_REQUEST, "plugin has no CLI bin"),
+    };
+
+    let bin_path = pm.plugin_dir.join(&id).join(&bin.entry);
+    let mut cmd = Command::new(&bin_path);
+    cmd.args(&body.args);
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    cmd.kill_on_drop(true);
+    if let Some(ref cwd) = body.cwd {
+        cmd.current_dir(cwd);
+    }
+    if let Some(ref env) = body.env {
+        cmd.envs(env);
+    }
+
+    let child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => return plugin_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    };
+
+    let Some(pid) = child.id() else {
+        return plugin_err(StatusCode::INTERNAL_SERVER_ERROR, "failed to get process id");
+    };
+    let proc_id = pid.to_string();
+    let child_arc = Arc::new(TokioMutex::new(Some(child)));
+
+    let managed = ManagedProcess {
+        info: ProcessInfo {
+            pid,
+            command: bin_path.to_string_lossy().into_owned(),
+            args: body.args.clone(),
+            state: ProcessState::Running,
+            exit_code: None,
+        },
+        child: child_arc.clone(),
+    };
+
+    // Insert into registry
+    pm.processes
+        .entry(id.clone())
+        .or_insert_with(DashMap::new)
+        .insert(proc_id.clone(), managed);
+
+    // Spawn a task to monitor process exit
+    let pm_clone = Arc::clone(&pm);
+    let manager_clone = Arc::clone(&manager);
+    let plugin_id = id.clone();
+    tokio::spawn(async move {
+        let exit_code = {
+            let mut child_guard = child_arc.lock().await;
+            if let Some(ref mut c) = *child_guard {
+                c.wait().await.ok().and_then(|s| s.code())
+            } else {
+                None
+            }
+        };
+
+        // Update state in registry
+        if let Some(proc_map) = pm_clone.processes.get(&plugin_id) {
+            if let Some(mut entry) = proc_map.get_mut(&proc_id) {
+                entry.info.state = ProcessState::Exited;
+                entry.info.exit_code = exit_code;
+            }
+        }
+
+        // Broadcast exit event
+        manager_clone.broadcast_sync(&crate::session::SyncMsg::ProcessExited {
+            plugin_id,
+            pid,
+            exit_code,
+        });
+    });
+
+    Json(serde_json::json!({
+        "pid": pid,
+        "command": bin_path.to_string_lossy(),
+        "args": body.args,
+        "state": "running"
+    }))
+    .into_response()
+}
+
+pub async fn plugin_process_list(
+    Path(id): Path<String>,
+    State(pm): State<PluginManagerState>,
+) -> Response {
+    let Some(proc_map) = pm.processes.get(&id) else {
+        return Json(serde_json::json!([])).into_response();
+    };
+    let list: Vec<ProcessInfo> = proc_map.iter().map(|e| e.value().info.clone()).collect();
+    Json(list).into_response()
+}
+
+pub async fn plugin_process_stop(
+    Path((id, pid_str)): Path<(String, String)>,
+    State(pm): State<PluginManagerState>,
+) -> Response {
+    let Some(proc_map) = pm.processes.get(&id) else {
+        return plugin_err(StatusCode::NOT_FOUND, "no processes for plugin");
+    };
+    let Some(entry) = proc_map.get_mut(&pid_str) else {
+        return plugin_err(StatusCode::NOT_FOUND, "process not found");
+    };
+    let mut child = entry.child.lock().await;
+    if let Some(ref mut c) = *child {
+        let _ = c.kill().await;
+    }
+    StatusCode::NO_CONTENT.into_response()
+}
+
+pub async fn plugin_process_stop_all(
+    Path(id): Path<String>,
+    State(pm): State<PluginManagerState>,
+) -> Response {
+    pm.kill_plugin_processes(&id).await;
+    StatusCode::NO_CONTENT.into_response()
 }

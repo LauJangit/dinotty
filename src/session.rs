@@ -136,6 +136,7 @@ pub enum SyncMsg {
     TabClosed { pane_id: String },
     TabActivated { pane_id: String },
     PluginChanged { plugin_id: String, change: String },
+    ProcessExited { plugin_id: String, pid: u32, exit_code: Option<i32> },
 }
 
 #[derive(Serialize, Clone)]

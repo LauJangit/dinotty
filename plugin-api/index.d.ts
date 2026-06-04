@@ -42,6 +42,13 @@ export interface PluginContext {
     notify(message: string, level?: 'info' | 'warn' | 'error'): void
     confirm(message: string): Promise<boolean>
   }
+
+  process: {
+    start(args: string[], options?: ProcessStartOptions): Promise<ProcessHandle>
+    list(): Promise<ProcessInfo[]>
+    stop(pid: number): Promise<void>
+    stopAll(): Promise<void>
+  }
 }
 
 export interface ExecOptions {
@@ -60,6 +67,24 @@ export interface SpawnHandle {
   stdout: ReadableStream<string>
   stderr: ReadableStream<string>
   kill(): void
+}
+
+export interface ProcessStartOptions {
+  cwd?: string
+  env?: Record<string, string>
+}
+
+export interface ProcessInfo {
+  pid: number
+  command: string
+  args: string[]
+  state: 'running' | 'exited'
+  exitCode?: number
+}
+
+export interface ProcessHandle {
+  info: ProcessInfo
+  stop(): Promise<void>
 }
 
 export interface Disposable {
