@@ -68,6 +68,26 @@ export interface PluginContext {
     notify(message: string, level?: 'info' | 'warn' | 'error'): void
     confirm(message: string): Promise<boolean>
   }
+
+  process: {
+    start(args: string[], options?: { cwd?: string; env?: Record<string, string> }): Promise<ProcessHandle>
+    list(): Promise<ProcessInfo[]>
+    stop(pid: number): Promise<void>
+    stopAll(): Promise<void>
+  }
+}
+
+export interface ProcessInfo {
+  pid: number
+  command: string
+  args: string[]
+  state: 'running' | 'exited'
+  exitCode?: number
+}
+
+export interface ProcessHandle {
+  info: ProcessInfo
+  stop(): Promise<void>
 }
 
 export interface PluginExports {
@@ -158,6 +178,39 @@ function createPluginContext(pluginId: string): PluginContext {
     },
   }
 
+  const process: PluginContext['process'] = {
+    async start(args, options) {
+      const res = await authFetch(apiUrl(`/api/plugins/${pluginId}/process/start`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ args, ...options }),
+      })
+      const data = await res.json()
+      return {
+        info: data,
+        stop: async () => {
+          await authFetch(apiUrl(`/api/plugins/${pluginId}/process/${data.pid}`), {
+            method: 'DELETE',
+          })
+        },
+      }
+    },
+    async list() {
+      const res = await authFetch(apiUrl(`/api/plugins/${pluginId}/process`))
+      return res.json()
+    },
+    async stop(pid) {
+      await authFetch(apiUrl(`/api/plugins/${pluginId}/process/${pid}`), {
+        method: 'DELETE',
+      })
+    },
+    async stopAll() {
+      await authFetch(apiUrl(`/api/plugins/${pluginId}/process`), {
+        method: 'DELETE',
+      })
+    },
+  }
+
   const storage: PluginContext['storage'] = {
     async get(key) {
       const res = await authFetch(apiUrl(`/api/plugins/${pluginId}/storage/${encodeURIComponent(key)}`))
@@ -192,6 +245,7 @@ function createPluginContext(pluginId: string): PluginContext {
   const context: PluginContext = {
     reactive, ref, computed, watch, onMounted, onUnmounted, h,
     exec,
+    process,
     terminal: window.__dinotty_terminal_api ?? {
       send() {},
       activePaneId: () => null,
@@ -296,6 +350,11 @@ async function unloadPlugin(id: string) {
 
   try { plugin.module.deactivate?.() } catch { /* noop */ }
   try { plugin.exports?.dispose?.() } catch { /* noop */ }
+
+  // Kill all managed processes for this plugin
+  try {
+    await authFetch(apiUrl(`/api/plugins/${id}/process`), { method: 'DELETE' })
+  } catch { /* noop */ }
 
   // Clean up commands
   for (const [cmdId, entry] of pluginCommands) {

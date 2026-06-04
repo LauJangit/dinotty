@@ -113,6 +113,12 @@ impl axum::extract::FromRef<AppState> for PluginManagerState {
     }
 }
 
+impl axum::extract::FromRef<AppState> for (PluginManagerState, Arc<SessionManager>) {
+    fn from_ref(state: &AppState) -> Self {
+        (state.plugins.clone(), state.manager.clone())
+    }
+}
+
 async fn static_handler(Path(path): Path<String>) -> impl IntoResponse {
     let lookup = format!("assets/{}", path);
     match StaticFiles::get(&lookup) {
@@ -323,6 +329,9 @@ async fn main() {
         .route("/api/plugins/:id", get(plugin::plugin_detail).delete(plugin::delete_plugin))
         .route("/api/plugins/:id/exec", post(plugin::plugin_exec))
         .route("/api/plugins/:id/spawn", get(plugin::plugin_spawn_ws))
+        .route("/api/plugins/:id/process/start", post(plugin::plugin_process_start))
+        .route("/api/plugins/:id/process", get(plugin::plugin_process_list).delete(plugin::plugin_process_stop_all))
+        .route("/api/plugins/:id/process/:pid", delete(plugin::plugin_process_stop))
         .route("/api/plugins/:id/storage", get(plugin::plugin_storage_list))
         .route("/api/plugins/:id/storage/:key",
             get(plugin::plugin_storage_get)
