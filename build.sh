@@ -43,6 +43,31 @@ EOF
 
 need() { command -v "$1" &>/dev/null || die "Required tool not found: $1 — install it first"; }
 
+git_version() {
+    local tag
+    tag="$(git tag --sort=-v:refname | head -1)"
+    if [[ -z "$tag" ]]; then
+        die "No git tag found. Tag a release first (e.g. git tag v0.7.6)"
+    fi
+    echo "${tag#v}"
+}
+
+sync_version() {
+    local ver="$1"
+    info "Syncing version to $ver ..."
+
+    # root Cargo.toml
+    sed -i '' "s/^version = \".*\"/version = \"$ver\"/" Cargo.toml
+
+    # src-tauri/Cargo.toml
+    sed -i '' "s/^version = \".*\"/version = \"$ver\"/" src-tauri/Cargo.toml
+
+    # src-tauri/tauri.conf.json
+    sed -i '' "s/\"version\": \".*\"/\"version\": \"$ver\"/" src-tauri/tauri.conf.json
+
+    ok "Version synced: $ver"
+}
+
 is_windows() { [[ "$1" == *"windows"* ]]; }
 
 bin_name() {
@@ -73,9 +98,13 @@ build_frontend() {
 }
 
 build_native() {
+    local ver
+    ver="$(git_version)"
+    sync_version "$ver"
+
     build_frontend
 
-    info "Building native release..."
+    info "Building native release (v$ver)..."
     need cargo
 
     cargo build --release -p dinotty-server
@@ -122,9 +151,13 @@ build_one_target() {
 }
 
 build_cross() {
+    local ver
+    ver="$(git_version)"
+    sync_version "$ver"
+
     build_frontend
 
-    info "Cross-compiling..."
+    info "Cross-compiling (v$ver)..."
     need cargo
     need rustup
 
@@ -143,9 +176,13 @@ build_cross() {
 }
 
 build_desktop() {
+    local ver
+    ver="$(git_version)"
+    sync_version "$ver"
+
     build_frontend
 
-    info "Building Tauri desktop app..."
+    info "Building Tauri desktop app (v$ver)..."
     need cargo
 
     if ! command -v cargo-tauri &>/dev/null; then
@@ -154,7 +191,7 @@ build_desktop() {
     fi
 
     cargo tauri build
-    ok "Desktop app built"
+    ok "Desktop app built (v$ver)"
 }
 
 cmd_list() {

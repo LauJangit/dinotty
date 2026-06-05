@@ -1,6 +1,62 @@
 <template>
   <div>
     <section class="settings-section">
+      <h3>{{ t('settings.plugins.market') }}</h3>
+      <p class="settings-hint">{{ t('settings.plugins.marketDesc') }}</p>
+
+      <div v-if="marketLoading" class="plugin-empty">
+        {{ t('settings.plugins.loading') }}
+      </div>
+      <div v-else-if="marketError" class="plugin-error-msg">
+        {{ t('settings.plugins.fetchError') }}: {{ marketError }}
+      </div>
+      <div v-else-if="marketPlugins.length === 0" class="plugin-empty">
+        {{ t('settings.plugins.noPlugins') }}
+      </div>
+      <div v-for="mp in marketPlugins" :key="mp.id" class="market-card">
+        <div class="market-card-header">
+          <span class="market-card-name">{{ mp.name }}</span>
+          <span class="market-card-version">v{{ mp.version }}</span>
+          <span v-if="mp.installed_version" class="market-card-badge installed">
+            {{ t('settings.plugins.installedBadge') }}
+          </span>
+          <span v-if="mp.has_update" class="market-card-badge update">
+            {{ t('settings.plugins.hasUpdate') }}
+          </span>
+        </div>
+        <p class="market-card-desc">{{ locale === 'zh' && mp.description_zh ? mp.description_zh : mp.description }}</p>
+        <div class="market-card-meta" v-if="mp.author">
+          {{ t('settings.plugins.author') }} {{ mp.author }}
+        </div>
+        <div class="market-card-actions">
+          <button v-if="!mp.installed_version" class="plugin-install-btn" @click="onMarketInstall(mp)">
+            {{ t('settings.plugins.installFromMarket') }}
+          </button>
+          <button v-else-if="mp.has_update" class="plugin-install-btn" @click="onMarketInstall(mp)">
+            {{ t('settings.plugins.updateFromMarket') }}
+          </button>
+          <a v-if="mp.homepage" :href="mp.homepage" target="_blank" class="market-card-link">
+            {{ t('settings.plugins.viewOnGithub') }}
+          </a>
+        </div>
+      </div>
+
+      <div class="market-git-install">
+        <div class="settings-row">
+          <input
+            v-model="gitUrl"
+            class="shortcut-input"
+            style="flex: 1"
+            :placeholder="t('settings.plugins.gitPlaceholder')"
+          />
+          <button class="plugin-action-btn" @click="onGitInstall" :disabled="!gitUrl.trim()">
+            {{ t('settings.plugins.installGit') }}
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="settings-section">
       <h3>{{ t('settings.plugins.install') }}</h3>
       <div class="settings-row">
         <label class="plugin-install-btn">
@@ -55,13 +111,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useI18n } from '../../composables/useI18n'
 import { authFetch, apiUrl } from '../../composables/apiBase'
 import { usePluginLoader } from '../../composables/usePluginLoader'
+import { useMarketplace, type MarketPlugin } from '../../composables/useMarketplace'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { loadedPlugins, loadAll, unloadPlugin } = usePluginLoader()
+const { plugins: marketPlugins, loading: marketLoading, error: marketError, fetchMarket, installFromMarket, installFromGitUrl } = useMarketplace()
 
 const settingsPlugins = computed(() =>
   Array.from(loadedPlugins.values()).map(p => ({
@@ -76,6 +134,40 @@ const settingsPlugins = computed(() =>
 const installError = ref('')
 const installSuccess = ref('')
 const devPath = ref('')
+const gitUrl = ref('')
+
+onMounted(() => {
+  fetchMarket()
+})
+
+async function onMarketInstall(mp: MarketPlugin) {
+  installError.value = ''
+  installSuccess.value = ''
+  const result = await installFromMarket(mp)
+  if (result.ok) {
+    installSuccess.value = `Installed ${mp.name} v${mp.version}`
+    await loadAll()
+    await fetchMarket()
+  } else {
+    installError.value = result.error || 'Install failed'
+  }
+}
+
+async function onGitInstall() {
+  const url = gitUrl.value.trim()
+  if (!url) return
+  installError.value = ''
+  installSuccess.value = ''
+  const result = await installFromGitUrl(url)
+  if (result.ok) {
+    installSuccess.value = `Installed from ${url}`
+    gitUrl.value = ''
+    await loadAll()
+    await fetchMarket()
+  } else {
+    installError.value = result.error || 'Install failed'
+  }
+}
 
 async function onInstallFile(e: Event) {
   const input = e.target as HTMLInputElement
@@ -247,5 +339,71 @@ async function onDevLink() {
   display: flex;
   gap: 8px;
   margin-top: 4px;
+}
+
+/* Market cards */
+.market-card {
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border, #333);
+  background: var(--bg-elevated, #222);
+}
+.market-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+}
+.market-card-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+.market-card-version {
+  font-size: 12px;
+  color: var(--text-muted, #888);
+}
+.market-card-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+.market-card-badge.installed {
+  color: var(--color-green, #34d399);
+  background: rgba(52, 211, 153, 0.15);
+}
+.market-card-badge.update {
+  color: var(--accent, #4d7fff);
+  background: rgba(77, 127, 255, 0.15);
+}
+.market-card-desc {
+  margin: 6px 0 4px;
+  font-size: 12px;
+  color: var(--text-secondary, #aaa);
+  line-height: 1.5;
+}
+.market-card-meta {
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  margin-bottom: 8px;
+}
+.market-card-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.market-card-link {
+  font-size: 12px;
+  color: var(--accent, #4d7fff);
+  text-decoration: none;
+}
+.market-card-link:hover {
+  text-decoration: underline;
+}
+.market-git-install {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border, #333);
 }
 </style>

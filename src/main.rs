@@ -319,10 +319,12 @@ async fn main() {
         .route("/api/token", put(update_token))
         // Plugin management
         .route("/api/plugins", get(plugin::list_plugins))
+        .route("/api/plugins/market", get(plugin::get_market_registry))
         .route("/api/plugins/dev-link", post(plugin::dev_link_plugin))
         .merge(
             Router::new()
                 .route("/api/plugins/install", post(plugin::install_plugin))
+                .route("/api/plugins/install-git", post(plugin::install_from_git))
                 .route("/api/plugins/:id/update", post(plugin::update_plugin))
                 .layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024))
         )
