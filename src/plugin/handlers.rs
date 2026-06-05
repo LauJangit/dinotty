@@ -477,6 +477,96 @@ pub async fn get_market_registry(State(pm): State<PluginManagerState>) -> Respon
     Json(market).into_response()
 }
 
+pub async fn get_market_readme(Path(id): Path<String>) -> Response {
+    let registry_url =
+        std::env::var("DINOTTY_REGISTRY_URL").unwrap_or_else(|_| DEFAULT_REGISTRY_URL.into());
+
+    let client = &crate::proxy::HTTP_CLIENT_FOLLOW_REDIRECTS;
+    let resp = match client.get(&registry_url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            return plugin_err(
+                StatusCode::BAD_GATEWAY,
+                &format!("failed to fetch registry: {e}"),
+            )
+        }
+    };
+
+    let body = match resp.text().await {
+        Ok(b) => b,
+        Err(e) => {
+            return plugin_err(
+                StatusCode::BAD_GATEWAY,
+                &format!("failed to read registry: {e}"),
+            )
+        }
+    };
+
+    let registry: RegistryIndex = match serde_json::from_str(&body) {
+        Ok(r) => r,
+        Err(e) => {
+            return plugin_err(
+                StatusCode::BAD_GATEWAY,
+                &format!("invalid registry JSON: {e}"),
+            )
+        }
+    };
+
+    let entry = match registry.plugins.iter().find(|p| p.id == id) {
+        Some(e) => e,
+        None => return plugin_err(StatusCode::NOT_FOUND, "plugin not found in registry"),
+    };
+
+    let readme_url = match &entry.subdir {
+        Some(sub) => format!(
+            "https://raw.githubusercontent.com/{}/{}/{}/README.md",
+            entry.repo, entry.branch, sub
+        ),
+        None => format!(
+            "https://raw.githubusercontent.com/{}/{}/README.md",
+            entry.repo, entry.branch
+        ),
+    };
+
+    let readme_resp = match client.get(&readme_url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            return plugin_err(
+                StatusCode::BAD_GATEWAY,
+                &format!("failed to fetch README: {e}"),
+            )
+        }
+    };
+
+    if readme_resp.status().as_u16() == 404 {
+        return plugin_err(StatusCode::NOT_FOUND, "README not found");
+    }
+
+    if !readme_resp.status().is_success() {
+        return plugin_err(
+            StatusCode::BAD_GATEWAY,
+            &format!("GitHub returned {}", readme_resp.status()),
+        );
+    }
+
+    let readme_text = match readme_resp.text().await {
+        Ok(t) => t,
+        Err(e) => {
+            return plugin_err(
+                StatusCode::BAD_GATEWAY,
+                &format!("failed to read README: {e}"),
+            )
+        }
+    };
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "text/plain; charset=utf-8")
+        .header("Cache-Control", "public, max-age=3600")
+        .body(Body::from(readme_text))
+        .unwrap()
+}
+
 pub async fn install_from_git(
     State(pm): State<PluginManagerState>,
     Json(body): Json<InstallGitRequest>,

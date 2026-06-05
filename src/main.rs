@@ -320,6 +320,7 @@ async fn main() {
         // Plugin management
         .route("/api/plugins", get(plugin::list_plugins))
         .route("/api/plugins/market", get(plugin::get_market_registry))
+        .route("/api/plugins/market/:id/readme", get(plugin::get_market_readme))
         .route("/api/plugins/dev-link", post(plugin::dev_link_plugin))
         .merge(
             Router::new()
