@@ -3,7 +3,7 @@ members = ["src-tauri"]
 
 [package]
 name = "dinotty-server"
-version = "0.1.0"
+version = "0.7.6"
 edition = "2021"
 build = "build.rs"
 
@@ -42,5 +42,6 @@ proc-macro2 = { version = "1", features = ["span-locations"] }
 tempfile = "3"
 tar = "0.4"
 flate2 = "1"
+zip = "2"
 
 [dev-dependencies]

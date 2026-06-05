@@ -50,7 +50,7 @@ static HTTP_CLIENT_STREAMING: LazyLock<Client> = LazyLock::new(|| {
         .unwrap()
 });
 
-static HTTP_CLIENT_FOLLOW_REDIRECTS: LazyLock<Client> = LazyLock::new(|| {
+pub static HTTP_CLIENT_FOLLOW_REDIRECTS: LazyLock<Client> = LazyLock::new(|| {
     Client::builder()
         .redirect(reqwest::redirect::Policy::limited(10))
         .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
