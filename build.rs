@@ -18,16 +18,16 @@ fn rerun_if_dist_contents(dir: &Path) {
 }
 
 fn main() {
-    // Use DINOTTY_VERSION env var if set, otherwise fall back to latest git tag
-    if let Ok(ver) = std::env::var("DINOTTY_VERSION") {
-        println!("cargo:rustc-env=DINOTTY_VERSION={}", ver);
-    } else if let Ok(output) = std::process::Command::new("git")
-        .args(["describe", "--tags", "--abbrev=0"])
-        .output()
-    {
-        if output.status.success() {
-            let tag = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            println!("cargo:rustc-env=DINOTTY_VERSION={}", tag);
+    // DINOTTY_VERSION env var > CARGO_PKG_VERSION > git tag
+    if std::env::var("DINOTTY_VERSION").is_err() {
+        if let Ok(output) = std::process::Command::new("git")
+            .args(["describe", "--tags", "--abbrev=0"])
+            .output()
+        {
+            if output.status.success() {
+                let tag = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                println!("cargo:rustc-env=DINOTTY_VERSION={}", tag);
+            }
         }
     }
     println!("cargo:rerun-if-changed=.git/refs/tags");
