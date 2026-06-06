@@ -24,6 +24,7 @@
         <MonitorTab v-show="activeTab === 'monitor'" />
         <NotificationTab v-show="activeTab === 'notification'" />
         <PluginsTab v-show="activeTab === 'plugins'" />
+        <AboutTab v-show="activeTab === 'about'" />
       </div>
 
     </div>
@@ -34,7 +35,7 @@
 import { ref, computed, watch } from 'vue'
 import { useSettings, notifyTextChange } from '../composables/useSettings'
 import { useI18n } from '../composables/useI18n'
-import { Settings as SettingsIcon, Palette, Type, Keyboard, Activity, Bell, Puzzle, X } from 'lucide-vue-next'
+import { Settings as SettingsIcon, Palette, Type, Keyboard, Activity, Bell, Puzzle, Info, X } from 'lucide-vue-next'
 import GeneralTab from './settings/GeneralTab.vue'
 import ThemeTab from './settings/ThemeTab.vue'
 import TextTab from './settings/TextTab.vue'
@@ -42,6 +43,7 @@ import KeyboardTab from './settings/KeyboardTab.vue'
 import MonitorTab from './settings/MonitorTab.vue'
 import NotificationTab from './settings/NotificationTab.vue'
 import PluginsTab from './settings/PluginsTab.vue'
+import AboutTab from './settings/AboutTab.vue'
 
 defineProps<{ open: boolean }>()
 defineEmits<{ close: [] }>()
@@ -49,7 +51,7 @@ defineEmits<{ close: [] }>()
 const { settings, saveSettings, applyCurrentTheme } = useSettings()
 const { t } = useI18n()
 
-const activeTab = ref<'general' | 'theme' | 'text' | 'keyboard' | 'monitor' | 'notification' | 'plugins'>('general')
+const activeTab = ref<'general' | 'theme' | 'text' | 'keyboard' | 'monitor' | 'notification' | 'plugins' | 'about'>('general')
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 function scheduleSave() {
@@ -74,6 +76,7 @@ const tabs = computed(() => [
   { id: 'plugins' as const, label: t('settings.tab.plugins'), icon: Puzzle },
   { id: 'monitor' as const, label: t('settings.tab.monitor'), icon: Activity },
   { id: 'notification' as const, label: t('settings.tab.notification'), icon: Bell },
+  { id: 'about' as const, label: t('settings.tab.about'), icon: Info },
 ])
 </script>
 
@@ -144,6 +147,11 @@ const tabs = computed(() => [
   gap: 0;
   border-bottom: 1px solid var(--border, #333);
   padding: 0 20px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.settings-tabs::-webkit-scrollbar {
+  display: none;
 }
 .settings-tab {
   padding: 12px 16px 10px;

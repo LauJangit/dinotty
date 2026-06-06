@@ -11,6 +11,7 @@ use axum::{
 };
 use rust_embed::Embed;
 use std::net::SocketAddr;
+use std::process::Command;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -55,6 +56,87 @@ async fn index(
 #[folder = "frontend/dist/"]
 pub struct StaticFiles;
 
+#[derive(Clone, serde::Serialize)]
+pub struct GitInfo {
+    pub version: String,
+    pub repo_url: String,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct UpdateInfo {
+    pub update_available: bool,
+    pub latest_version: String,
+    pub latest_url: String,
+}
+
+fn read_git_info() -> GitInfo {
+    let version = option_env!("DINOTTY_VERSION")
+        .unwrap_or(env!("CARGO_PKG_VERSION"))
+        .to_string();
+
+    let repo_url = Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| {
+            let url = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if url.starts_with("git@") {
+                url.replace(":", "/")
+                   .replace("git@", "https://")
+                   .trim_end_matches(".git")
+                   .to_string()
+            } else {
+                url.trim_end_matches(".git").to_string()
+            }
+        })
+        .unwrap_or_else(|| env!("CARGO_PKG_REPOSITORY").to_string());
+
+    GitInfo { version, repo_url }
+}
+
+fn parse_version(v: &str) -> (u32, u32, u32) {
+    let v = v.trim_start_matches('v');
+    let parts: Vec<u32> = v.split('.').filter_map(|s| s.parse().ok()).collect();
+    (
+        parts.first().copied().unwrap_or(0),
+        parts.get(1).copied().unwrap_or(0),
+        parts.get(2).copied().unwrap_or(0),
+    )
+}
+
+fn version_gt(a: &str, b: &str) -> bool {
+    parse_version(a) > parse_version(b)
+}
+
+fn check_update(current_version: &str, repo_url: &str) -> Option<UpdateInfo> {
+    // Fetch latest tags from remote
+    let _ = Command::new("git")
+        .args(["fetch", "--tags"])
+        .output();
+
+    // Get the latest tag sorted by version
+    let latest_tag = Command::new("git")
+        .args(["tag", "--sort=-v:refname"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| {
+            let output = String::from_utf8_lossy(&o.stdout);
+            output.lines().next().map(|l| l.trim().to_string())
+        })
+        .filter(|t| !t.is_empty())?;
+
+    let update_available = version_gt(&latest_tag, current_version);
+    let latest_url = format!("{}/releases/tag/{}", repo_url, latest_tag);
+
+    Some(UpdateInfo {
+        update_available,
+        latest_version: latest_tag,
+        latest_url,
+    })
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub manager: Arc<SessionManager>,
@@ -66,6 +148,8 @@ pub struct AppState {
     pub auth_token: Arc<tokio::sync::RwLock<String>>,
     pub port: u16,
     pub plugins: PluginManagerState,
+    pub git_info: GitInfo,
+    pub update_info: Arc<tokio::sync::RwLock<Option<UpdateInfo>>>,
 }
 
 // Allow extracting Arc<SessionManager> from AppState for ws handlers
@@ -193,10 +277,19 @@ async fn server_info(State(state): State<AppState>) -> Json<serde_json::Value> {
     let lan_ip = local_ip_address::local_ip()
         .map(|ip| ip.to_string())
         .unwrap_or_else(|_| "127.0.0.1".to_string());
-    Json(serde_json::json!({
+    let update = state.update_info.read().await.clone();
+    let mut json = serde_json::json!({
         "lan_ip": lan_ip,
         "port": state.port,
-    }))
+        "version": state.git_info.version,
+        "repo_url": state.git_info.repo_url,
+    });
+    if let Some(u) = update {
+        json["update_available"] = serde_json::json!(u.update_available);
+        json["latest_version"] = serde_json::json!(u.latest_version);
+        json["latest_url"] = serde_json::json!(u.latest_url);
+    }
+    Json(json)
 }
 
 #[derive(serde::Deserialize)]
@@ -268,6 +361,31 @@ async fn main() {
     plugins.scan();
     tracing::info!("Loaded {} plugins", plugins.list().len());
 
+    let git_info = read_git_info();
+    tracing::info!("Git info: {}", git_info.version);
+
+    let update_info: Arc<tokio::sync::RwLock<Option<UpdateInfo>>> = Arc::new(tokio::sync::RwLock::new(None));
+    {
+        let update_info = update_info.clone();
+        let ver = git_info.version.clone();
+        let repo = git_info.repo_url.clone();
+        tokio::task::spawn_blocking(move || {
+            match check_update(&ver, &repo) {
+                Some(info) => {
+                    if info.update_available {
+                        tracing::info!("Update available: {} → {}", ver, info.latest_version);
+                    }
+                    tokio::runtime::Handle::current().block_on(async {
+                        *update_info.write().await = Some(info);
+                    });
+                }
+                None => {
+                    tracing::info!("Update check: using latest version");
+                }
+            }
+        });
+    }
+
     let state = AppState {
         manager,
         settings: settings_state,
@@ -278,6 +396,8 @@ async fn main() {
         auth_token: auth_token.clone(),
         port,
         plugins,
+        git_info,
+        update_info,
     };
 
     state.plugins.watch_changes(state.manager.clone());
