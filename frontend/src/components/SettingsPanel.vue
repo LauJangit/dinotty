@@ -177,8 +177,8 @@ const tabs = computed(() => [
   color: var(--fg, #C7C7C7);
 }
 .settings-tab.active {
-  color: var(--accent, #4D7FFF);
-  border-bottom-color: var(--accent, #4D7FFF);
+  color: var(--accent, #8A8A8A);
+  border-bottom-color: var(--accent, #8A8A8A);
 }
 
 .settings-body {
@@ -214,11 +214,11 @@ const tabs = computed(() => [
   text-align: left;
 }
 .theme-card.active {
-  border-color: var(--accent, #4D7FFF);
-  box-shadow: 0 0 0 1px var(--accent, #4D7FFF);
+  border-color: var(--accent, #8A8A8A);
+  box-shadow: 0 0 0 1px var(--accent, #8A8A8A);
 }
 .theme-card:hover {
-  border-color: var(--accent-hover, #6E9AFF);
+  border-color: var(--accent-hover, #9E9E9E);
   transform: translateY(-1px);
 }
 .theme-preview {
@@ -281,7 +281,7 @@ const tabs = computed(() => [
   flex: 1;
   font-family: var(--font-mono);
   font-size: 13px;
-  color: var(--accent, #4D7FFF);
+  color: var(--accent, #8A8A8A);
   word-break: break-all;
 }
 .access-url-copy {
@@ -419,7 +419,7 @@ const tabs = computed(() => [
 }
 .settings-row input[type="range"] {
   flex: 1;
-  accent-color: var(--accent, #4D7FFF);
+  accent-color: var(--accent, #8A8A8A);
 }
 .settings-row input[type="file"] {
   font-size: 12px;
@@ -442,7 +442,7 @@ const tabs = computed(() => [
   min-height: 28px;
 }
 .font-dropdown-trigger:hover {
-  border-color: var(--accent, #4D7FFF);
+  border-color: var(--accent, #8A8A8A);
 }
 .font-dropdown-arrow {
   font-size: 10px;
@@ -484,7 +484,7 @@ const tabs = computed(() => [
 }
 .font-dropdown-item.active {
   background: rgba(77,127,255,0.15);
-  color: var(--accent, #4D7FFF);
+  color: var(--accent, #8A8A8A);
 }
 .font-item-label {
   flex: 1;
@@ -531,7 +531,7 @@ const tabs = computed(() => [
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: var(--accent, #4D7FFF);
+  background: var(--accent, #8A8A8A);
   cursor: pointer;
 }
 .range-val {
@@ -561,7 +561,7 @@ const tabs = computed(() => [
   transition: background 0.2s;
 }
 .toggle input:checked + .toggle-track {
-  background: var(--accent, #4D7FFF);
+  background: var(--accent, #8A8A8A);
 }
 .toggle-thumb {
   position: absolute;
@@ -610,7 +610,7 @@ const tabs = computed(() => [
 }
 .shortcut-add {
   font-size: 12px;
-  color: var(--accent, #4D7FFF);
+  color: var(--accent, #8A8A8A);
   padding: 4px 0;
 }
 
@@ -881,13 +881,15 @@ const tabs = computed(() => [
 .settings-save {
   width: 100%;
   padding: 8px;
-  border-radius: 6px;
-  background: var(--accent, #4D7FFF);
-  color: #fff;
+  border-radius: 5px;
+  background: none;
+  color: var(--fg-bright, #d0d0d0);
   font-size: 13px;
   font-weight: 500;
+  border: none;
+  transition: background 0.15s;
 }
 .settings-save:hover {
-  background: var(--accent-hover, #6E9AFF);
+  background: rgba(255,255,255,0.06);
 }
 </style>

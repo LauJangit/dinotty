@@ -137,7 +137,7 @@ function onDragEnd() {
   cursor: grab;
 }
 .tab.drag-over {
-  border-left: 2px solid var(--accent, #4d7fff);
+  border-left: 2px solid var(--accent, #8A8A8A);
 }
 .tab-notif-dot {
   width: 7px;
@@ -146,7 +146,7 @@ function onDragEnd() {
   flex-shrink: 0;
   margin-left: 4px;
 }
-.dot-info { background: var(--accent, #4d7fff); }
+.dot-info { background: var(--accent, #8A8A8A); }
 .dot-success { background: var(--color-green, #34d399); }
 .dot-warning { background: var(--color-yellow, #f59e0b); }
 .dot-error { background: var(--color-red, #ef4444); }

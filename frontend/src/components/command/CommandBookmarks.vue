@@ -178,7 +178,7 @@ defineExpose({ open, close })
   color: var(--fg-muted);
 }
 .group-tag.active {
-  background: var(--accent, #4D7FFF);
+  background: var(--accent, #8A8A8A);
   border-color: var(--accent);
   color: #fff;
 }

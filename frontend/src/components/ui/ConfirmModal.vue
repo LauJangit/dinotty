@@ -124,28 +124,32 @@ function onCancel() {
 
 .confirm-btn {
   padding: 6px 16px;
-  border-radius: 6px;
+  border-radius: 5px;
   font-size: 13px;
   cursor: pointer;
   border: none;
-  color: var(--fg);
-  transition: background 0.15s;
+  color: var(--fg-muted);
+  background: none;
+  transition: background 0.15s, color 0.15s;
 }
 
 .confirm-btn.cancel {
-  background: var(--bg-input);
+  background: none;
+  color: var(--fg-muted);
 }
 
 .confirm-btn.cancel:hover {
-  background: var(--border);
+  background: rgba(255,255,255,0.06);
+  color: var(--fg);
 }
 
 .confirm-btn.primary {
-  background: var(--accent);
-  color: #fff;
+  background: none;
+  color: var(--color-red, #ef4444);
 }
 
 .confirm-btn.primary:hover {
-  background: var(--accent-hover);
+  background: rgba(239,68,68,0.08);
+  color: var(--color-red, #ef4444);
 }
 </style>
