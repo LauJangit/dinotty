@@ -129,7 +129,7 @@ import { useSettings } from '../../composables/useSettings'
 import { useI18n } from '../../composables/useI18n'
 import { themes } from '../../themes'
 import { copyToClipboard } from '../../utils/clipboard'
-import { apiUrl, authFetch, getAuthToken, setAuthToken } from '../../composables/apiBase'
+import { apiUrl, authFetch, getAuthToken, setAuthToken, getApiBase } from '../../composables/apiBase'
 
 const { settings, applyCurrentTheme } = useSettings()
 const { t, themeLabel } = useI18n()
@@ -156,6 +156,7 @@ watch([accessUrl, qrCanvasRef, currentToken], ([url, canvas, token]) => {
 
 onMounted(async () => {
   try {
+    await getApiBase()
     const res = await authFetch(apiUrl('/api/info'))
     const info = await res.json()
     accessUrl.value = `http://${info.lan_ip}:${info.port}`

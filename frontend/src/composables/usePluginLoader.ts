@@ -1,6 +1,6 @@
 import type { Component } from 'vue'
 import { reactive, ref, computed, watch, onMounted, onUnmounted, h } from 'vue'
-import { authFetch, apiUrl, wsUrlWithToken } from './apiBase'
+import { authFetch, apiUrl, wsUrlWithToken, getApiBase } from './apiBase'
 
 // Bypass Vite's static analysis of import()
 // eslint-disable-next-line no-new-func
@@ -422,6 +422,7 @@ export async function handlePluginChanged(pluginId: string, change: string) {
 export function usePluginLoader() {
   async function loadAll() {
     try {
+      await getApiBase()
       const res = await authFetch(apiUrl('/api/plugins'))
       if (!res.ok) {
         console.warn('[plugin] GET /api/plugins returned', res.status)

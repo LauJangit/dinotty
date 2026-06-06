@@ -418,8 +418,9 @@ function getSendFn(): ((data: string) => void) | null {
   return (data: string) => termRefs[activePaneId.value!]?.sendData(data)
 }
 
-function onLoginSuccess() {
+async function onLoginSuccess() {
   authenticated.value = true
+  await getApiBase()
   void loadAll()
   void connectSyncWS()
   initMonitorHistory()
@@ -775,7 +776,7 @@ function onOrientationChange() {
   isLandscape.value = window.innerWidth > window.innerHeight
 }
 
-onMounted(() => {
+onMounted(async () => {
   document.addEventListener('keydown', onGlobalKeydown)
   window.addEventListener('resize', onOrientationChange)
   window.addEventListener('terminal-insert-path', onTerminalInsertPath)
@@ -784,6 +785,7 @@ onMounted(() => {
     window.visualViewport.addEventListener('resize', onViewportResize)
   }
   if (authenticated.value) {
+    await getApiBase()
     void connectSyncWS()
     initMonitorHistory()
     void loadAll()

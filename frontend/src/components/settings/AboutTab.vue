@@ -36,7 +36,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useI18n } from '../../composables/useI18n'
-import { apiUrl, authFetch } from '../../composables/apiBase'
+import { apiUrl, authFetch, getApiBase } from '../../composables/apiBase'
 
 const { t } = useI18n()
 
@@ -53,6 +53,7 @@ const info = ref<{
 
 onMounted(async () => {
   try {
+    await getApiBase()
     const res = await authFetch(apiUrl('/api/info'))
     const data = await res.json()
     info.value = {
