@@ -14,11 +14,11 @@
       <div class="settings-row">
         <label>{{ t('settings.text.fontFamily') }}</label>
         <div class="font-dropdown">
-          <div class="font-dropdown-trigger shortcut-input" :style="{ fontFamily: settings.text.font_family || 'inherit' }" @click="fontDropdownOpen = !fontDropdownOpen">
+          <div class="font-dropdown-trigger shortcut-input" :style="{ fontFamily: settings.text.font_family || 'inherit' }" @click="toggleFontDropdown">
             <span>{{ currentFontLabel }}</span>
             <span class="font-dropdown-arrow">▾</span>
           </div>
-          <div v-if="fontDropdownOpen" class="font-dropdown-backdrop" @click="fontDropdownOpen = false"></div>
+          <div v-if="fontDropdownOpen" class="font-dropdown-backdrop" @click="closeFontDropdown"></div>
           <div v-if="fontDropdownOpen" class="font-dropdown-menu">
             <div
               class="font-dropdown-item"
@@ -41,12 +41,12 @@
             <div class="font-dropdown-divider"></div>
             <div
               class="font-dropdown-item"
-              :class="{ active: isCustomFont }"
+              :class="{ active: isCustomFont || customFontEditing }"
               @click="enterCustomFont"
             >
               <span class="font-item-label">{{ t('settings.text.fontFamilyCustom') }}</span>
             </div>
-            <div v-if="isCustomFont" class="font-custom-input-wrap" @click.stop>
+            <div v-if="isCustomFont || customFontEditing" class="font-custom-input-wrap" @click.stop>
               <input
                 ref="customFontInput"
                 v-model="customFontName"
@@ -119,6 +119,7 @@ const fontFamilies = [
   { label: 'Courier New', value: '"Courier New", monospace' },
   { label: 'SF Mono', value: '"SF Mono", monospace' },
   { label: 'Fira Code', value: '"Fira Code", monospace' },
+  { label: 'FiraCode Nerd Font', value: '"FiraCode Nerd Font", monospace' },
   { label: 'JetBrains Mono', value: '"JetBrains Mono", monospace' },
   { label: 'Source Code Pro', value: '"Source Code Pro", monospace' },
   { label: 'IBM Plex Mono', value: '"IBM Plex Mono", monospace' },
@@ -126,6 +127,7 @@ const fontFamilies = [
 ]
 
 const fontDropdownOpen = ref(false)
+const customFontEditing = ref(false)
 const customFontName = ref('')
 const customFontInput = ref<HTMLInputElement | null>(null)
 
@@ -145,16 +147,31 @@ const currentFontLabel = computed(() => {
 
 function selectFont(value: string) {
   settings.text.font_family = value
+  customFontEditing.value = false
   customFontName.value = ''
   fontDropdownOpen.value = false
   onTextSettingChange()
 }
 
 function enterCustomFont() {
+  customFontEditing.value = true
   if (isCustomFont.value) {
     customFontName.value = settings.text.font_family.replace(/, monospace$/, '')
   }
   nextTick(() => customFontInput.value?.focus())
+}
+
+function toggleFontDropdown() {
+  if (fontDropdownOpen.value) {
+    closeFontDropdown()
+    return
+  }
+  fontDropdownOpen.value = true
+}
+
+function closeFontDropdown() {
+  fontDropdownOpen.value = false
+  customFontEditing.value = false
 }
 
 function applyCustomFont() {
@@ -163,7 +180,7 @@ function applyCustomFont() {
     settings.text.font_family = `${name}, monospace`
     onTextSettingChange()
   }
-  fontDropdownOpen.value = false
+  closeFontDropdown()
 }
 
 let textChangeTimer: ReturnType<typeof setTimeout> | null = null
