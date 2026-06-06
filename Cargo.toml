@@ -3,7 +3,7 @@ members = ["src-tauri"]
 
 [package]
 name = "dinotty-server"
-version = "0.8.0"
+version = "0.8.2"
 edition = "2021"
 build = "build.rs"
 repository = "https://github.com/xichan96/dinotty"

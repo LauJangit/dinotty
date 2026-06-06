@@ -22,6 +22,7 @@
       </div>
       <div v-else-if="marketError" class="plugin-error-msg">
         {{ t('settings.plugins.fetchError') }}: {{ marketError }}
+        <button class="plugin-retry-btn" @click="fetchMarket()">{{ t('settings.plugins.retry') }}</button>
       </div>
       <div v-else-if="marketPlugins.length === 0" class="plugin-empty">
         {{ t('settings.plugins.noPlugins') }}
@@ -449,6 +450,21 @@ async function onDevLink() {
   margin: 8px 0;
   color: var(--color-red, #ef4444);
   font-size: 13px;
+}
+.plugin-retry-btn {
+  margin-left: 8px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--fg-muted, #858585);
+  background: none;
+  border: 1px solid var(--border, #444);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.plugin-retry-btn:hover {
+  color: var(--fg-bright, #d0d0d0);
+  border-color: var(--fg-muted, #858585);
 }
 .plugin-success-msg {
   margin: 8px 0;
