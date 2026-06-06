@@ -42,6 +42,9 @@
             {{ copied ? '✓' : '⧉' }}
           </button>
         </div>
+        <div v-if="accessUrl" class="qr-code-wrap">
+          <canvas ref="qrCanvasRef"></canvas>
+        </div>
         <p class="settings-hint">{{ t('settings.accessUrlHint') }}</p>
       </div>
     </section>
@@ -119,7 +122,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, onMounted, nextTick, watch } from 'vue'
+import QRCode from 'qrcode'
 import { Eye, EyeOff, Copy, Check, Pencil, RefreshCw, Save, X } from 'lucide-vue-next'
 import { useSettings } from '../../composables/useSettings'
 import { useI18n } from '../../composables/useI18n'
@@ -136,6 +140,19 @@ function selectTheme() {
 
 const accessUrl = ref('')
 const copied = ref(false)
+const qrCanvasRef = ref<HTMLCanvasElement | null>(null)
+const currentToken = ref('')
+
+watch([accessUrl, qrCanvasRef, currentToken], ([url, canvas, token]) => {
+  if (url && canvas) {
+    const qrUrl = token ? `${url}/?token=${token}` : url
+    QRCode.toCanvas(canvas, qrUrl, {
+      width: 160,
+      margin: 2,
+      color: { dark: '#C7C7C7', light: '#00000000' },
+    })
+  }
+})
 
 onMounted(async () => {
   try {
@@ -158,7 +175,6 @@ async function copyAccessUrl() {
 }
 
 // Token management
-const currentToken = ref('')
 const tokenVisible = ref(false)
 const tokenCopied = ref(false)
 const customToken = ref('')
@@ -314,5 +330,18 @@ function removeIp(idx: number) {
   color: #F44747;
   font-size: 12px;
   margin: 4px 0 0;
+}
+
+.qr-code-wrap {
+  display: flex;
+  justify-content: flex-start;
+  margin: 12px 0 8px;
+}
+
+.qr-code-wrap canvas {
+  border-radius: 8px;
+  background: var(--bg-input, #1A1A1A);
+  border: 1px solid var(--border, #333);
+  padding: 8px;
 }
 </style>
