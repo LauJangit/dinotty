@@ -122,6 +122,37 @@ async fn index() -> impl IntoResponse {
     )
 }
 
+async fn icon_handler(Path(path): Path<String>) -> impl IntoResponse {
+    let lookup = format!("icons/{}", path);
+    match StaticFiles::get(&lookup) {
+        Some(content) => {
+            let mime = mime_guess::from_path(&lookup).first_or_octet_stream();
+            Response::builder()
+                .header(header::CONTENT_TYPE, mime.as_ref())
+                .header(header::CACHE_CONTROL, "public, max-age=86400")
+                .body(Body::from(content.data.into_owned()))
+                .unwrap()
+        }
+        None => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::from("not found"))
+            .unwrap(),
+    }
+}
+
+async fn manifest_handler() -> impl IntoResponse {
+    match StaticFiles::get("manifest.json") {
+        Some(content) => Response::builder()
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(content.data.into_owned()))
+            .unwrap(),
+        None => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::from("not found"))
+            .unwrap(),
+    }
+}
+
 fn read_git_info() -> GitInfo {
     let version = option_env!("DINOTTY_VERSION")
         .unwrap_or(env!("CARGO_PKG_VERSION"))
@@ -208,6 +239,7 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
         .route("/api/workspace/git-diff", get(workspace::workspace_git_diff))
         .route("/api/workspace/git-stage-lines", post(workspace::workspace_git_stage_lines))
         .route("/api/workspace/git-revert-lines", post(workspace::workspace_git_revert_lines))
+        .route("/api/workspace/syntax-check", post(workspace::workspace_syntax_check))
         .route("/api/notify", post(notification::post_notify))
         .route("/api/history", get(history::get_history).delete(history::delete_history))
         .route("/api/info", get(server_info))
@@ -236,6 +268,23 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
         .route("/preview/:port/", any(proxy::proxy_handler_root))
         .route("/preview/:port/*path", any(proxy::proxy_handler_wildcard))
         .route("/assets/*path", get(static_handler))
+        .route("/icons/*path", get(icon_handler))
+        .route("/manifest.json", get(manifest_handler))
+        .route("/logo.png", get(|| async {
+            match StaticFiles::get("logo.png") {
+                Some(content) => {
+                    Response::builder()
+                        .header(header::CONTENT_TYPE, "image/png")
+                        .header(header::CACHE_CONTROL, "public, max-age=86400")
+                        .body(Body::from(content.data.into_owned()))
+                        .unwrap()
+                }
+                None => Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body(Body::from("not found"))
+                    .unwrap(),
+            }
+        }))
         .route("/", get(index))
         .layer(CorsLayer::permissive())
         .with_state(state);
