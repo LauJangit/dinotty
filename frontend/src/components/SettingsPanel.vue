@@ -24,6 +24,7 @@
         <MonitorTab v-show="activeTab === 'monitor'" />
         <NotificationTab v-show="activeTab === 'notification'" />
         <PluginsTab v-show="activeTab === 'plugins'" />
+        <AboutTab v-show="activeTab === 'about'" />
       </div>
 
     </div>
@@ -34,7 +35,7 @@
 import { ref, computed, watch } from 'vue'
 import { useSettings, notifyTextChange } from '../composables/useSettings'
 import { useI18n } from '../composables/useI18n'
-import { Settings as SettingsIcon, Palette, Type, Keyboard, Activity, Bell, Puzzle, X } from 'lucide-vue-next'
+import { Settings as SettingsIcon, Palette, Type, Keyboard, Activity, Bell, Puzzle, Info, X } from 'lucide-vue-next'
 import GeneralTab from './settings/GeneralTab.vue'
 import ThemeTab from './settings/ThemeTab.vue'
 import TextTab from './settings/TextTab.vue'
@@ -42,6 +43,7 @@ import KeyboardTab from './settings/KeyboardTab.vue'
 import MonitorTab from './settings/MonitorTab.vue'
 import NotificationTab from './settings/NotificationTab.vue'
 import PluginsTab from './settings/PluginsTab.vue'
+import AboutTab from './settings/AboutTab.vue'
 
 defineProps<{ open: boolean }>()
 defineEmits<{ close: [] }>()
@@ -49,7 +51,7 @@ defineEmits<{ close: [] }>()
 const { settings, saveSettings, applyCurrentTheme } = useSettings()
 const { t } = useI18n()
 
-const activeTab = ref<'general' | 'theme' | 'text' | 'keyboard' | 'monitor' | 'notification' | 'plugins'>('general')
+const activeTab = ref<'general' | 'theme' | 'text' | 'keyboard' | 'monitor' | 'notification' | 'plugins' | 'about'>('general')
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 function scheduleSave() {
@@ -74,6 +76,7 @@ const tabs = computed(() => [
   { id: 'plugins' as const, label: t('settings.tab.plugins'), icon: Puzzle },
   { id: 'monitor' as const, label: t('settings.tab.monitor'), icon: Activity },
   { id: 'notification' as const, label: t('settings.tab.notification'), icon: Bell },
+  { id: 'about' as const, label: t('settings.tab.about'), icon: Info },
 ])
 </script>
 
@@ -144,6 +147,11 @@ const tabs = computed(() => [
   gap: 0;
   border-bottom: 1px solid var(--border, #333);
   padding: 0 20px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.settings-tabs::-webkit-scrollbar {
+  display: none;
 }
 .settings-tab {
   padding: 12px 16px 10px;
@@ -177,8 +185,8 @@ const tabs = computed(() => [
   color: var(--fg, #C7C7C7);
 }
 .settings-tab.active {
-  color: var(--accent, #4D7FFF);
-  border-bottom-color: var(--accent, #4D7FFF);
+  color: var(--accent, #8A8A8A);
+  border-bottom-color: var(--accent, #8A8A8A);
 }
 
 .settings-body {
@@ -214,11 +222,11 @@ const tabs = computed(() => [
   text-align: left;
 }
 .theme-card.active {
-  border-color: var(--accent, #4D7FFF);
-  box-shadow: 0 0 0 1px var(--accent, #4D7FFF);
+  border-color: var(--accent, #8A8A8A);
+  box-shadow: 0 0 0 1px var(--accent, #8A8A8A);
 }
 .theme-card:hover {
-  border-color: var(--accent-hover, #6E9AFF);
+  border-color: var(--accent-hover, #9E9E9E);
   transform: translateY(-1px);
 }
 .theme-preview {
@@ -281,7 +289,7 @@ const tabs = computed(() => [
   flex: 1;
   font-family: var(--font-mono);
   font-size: 13px;
-  color: var(--accent, #4D7FFF);
+  color: var(--accent, #8A8A8A);
   word-break: break-all;
 }
 .access-url-copy {
@@ -419,7 +427,7 @@ const tabs = computed(() => [
 }
 .settings-row input[type="range"] {
   flex: 1;
-  accent-color: var(--accent, #4D7FFF);
+  accent-color: var(--accent, #8A8A8A);
 }
 .settings-row input[type="file"] {
   font-size: 12px;
@@ -442,7 +450,7 @@ const tabs = computed(() => [
   min-height: 28px;
 }
 .font-dropdown-trigger:hover {
-  border-color: var(--accent, #4D7FFF);
+  border-color: var(--accent, #8A8A8A);
 }
 .font-dropdown-arrow {
   font-size: 10px;
@@ -484,7 +492,7 @@ const tabs = computed(() => [
 }
 .font-dropdown-item.active {
   background: rgba(77,127,255,0.15);
-  color: var(--accent, #4D7FFF);
+  color: var(--accent, #8A8A8A);
 }
 .font-item-label {
   flex: 1;
@@ -531,7 +539,7 @@ const tabs = computed(() => [
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: var(--accent, #4D7FFF);
+  background: var(--accent, #8A8A8A);
   cursor: pointer;
 }
 .range-val {
@@ -561,7 +569,7 @@ const tabs = computed(() => [
   transition: background 0.2s;
 }
 .toggle input:checked + .toggle-track {
-  background: var(--accent, #4D7FFF);
+  background: var(--accent, #8A8A8A);
 }
 .toggle-thumb {
   position: absolute;
@@ -610,7 +618,7 @@ const tabs = computed(() => [
 }
 .shortcut-add {
   font-size: 12px;
-  color: var(--accent, #4D7FFF);
+  color: var(--accent, #8A8A8A);
   padding: 4px 0;
 }
 
@@ -881,13 +889,15 @@ const tabs = computed(() => [
 .settings-save {
   width: 100%;
   padding: 8px;
-  border-radius: 6px;
-  background: var(--accent, #4D7FFF);
-  color: #fff;
+  border-radius: 5px;
+  background: none;
+  color: var(--fg-bright, #d0d0d0);
   font-size: 13px;
   font-weight: 500;
+  border: none;
+  transition: background 0.15s;
 }
 .settings-save:hover {
-  background: var(--accent-hover, #6E9AFF);
+  background: rgba(255,255,255,0.06);
 }
 </style>

@@ -57,7 +57,7 @@ const formattedTime = computed(() => {
   border-radius: 6px 0 0 6px;
   flex-shrink: 0;
 }
-.type-info .card-stripe, .type-info .card-dot { background: var(--accent, #4d7fff); }
+.type-info .card-stripe, .type-info .card-dot { background: var(--accent, #8A8A8A); }
 .type-success .card-stripe, .type-success .card-dot { background: var(--color-green, #34d399); }
 .type-warning .card-stripe, .type-warning .card-dot { background: var(--color-yellow, #f59e0b); }
 .type-error .card-stripe, .type-error .card-dot { background: var(--color-red, #ef4444); }

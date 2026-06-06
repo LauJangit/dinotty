@@ -391,8 +391,8 @@ async function onDevLink() {
   color: var(--text-primary, #ddd);
 }
 .plugin-tab.active {
-  color: var(--accent, #4d7fff);
-  border-bottom-color: var(--accent, #4d7fff);
+  color: var(--fg-bright, #d0d0d0);
+  border-bottom-color: var(--accent, #8a8a8a);
 }
 .plugin-toolbar {
   display: flex;
@@ -409,37 +409,41 @@ async function onDevLink() {
 .plugin-install-btn {
   display: inline-flex;
   align-items: center;
-  padding: 6px 14px;
-  border-radius: 6px;
-  background: var(--accent, #4d7fff);
-  color: #fff;
-  font-size: 13px;
+  padding: 5px 12px;
+  border-radius: 5px;
+  background: none;
+  color: var(--fg-bright, #d0d0d0);
+  font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
   border: none;
+  transition: background 0.15s;
 }
 .plugin-install-btn:hover {
-  opacity: 0.9;
+  background: rgba(255,255,255,0.06);
 }
 .plugin-action-btn {
   display: inline-flex;
   align-items: center;
-  padding: 4px 10px;
-  border-radius: 4px;
-  background: var(--bg-hover, #2a2a2a);
-  color: var(--text-primary, #ddd);
+  padding: 5px 12px;
+  border-radius: 5px;
+  background: none;
+  color: var(--fg-muted, #858585);
   font-size: 12px;
   cursor: pointer;
-  border: 1px solid var(--border, #444);
+  border: none;
+  transition: background 0.15s, color 0.15s;
 }
 .plugin-action-btn:hover {
-  background: var(--bg-surface-hover, #333);
+  background: rgba(255,255,255,0.06);
+  color: var(--fg, #cccccc);
 }
 .plugin-danger {
-  color: var(--color-red, #ef4444);
-  border-color: var(--color-red, #ef4444);
+  color: var(--fg-muted, #858585);
 }
 .plugin-danger:hover {
-  background: rgba(239,68,68,0.1);
+  color: var(--color-red, #ef4444);
+  background: rgba(239,68,68,0.08);
 }
 .plugin-error-msg {
   margin: 8px 0;
@@ -468,7 +472,7 @@ async function onDevLink() {
   transition: border-color 0.15s, background 0.15s;
 }
 .plugin-card-clickable:hover {
-  border-color: var(--accent, #4d7fff);
+  border-color: var(--fg-muted, #858585);
   background: var(--bg-surface-hover, #2a2a2a);
 }
 .plugin-card-header {
@@ -499,8 +503,8 @@ async function onDevLink() {
   background: rgba(52, 211, 153, 0.15);
 }
 .plugin-badge.update {
-  color: var(--accent, #4d7fff);
-  background: rgba(77, 127, 255, 0.15);
+  color: var(--fg-muted, #858585);
+  background: var(--bg-hover, #2a2a2c);
 }
 .plugin-badge.error {
   color: var(--color-red, #ef4444);
@@ -520,11 +524,12 @@ async function onDevLink() {
 }
 .plugin-link {
   font-size: 12px;
-  color: var(--accent, #4d7fff);
+  color: var(--fg-muted, #858585);
   text-decoration: none;
+  transition: color 0.15s;
 }
 .plugin-link:hover {
-  text-decoration: underline;
+  color: var(--fg-bright, #d0d0d0);
 }
 .plugin-spinner {
   display: inline-block;
@@ -538,7 +543,7 @@ async function onDevLink() {
   vertical-align: middle;
 }
 .plugin-install-btn .plugin-spinner {
-  border-color: rgba(255,255,255,0.6);
+  border-color: var(--fg-muted, #858585);
   border-top-color: transparent;
 }
 @keyframes plugin-spin {
@@ -559,13 +564,14 @@ async function onDevLink() {
   gap: 6px;
   padding: 4px 0;
   font-size: 13px;
-  color: var(--accent, #4d7fff);
+  color: var(--fg-muted, #858585);
   background: none;
   border: none;
   cursor: pointer;
+  transition: color 0.15s;
 }
 .plugin-back-btn:hover {
-  text-decoration: underline;
+  color: var(--fg-bright, #d0d0d0);
 }
 .plugin-back-arrow {
   font-size: 16px;
@@ -673,7 +679,7 @@ async function onDevLink() {
   margin: 8px 0;
 }
 .plugin-readme-body :deep(a) {
-  color: var(--accent, #4d7fff);
+  color: var(--accent, #8A8A8A);
   text-decoration: none;
 }
 .plugin-readme-body :deep(a:hover) {

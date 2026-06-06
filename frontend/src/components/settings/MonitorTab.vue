@@ -136,7 +136,7 @@ const cpuChartData = computed(() => ({
   labels: labels.value,
   datasets: [{
     data: [...cpuHistory.value],
-    borderColor: '#4d7fff',
+    borderColor: '#8A8A8A',
     backgroundColor: 'rgba(77,127,255,0.1)',
     fill: true,
   }],

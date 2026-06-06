@@ -18,6 +18,18 @@ fn rerun_if_dist_contents(dir: &Path) {
 }
 
 fn main() {
+    // Embed the latest git tag as the version at build time
+    if let Ok(output) = std::process::Command::new("git")
+        .args(["describe", "--tags", "--abbrev=0"])
+        .output()
+    {
+        if output.status.success() {
+            let tag = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            println!("cargo:rustc-env=DINOTTY_VERSION={}", tag);
+        }
+    }
+    println!("cargo:rerun-if-changed=.git/refs/tags");
+
     let dist = Path::new("frontend/dist");
     println!("cargo:rerun-if-changed={}", dist.display());
     rerun_if_dist_contents(dist);

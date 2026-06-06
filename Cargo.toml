@@ -3,9 +3,10 @@ members = ["src-tauri"]
 
 [package]
 name = "dinotty-server"
-version = "0.7.6"
+version = "0.8.0"
 edition = "2021"
 build = "build.rs"
+repository = "https://github.com/xichan96/dinotty"
 
 [dependencies]
 axum = { version = "0.7", features = ["ws"] }
@@ -26,7 +27,7 @@ axum-extra = { version = "0.9", features = ["multipart"] }
 notify = "6"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 dirs = "5"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "gzip", "brotli"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "gzip", "brotli", "blocking", "json"] }
 tokio-tungstenite = "0.24"
 bytes = "1"
 regex = "1.12.3"

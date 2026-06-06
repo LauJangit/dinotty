@@ -235,6 +235,13 @@ const messages: Record<Locale, Record<string, string>> = {
     'keybinding.closeTab': 'Close Tab',
     'keybinding.pressKeys': 'Press keys…',
     'keybinding.reset': 'Reset',
+    'settings.tab.about': 'About',
+    'settings.about.title': 'About',
+    'settings.about.version': 'Version',
+    'settings.about.repository': 'Repository',
+    'settings.about.upToDate': 'Up to date',
+    'settings.about.updateAvailable': 'Update available',
+    'settings.about.download': 'Download',
   },
   zh: {
     'app.settings': '设置',
@@ -467,6 +474,13 @@ const messages: Record<Locale, Record<string, string>> = {
     'keybinding.closeTab': '关闭标签页',
     'keybinding.pressKeys': '按下按键…',
     'keybinding.reset': '重置',
+    'settings.tab.about': '关于',
+    'settings.about.title': '关于',
+    'settings.about.version': '版本',
+    'settings.about.repository': '仓库',
+    'settings.about.upToDate': '已是最新版本',
+    'settings.about.updateAvailable': '有新版本可用',
+    'settings.about.download': '下载',
   },
 }
 
