@@ -929,10 +929,11 @@ dependencies = [
 
 [[package]]
 name = "dinotty-desktop"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "axum 0.7.9",
  "dinotty-server",
+ "local-ip-address",
  "mime_guess",
  "portable-pty",
  "rust-embed",
@@ -951,7 +952,7 @@ dependencies = [
 
 [[package]]
 name = "dinotty-server"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "axum 0.7.9",
  "axum-extra",
@@ -2610,7 +2611,7 @@ dependencies = [
 
 [[package]]
 name = "moxcms"
-version = "0.8.1"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bb85c154ba489f01b25c0d36ae69a87e4a1c73a72631fc6c0eb6dde34a73e44b"
 dependencies = [
@@ -3262,7 +3263,7 @@ dependencies = [
 
 [[package]]
 name = "portable-pty"
-version = "0.8.1"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "806ee80c2a03dbe1a9fb9534f8d19e4c0546b790cde8fd1fea9d6390644cb0be"
 dependencies = [
@@ -5823,7 +5824,7 @@ dependencies = [
 
 [[package]]
 name = "webview2-com-macros"
-version = "0.8.1"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67a921c1b6914c367b2b823cd4cde6f96beec77d30a939c8199bb377cf9b9b54"
 dependencies = [

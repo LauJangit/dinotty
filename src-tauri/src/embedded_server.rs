@@ -10,6 +10,8 @@ use rust_embed::Embed;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
+use axum::extract::State as AxumState;
+use axum::Json;
 
 use dinotty_server::file_watcher::{self, FileWatcherState};
 use dinotty_server::history;
@@ -27,6 +29,12 @@ use dinotty_server::workspace;
 #[folder = "../frontend/dist/"]
 struct StaticFiles;
 
+#[derive(Clone, serde::Serialize)]
+pub struct GitInfo {
+    pub version: String,
+    pub repo_url: String,
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub manager: Arc<SessionManager>,
@@ -36,6 +44,8 @@ pub struct AppState {
     pub notifier: Arc<NotificationBroadcast>,
     pub history: HistoryState,
     pub plugins: PluginManagerState,
+    pub port: u16,
+    pub git_info: GitInfo,
 }
 
 impl axum::extract::FromRef<AppState> for Arc<SessionManager> {
@@ -80,6 +90,12 @@ impl axum::extract::FromRef<AppState> for PluginManagerState {
     }
 }
 
+impl axum::extract::FromRef<AppState> for (PluginManagerState, Arc<SessionManager>) {
+    fn from_ref(state: &AppState) -> Self {
+        (state.plugins.clone(), state.manager.clone())
+    }
+}
+
 async fn static_handler(Path(path): Path<String>) -> impl IntoResponse {
     let lookup = format!("assets/{}", path);
     match StaticFiles::get(&lookup) {
@@ -106,6 +122,75 @@ async fn index() -> impl IntoResponse {
     )
 }
 
+async fn icon_handler(Path(path): Path<String>) -> impl IntoResponse {
+    let lookup = format!("icons/{}", path);
+    match StaticFiles::get(&lookup) {
+        Some(content) => {
+            let mime = mime_guess::from_path(&lookup).first_or_octet_stream();
+            Response::builder()
+                .header(header::CONTENT_TYPE, mime.as_ref())
+                .header(header::CACHE_CONTROL, "public, max-age=86400")
+                .body(Body::from(content.data.into_owned()))
+                .unwrap()
+        }
+        None => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::from("not found"))
+            .unwrap(),
+    }
+}
+
+async fn manifest_handler() -> impl IntoResponse {
+    match StaticFiles::get("manifest.json") {
+        Some(content) => Response::builder()
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(content.data.into_owned()))
+            .unwrap(),
+        None => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::from("not found"))
+            .unwrap(),
+    }
+}
+
+fn read_git_info() -> GitInfo {
+    let version = option_env!("DINOTTY_VERSION")
+        .unwrap_or(env!("CARGO_PKG_VERSION"))
+        .to_string();
+
+    let repo_url = std::process::Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| {
+            let url = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if url.starts_with("git@") {
+                url.replace(":", "/")
+                   .replace("git@", "https://")
+                   .trim_end_matches(".git")
+                   .to_string()
+            } else {
+                url.trim_end_matches(".git").to_string()
+            }
+        })
+        .unwrap_or_else(|| env!("CARGO_PKG_REPOSITORY").to_string());
+
+    GitInfo { version, repo_url }
+}
+
+async fn server_info(AxumState(state): AxumState<AppState>) -> Json<serde_json::Value> {
+    let lan_ip = local_ip_address::local_ip()
+        .map(|ip| ip.to_string())
+        .unwrap_or_else(|_| "127.0.0.1".to_string());
+    Json(serde_json::json!({
+        "lan_ip": lan_ip,
+        "port": state.port,
+        "version": state.git_info.version,
+        "repo_url": state.git_info.repo_url,
+    }))
+}
+
 pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
     let monitor_state = MonitorState::new();
     monitor_state.clone().start_collector();
@@ -115,6 +200,8 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
     let plugins = Arc::new(PluginManager::new());
     plugins.scan();
 
+    let git_info = read_git_info();
+
     let state = AppState {
         manager: manager.clone(),
         settings: settings::create_settings_state(),
@@ -123,6 +210,8 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
         notifier,
         history: history_state,
         plugins,
+        port,
+        git_info,
     };
 
     state.plugins.watch_changes(manager);
@@ -145,22 +234,57 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
         .route("/api/workspace/file", put(workspace::workspace_put_file))
         .route("/api/workspace/delete", delete(workspace::workspace_delete))
         .route("/api/workspace/rename", post(workspace::workspace_rename))
+        .route("/api/workspace/move", post(workspace::workspace_move))
+        .route("/api/workspace/git-status", get(workspace::workspace_git_status))
+        .route("/api/workspace/git-diff", get(workspace::workspace_git_diff))
+        .route("/api/workspace/git-stage-lines", post(workspace::workspace_git_stage_lines))
+        .route("/api/workspace/git-revert-lines", post(workspace::workspace_git_revert_lines))
+        .route("/api/workspace/syntax-check", post(workspace::workspace_syntax_check))
         .route("/api/notify", post(notification::post_notify))
         .route("/api/history", get(history::get_history).delete(history::delete_history))
+        .route("/api/info", get(server_info))
         .route("/api/plugins", get(plugin::list_plugins))
+        .route("/api/plugins/market", get(plugin::get_market_registry))
+        .route("/api/plugins/market/:id/readme", get(plugin::get_market_readme))
         .route("/api/plugins/dev-link", post(plugin::dev_link_plugin))
-        .route("/api/plugins/install", post(plugin::install_plugin))
-        .route("/api/plugins/:id/update", post(plugin::update_plugin))
+        .merge(
+            Router::new()
+                .route("/api/plugins/install", post(plugin::install_plugin))
+                .route("/api/plugins/install-git", post(plugin::install_from_git))
+                .route("/api/plugins/:id/update", post(plugin::update_plugin))
+                .layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024))
+        )
         .route("/api/plugins/:id", get(plugin::plugin_detail).delete(plugin::delete_plugin))
         .route("/api/plugins/:id/exec", post(plugin::plugin_exec))
         .route("/api/plugins/:id/spawn", get(plugin::plugin_spawn_ws))
+        .route("/api/plugins/:id/process/start", post(plugin::plugin_process_start))
+        .route("/api/plugins/:id/process", get(plugin::plugin_process_list).delete(plugin::plugin_process_stop_all))
+        .route("/api/plugins/:id/process/:pid", delete(plugin::plugin_process_stop))
         .route("/api/plugins/:id/storage", get(plugin::plugin_storage_list))
         .route("/api/plugins/:id/storage/:key", get(plugin::plugin_storage_get).put(plugin::plugin_storage_set).delete(plugin::plugin_storage_delete))
+        .route("/api/plugins/:id/*path", get(plugin::plugin_asset))
         .route("/api/proxy", any(proxy::external_proxy_handler))
         .route("/preview/:port", any(proxy::proxy_handler_root))
         .route("/preview/:port/", any(proxy::proxy_handler_root))
         .route("/preview/:port/*path", any(proxy::proxy_handler_wildcard))
         .route("/assets/*path", get(static_handler))
+        .route("/icons/*path", get(icon_handler))
+        .route("/manifest.json", get(manifest_handler))
+        .route("/logo.png", get(|| async {
+            match StaticFiles::get("logo.png") {
+                Some(content) => {
+                    Response::builder()
+                        .header(header::CONTENT_TYPE, "image/png")
+                        .header(header::CACHE_CONTROL, "public, max-age=86400")
+                        .body(Body::from(content.data.into_owned()))
+                        .unwrap()
+                }
+                None => Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body(Body::from("not found"))
+                    .unwrap(),
+            }
+        }))
         .route("/", get(index))
         .layer(CorsLayer::permissive())
         .with_state(state);
