@@ -32,6 +32,7 @@ const emit = defineEmits<{
   fileClick: [path: string]
   previewLink: [url: string]
   linkActivate: []
+  input: [data: string]
 }>()
 
 const { t } = useI18n()
@@ -82,6 +83,7 @@ onMounted(() => {
   terminal.onShellInfo = (s) => emit('shellInfo', s)
   terminal.onConnect = () => emit('connect')
   terminal.onDisconnect = () => emit('disconnect')
+  terminal.onInput = (data) => emit('input', data)
   terminal.onFileClick = (path) => {
     emit('linkActivate')
     confirmType = 'file'
@@ -121,11 +123,13 @@ defineExpose({ getTerminal, focus, fit, sendData, setOutputListener })
 <style scoped>
 .terminal-pane-container {
   width: 100%;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   position: relative;
 }
 .terminal-pane {
   width: 100%;
   height: 100%;
+  overflow: hidden;
 }
 </style>

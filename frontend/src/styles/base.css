@@ -77,15 +77,22 @@
   padding: 0;
 }
 
-/* Global scrollbar styling */
-* {
+/* Global scrollbar styling (exclude xterm viewport — it manages its own) */
+*:not(.xterm-viewport) {
   scrollbar-width: thin;
   scrollbar-color: #4A4A4A transparent;
 }
-*::-webkit-scrollbar { width: 8px; height: 8px; }
-*::-webkit-scrollbar-track { background: transparent; }
-*::-webkit-scrollbar-thumb { background: #4A4A4A; border-radius: 4px; }
-*::-webkit-scrollbar-thumb:hover { background: #5A5A5A; }
+*:not(.xterm-viewport)::-webkit-scrollbar { width: 8px; height: 8px; }
+*:not(.xterm-viewport)::-webkit-scrollbar-track { background: transparent; }
+*:not(.xterm-viewport)::-webkit-scrollbar-thumb { background: #4A4A4A; border-radius: 4px; }
+*:not(.xterm-viewport)::-webkit-scrollbar-thumb:hover { background: #5A5A5A; }
+
+/* xterm viewport — hide native scrollbar (scroll via wheel/keyboard/touch) */
+.xterm-viewport {
+  overflow-y: hidden !important;
+  scrollbar-width: none;
+}
+.xterm-viewport::-webkit-scrollbar { display: none; }
 
 html, body, #app {
   width: 100%;
