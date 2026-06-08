@@ -13,6 +13,9 @@
       @open-plugin="openPlugin"
     >
       <template #right>
+        <button v-if="isBroadcastActive" type="button" class="tab-bar-icon-btn broadcast-btn" :title="t('split.toggleBroadcast')" @click="splitPane.toggleBroadcast()" @touchend.prevent="splitPane.toggleBroadcast()">
+          <span class="broadcast-dot" />
+        </button>
         <button v-if="activeTabType === 'terminal'" type="button" class="tab-bar-icon-btn" :title="t('app.preview')" @click="openPreview" @touchend.prevent="openPreview"><PanelRight :size="16" /></button>
         <button type="button" class="tab-bar-icon-btn" :title="t('app.settings')" @click="settingsOpen = true" @touchend.prevent="settingsOpen = true"><Settings :size="16" /></button>
         <button v-if="notif.notifications.value.length > 0" type="button" class="tab-bar-icon-btn notif-btn" :title="t('notification.title')" @click="notif.togglePanel()" @touchend.prevent="notif.togglePanel()">
@@ -30,19 +33,28 @@
         :class="{ active: tab.paneId === activePaneId, 'has-preview': tab.type === 'terminal' && tab.previewVisible, ['pos-' + resolvedPosition]: tab.type === 'terminal' && tab.previewVisible }"
       >
         <template v-if="tab.type === 'terminal'">
-          <TerminalPane
-            :ref="(el: any) => registerTermRef(tab.paneId, el)"
-            :pane-id="tab.paneId"
-            @title-change="(t: string) => onTitleChange(tab.paneId, t)"
+          <SplitContainer
+            :layout="tab.layout"
+            :active-pane-id="tab.activePaneId"
+            :broadcast-mode="tab.broadcastMode"
+            :broadcast-activity="tab.broadcastActivity"
+            :allow-close="tab.layout.type === 'split'"
+            @register="registerTermRef"
+            @title-change="onTitleChange"
+            @focus="(id: string) => splitPane.focusPane(id)"
+            @close="(id: string) => onClosePane(tab.paneId, id)"
+            @input="(id: string, data: string) => splitPane.onTerminalInput(id, data)"
             @file-click="onFileClick"
-            @preview-link="(url: string) => onPreviewLink(tab.paneId, url)"
+            @preview-link="onPreviewLink"
             @link-activate="onLinkActivate"
+            @reorder="(src: string, tgt: string, pos: 'left' | 'right' | 'top' | 'bottom') => splitPane.reorderPane(src, tgt, pos)"
+            @divider-drag-end="onDividerDragEnd(tab)"
           />
           <PreviewPanel
             v-if="tab.paneId === activePaneId"
             :ref="setPreviewPanelRef"
             :visible="tab.previewVisible"
-            :pane-id="tab.paneId"
+            :pane-id="tab.activePaneId"
             :address="tab.previewAddress"
             :kind="tab.previewKind"
             :web-url="tab.previewUrl"
@@ -94,6 +106,7 @@ import { ref, reactive, shallowReactive, computed, watch, onMounted, onBeforeUnm
 import TabBar from './components/terminal/TabBar.vue'
 import type { TabInfo } from './components/terminal/TabBar.vue'
 import TerminalPane from './components/terminal/TerminalPane.vue'
+import SplitContainer from './components/split/SplitContainer.vue'
 import CommandPalette from './components/command/CommandPalette.vue'
 import type { Command } from './components/command/CommandPalette.vue'
 import MobileKeyboard from './components/keyboard/MobileKeyboard.vue'
@@ -104,12 +117,15 @@ import CommandBookmarks from './components/command/CommandBookmarks.vue'
 import ServerList from './components/ServerList.vue'
 import StatusBar from './components/terminal/StatusBar.vue'
 import type { SyncServerMsg, SyncClientMsg } from './types/protocol'
+import type { Tab, TerminalTab, PluginTab, PaneLayout } from './types/pane'
+import { migrateTab, getAllLeaves, findLeaf, findFirstLeaf } from './types/pane'
 import { useSettings } from './composables/useSettings'
 import { getApiBase, wsUrlWithToken, hasAuthToken, checkTokenConfigured, setAuthToken } from './composables/apiBase'
 import { isTauri } from './composables/useTransport'
 import { isTouchDevice } from './composables/useTerminal'
 import { useI18n } from './composables/useI18n'
 import { useKeybindings } from './composables/useKeybindings'
+import { useSplitPane } from './composables/useSplitPane'
 import { isWebPreviewInput } from './utils/previewRouting'
 import { initMonitorHistory } from './composables/useMonitor'
 import NotificationPanel from './components/notification/NotificationPanel.vue'
@@ -118,25 +134,6 @@ import { usePluginLoader, handlePluginChanged } from './composables/usePluginLoa
 import PluginView from './components/plugin/PluginView.vue'
 import { Settings, Bell, PanelRight, Plus, X, Star, AppWindow } from 'lucide-vue-next'
 import LoginPage from './components/LoginPage.vue'
-
-interface TerminalTab {
-  type: 'terminal'
-  paneId: string
-  title: string
-  previewVisible: boolean
-  previewAddress: string
-  previewUrl: string
-  previewKind: 'web' | 'files'
-}
-
-interface PluginTab {
-  type: 'plugin'
-  paneId: string
-  title: string
-  pluginId: string
-}
-
-type Tab = TerminalTab | PluginTab
 
 const tabs = ref<Tab[]>([])
 const activePaneId = ref<string | null>(null)
@@ -177,7 +174,11 @@ watch(
 watch(
   () => {
     const tab = tabs.value.find((t) => t.paneId === activePaneId.value)
-    return tab?.title
+    if (!tab) return 'Terminal'
+    if (tab.type === 'terminal') {
+      return findLeaf(tab.layout, tab.activePaneId)?.title ?? 'Terminal'
+    }
+    return tab.title
   },
   (title) => {
     document.title = title || 'Terminal'
@@ -187,6 +188,16 @@ watch(
 
 const termRefs = shallowReactive<Record<string, InstanceType<typeof TerminalPane>>>({})
 const outputListeners = new Set<(paneId: string, data: string) => void>()
+
+const splitPane = useSplitPane({
+  tabs,
+  activePaneId,
+  termRefs,
+  genPaneId,
+  sendSync,
+  sendLayoutSync,
+  persist,
+})
 
 function registerTermRef(paneId: string, el: InstanceType<typeof TerminalPane> | null) {
   if (el) {
@@ -204,22 +215,42 @@ let viewportRefitTimer = 0
 function onViewportResize() {
   clearTimeout(viewportRefitTimer)
   viewportRefitTimer = window.setTimeout(() => {
-    if (activePaneId.value && termRefs[activePaneId.value]) {
-      termRefs[activePaneId.value].fit()
+    if (!activePaneId.value) return
+    const tab = tabs.value.find(t => t.paneId === activePaneId.value)
+    if (!tab || tab.type !== 'terminal') return
+    for (const leaf of getAllLeaves(tab.layout)) {
+      termRefs[leaf.paneId]?.fit()
     }
   }, 100)
 }
 
 const tabList = computed<TabInfo[]>(() =>
-  tabs.value.map((t) => ({ paneId: t.paneId, title: t.title })),
+  tabs.value.map((t) => ({
+    paneId: t.paneId,
+    title: t.type === 'terminal'
+      ? (findLeaf(t.layout, t.activePaneId)?.title ?? 'Terminal')
+      : t.title,
+  })),
 )
 const activeTabType = computed(() => {
   const tab = tabs.value.find((t) => t.paneId === activePaneId.value)
   return tab?.type ?? 'terminal'
 })
+const isBroadcastActive = computed(() => {
+  const tab = tabs.value.find(t => t.paneId === activePaneId.value)
+  return tab?.type === 'terminal' && tab.broadcastMode && getAllLeaves(tab.layout).length > 1
+})
 const paneLabels = computed(() => {
   const m: Record<string, string> = {}
-  for (const t of tabs.value) m[t.paneId] = t.title
+  for (const t of tabs.value) {
+    if (t.type === 'terminal') {
+      for (const leaf of getAllLeaves(t.layout)) {
+        m[leaf.paneId] = leaf.title
+      }
+    } else {
+      m[t.paneId] = t.title
+    }
+  }
   return m
 })
 
@@ -236,13 +267,26 @@ function sendSync(msg: SyncClientMsg) {
   }
 }
 
+function sendLayoutSync(tabPaneId: string, layout: any, activePaneIdVal: string) {
+  sendSync({ type: 'update_layout', pane_id: tabPaneId, layout, active_pane_id: activePaneIdVal })
+}
+
+function onDividerDragEnd(tab: Tab) {
+  if (tab.type === 'terminal') {
+    persist()
+    sendLayoutSync(tab.paneId, tab.layout, tab.activePaneId)
+  }
+}
+
 function persist() {
   const state = tabs.value.map((t) => {
     if (t.type === 'terminal') {
       return {
         type: t.type,
         paneId: t.paneId,
-        title: t.title,
+        layout: t.layout,
+        activePaneId: t.activePaneId,
+        broadcastMode: t.broadcastMode,
         previewVisible: t.previewVisible,
         previewAddress: t.previewAddress,
         previewUrl: t.previewUrl,
@@ -265,7 +309,15 @@ function getSavedTab(paneId: string): any {
     const raw = localStorage.getItem('dinotty_tabs')
     if (!raw) return null
     const { tabs: savedTabs } = JSON.parse(raw)
-    return savedTabs?.find((t: any) => t.paneId === paneId) ?? null
+    // Search by tab paneId first
+    const direct = savedTabs?.find((t: any) => t.paneId === paneId)
+    if (direct) return direct
+    // Search within layouts for leaf paneId
+    return savedTabs?.find((t: any) => {
+      if (!t.layout) return false
+      const leaves = getAllLeaves(t.layout)
+      return leaves.some(l => l.paneId === paneId)
+    }) ?? null
   } catch {
     return null
   }
@@ -278,26 +330,33 @@ function getSavedTitle(paneId: string): string | null {
 const DEFAULT_PREVIEW_URL = ''
 
 function newTab() {
+  const tabId = genPaneId()
   const paneId = genPaneId()
   tabs.value.push({
     type: 'terminal',
-    paneId,
-    title: 'Terminal',
+    paneId: tabId,
+    layout: { type: 'leaf', paneId, title: 'Terminal', ratio: 1, zoomed: false },
+    activePaneId: paneId,
+    broadcastMode: false,
+    broadcastActivity: 0,
     previewVisible: false,
     previewAddress: '',
     previewUrl: '',
     previewKind: 'web',
   })
-  activePaneId.value = paneId
+  activePaneId.value = tabId
   sendSync({ type: 'create_tab', pane_id: paneId })
   persist()
   nextTick(() => focusActive())
 }
 
-function activateTab(paneId: string) {
-  activePaneId.value = paneId
-  notif.clearPaneUnread(paneId)
-  sendSync({ type: 'activate_tab', pane_id: paneId })
+function activateTab(tabId: string) {
+  activePaneId.value = tabId
+  const tab = tabs.value.find(t => t.paneId === tabId)
+  if (tab?.type === 'terminal') {
+    notif.clearPaneUnread(tab.activePaneId)
+    sendSync({ type: 'activate_tab', pane_id: tab.activePaneId })
+  }
   persist()
   nextTick(() => focusActive())
 }
@@ -311,62 +370,92 @@ function reorderTab(fromId: string, toId: string) {
   persist()
 }
 
-function closeTab(paneId: string) {
+function onClosePane(tabId: string, paneId: string) {
+  const closed = splitPane.closePane(paneId)
+  if (!closed) {
+    closeTab(tabId)
+  }
+}
+
+function closeTab(tabId: string) {
+  const tab = tabs.value.find(t => t.paneId === tabId)
+  if (!tab) return
+
+  if (tab.type === 'terminal') {
+    // Clean up all leaf pane refs and send close for each
+    for (const leaf of getAllLeaves(tab.layout)) {
+      delete termRefs[leaf.paneId]
+      sendSync({ type: 'close_tab', pane_id: leaf.paneId })
+    }
+  }
+
   if (tabs.value.length === 1) {
-    const oldTab = tabs.value[0]
-    sendSync({ type: 'close_tab', pane_id: oldTab.paneId })
+    const newTabId = genPaneId()
     const newPaneId = genPaneId()
-    delete termRefs[oldTab.paneId]
-    // Replace with a fresh terminal tab
     tabs.value[0] = {
       type: 'terminal',
-      paneId: newPaneId,
-      title: 'Terminal',
+      paneId: newTabId,
+      layout: { type: 'leaf', paneId: newPaneId, title: 'Terminal', ratio: 1, zoomed: false },
+      activePaneId: newPaneId,
+      broadcastMode: false,
+      broadcastActivity: 0,
       previewVisible: false,
       previewAddress: '',
       previewUrl: '',
       previewKind: 'web',
     }
-    activePaneId.value = newPaneId
+    activePaneId.value = newTabId
     sendSync({ type: 'create_tab', pane_id: newPaneId })
     persist()
     return
   }
 
-  const idx = tabs.value.findIndex((t) => t.paneId === paneId)
+  const idx = tabs.value.findIndex((t) => t.paneId === tabId)
   if (idx === -1) return
 
-  delete termRefs[paneId]
   tabs.value.splice(idx, 1)
 
-  if (activePaneId.value === paneId) {
+  if (activePaneId.value === tabId) {
     const newIdx = Math.min(idx, tabs.value.length - 1)
     activePaneId.value = tabs.value[newIdx].paneId
   }
 
-  sendSync({ type: 'close_tab', pane_id: paneId })
   persist()
   nextTick(() => focusActive())
 }
 
 function focusActive() {
-  if (activePaneId.value && termRefs[activePaneId.value]) {
-    termRefs[activePaneId.value].focus()
-    termRefs[activePaneId.value].fit()
+  if (!activePaneId.value) return
+  const tab = tabs.value.find(t => t.paneId === activePaneId.value)
+  if (!tab) return
+  if (tab.type === 'terminal') {
+    const paneId = tab.activePaneId
+    termRefs[paneId]?.focus()
+    termRefs[paneId]?.fit()
   }
 }
 
 function onTitleChange(paneId: string, title: string) {
-  const tab = tabs.value.find((t) => t.paneId === paneId)
+  // Find terminal tab containing this leaf pane
+  const tab = tabs.value.find(t => {
+    if (t.type !== 'terminal') return false
+    return !!findLeaf(t.layout, paneId)
+  }) as TerminalTab | undefined
   if (tab) {
-    tab.title = title || 'Terminal'
-    persist()
+    const leaf = findLeaf(tab.layout, paneId)
+    if (leaf) {
+      leaf.title = title || 'Terminal'
+      persist()
+    }
   }
 }
 
-function onPreviewLink(paneId: string, url: string) {
-  const tab = tabs.value.find((t) => t.paneId === paneId)
-  if (!tab || tab.type !== 'terminal') return
+function onPreviewLink(leafPaneId: string, url: string) {
+  const tab = tabs.value.find(t => {
+    if (t.type !== 'terminal') return false
+    return !!findLeaf(t.layout, leafPaneId)
+  }) as TerminalTab | undefined
+  if (!tab) return
   tab.previewKind = 'web'
   tab.previewUrl = url
   tab.previewAddress = url
@@ -374,8 +463,8 @@ function onPreviewLink(paneId: string, url: string) {
   persist()
 }
 
-function closePreview(paneId: string) {
-  const tab = tabs.value.find((t) => t.paneId === paneId)
+function closePreview(tabId: string) {
+  const tab = tabs.value.find((t) => t.paneId === tabId)
   if (tab && tab.type === 'terminal') {
     tab.previewVisible = false
     persist()
@@ -383,9 +472,9 @@ function closePreview(paneId: string) {
 }
 
 function openPreview() {
-  const pid = activePaneId.value
-  if (!pid) return
-  const tab = tabs.value.find((t) => t.paneId === pid)
+  const tabId = activePaneId.value
+  if (!tabId) return
+  const tab = tabs.value.find((t) => t.paneId === tabId)
   if (!tab || tab.type !== 'terminal') return
   if (!tab.previewAddress.trim()) {
     tab.previewKind = 'files'
@@ -402,9 +491,9 @@ function openPreview() {
 }
 
 function onFileClick(path: string) {
-  const pid = activePaneId.value
-  if (!pid) return
-  const tab = tabs.value.find((t) => t.paneId === pid)
+  const tabId = activePaneId.value
+  if (!tabId) return
+  const tab = tabs.value.find((t) => t.paneId === tabId)
   if (!tab || tab.type !== 'terminal') return
   tab.previewKind = 'files'
   tab.previewAddress = path
@@ -414,8 +503,12 @@ function onFileClick(path: string) {
 }
 
 function getSendFn(): ((data: string) => void) | null {
-  if (!activePaneId.value || !termRefs[activePaneId.value]) return null
-  return (data: string) => termRefs[activePaneId.value!]?.sendData(data)
+  if (!activePaneId.value) return null
+  const tab = tabs.value.find(t => t.paneId === activePaneId.value)
+  if (!tab || tab.type !== 'terminal') return null
+  const paneId = tab.activePaneId
+  if (!termRefs[paneId]) return null
+  return (data: string) => termRefs[paneId]?.sendData(data)
 }
 
 async function onLoginSuccess() {
@@ -456,7 +549,9 @@ function onTerminalTouch(e: TouchEvent) {
   if (target.closest('.terminal-pane-container')) {
     // Don't show keyboard when tapping a link (file path or URL)
     if (linkJustActivated) { linkJustActivated = false; return }
-    const term = activePaneId.value ? termRefs[activePaneId.value]?.getTerminal() : null
+    const tab = tabs.value.find(t => t.paneId === activePaneId.value)
+    const paneId = tab?.type === 'terminal' ? tab.activePaneId : null
+    const term = paneId ? termRefs[paneId]?.getTerminal() : null
     if (term && term.touchMoved) {
       term.touchMoved = false
       if (kbVisible.value) kbVisible.value = false
@@ -517,12 +612,22 @@ window.__dinotty_terminal_api = {
     termRefs[paneId]?.sendData(data)
   },
   activePaneId() {
-    return activePaneId.value
+    const tab = tabs.value.find(t => t.paneId === activePaneId.value)
+    return tab?.type === 'terminal' ? tab.activePaneId : activePaneId.value
   },
   listPanes() {
-    return tabs.value
-      .filter(t => t.type === 'terminal')
-      .map(t => ({ id: t.paneId, title: t.title, active: t.paneId === activePaneId.value }))
+    const result: { id: string; title: string; active: boolean }[] = []
+    for (const t of tabs.value) {
+      if (t.type !== 'terminal') continue
+      for (const leaf of getAllLeaves(t.layout)) {
+        result.push({
+          id: leaf.paneId,
+          title: leaf.title,
+          active: t.paneId === activePaneId.value && leaf.paneId === t.activePaneId,
+        })
+      }
+    }
+    return result
   },
   onOutput(callback: (paneId: string, data: string) => void) {
     outputListeners.add(callback)
@@ -530,7 +635,8 @@ window.__dinotty_terminal_api = {
   },
   async createTab(command?: string) {
     newTab()
-    return activePaneId.value ?? ''
+    const tab = tabs.value.find(t => t.paneId === activePaneId.value)
+    return tab?.type === 'terminal' ? tab.activePaneId : ''
   },
 }
 window.__dinotty_ui_notify = (message: string, level?: 'info' | 'warn' | 'error') => {
@@ -555,8 +661,31 @@ const paletteCommands = computed<Command[]>(() => {
       subtitle: 'Close the current tab',
       kbd: formatBinding(getBinding('closeTab')),
       action: () => {
-        if (activePaneId.value) closeTab(activePaneId.value)
+        if (activePaneId.value) {
+          const tab = tabs.value.find(t => t.paneId === activePaneId.value)
+          if (tab?.type === 'terminal' && getAllLeaves(tab.layout).length > 1) {
+            if (!splitPane.closePane(tab.activePaneId)) {
+              closeTab(activePaneId.value)
+            }
+          } else {
+            closeTab(activePaneId.value)
+          }
+        }
       },
+    },
+    {
+      icon: '⊞',
+      title: 'Split Horizontal',
+      subtitle: 'Split pane left/right',
+      kbd: formatBinding(getBinding('splitHorizontal')),
+      action: () => splitPane.splitPane('horizontal'),
+    },
+    {
+      icon: '⊟',
+      title: 'Split Vertical',
+      subtitle: 'Split pane top/bottom',
+      kbd: formatBinding(getBinding('splitVertical')),
+      action: () => splitPane.splitPane('vertical'),
     },
     {
       icon: '★',
@@ -633,7 +762,25 @@ function onGlobalKeydown(e: KeyboardEvent) {
     togglePalette: () => paletteRef.value?.toggle(),
     openBookmarks: () => openQuickPicks(),
     newTab: () => newTab(),
-    closeTab: () => { if (activePaneId.value) closeTab(activePaneId.value) },
+    closeTab: () => {
+      if (!activePaneId.value) return
+      const tab = tabs.value.find(t => t.paneId === activePaneId.value)
+      if (tab?.type === 'terminal' && getAllLeaves(tab.layout).length > 1) {
+        // Multi-pane: close current pane
+        if (!splitPane.closePane(tab.activePaneId)) {
+          closeTab(activePaneId.value)
+        }
+      } else {
+        closeTab(activePaneId.value)
+      }
+    },
+    splitHorizontal: () => splitPane.splitPane('horizontal'),
+    splitVertical: () => splitPane.splitPane('vertical'),
+    toggleBroadcast: () => splitPane.toggleBroadcast(),
+    toggleZoom: () => splitPane.toggleZoom(),
+    equalizePanes: () => splitPane.equalizePanes(),
+    focusNextPane: () => splitPane.focusNext(),
+    focusPrevPane: () => splitPane.focusPrev(),
   }
 
   for (const [id, action] of Object.entries(keyActions)) {
@@ -642,6 +789,30 @@ function onGlobalKeydown(e: KeyboardEvent) {
     if (eventKey === binding.key.toLowerCase() && e.shiftKey === binding.shift) {
       e.preventDefault()
       action()
+      return
+    }
+  }
+
+  // Cmd+Option+Arrow: focus neighbor pane (spatial navigation)
+  if (e.altKey && !e.shiftKey) {
+    const dirMap: Record<string, 'left' | 'right' | 'up' | 'down'> = {
+      ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down',
+    }
+    if (dirMap[e.key]) {
+      e.preventDefault()
+      splitPane.focusNeighbor(dirMap[e.key])
+      return
+    }
+  }
+
+  // Cmd+Option+Shift+Arrow: keyboard resize
+  if (e.altKey && e.shiftKey) {
+    const dirMap: Record<string, 'left' | 'right' | 'up' | 'down'> = {
+      ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down',
+    }
+    if (dirMap[e.key]) {
+      e.preventDefault()
+      splitPane.keyboardResize(dirMap[e.key])
       return
     }
   }
@@ -675,19 +846,35 @@ async function connectSyncWS() {
     }
 
     if (msg.type === 'tab_list') {
-      const localPaneIds = new Set(tabs.value.map((t) => t.paneId))
+      // Collect all local leaf paneIds
+      const localLeafIds = new Set<string>()
+      for (const t of tabs.value) {
+        if (t.type === 'terminal') {
+          for (const leaf of getAllLeaves(t.layout)) {
+            localLeafIds.add(leaf.paneId)
+          }
+        }
+      }
 
+      // Create tabs for any server paneIds we don't have locally
       for (const tab of msg.tabs) {
-        if (!localPaneIds.has(tab.pane_id)) {
-          const saved = getSavedTab(tab.pane_id)
+        if (!localLeafIds.has(tab.pane_id)) {
+          // Prefer server layout, then localStorage, then default single leaf
+          const serverLayout = tab.layout ?? null
+          const saved = !serverLayout ? getSavedTab(tab.pane_id) : null
+          const migrated = saved ? migrateTab(saved) : null
+          const tabId = genPaneId()
           tabs.value.push({
             type: 'terminal',
-            paneId: tab.pane_id,
-            title: saved?.title || 'Terminal',
-            previewVisible: saved?.previewVisible || false,
-            previewAddress: saved?.previewAddress || '',
-            previewUrl: saved?.previewUrl || '',
-            previewKind: saved?.previewKind || 'web',
+            paneId: tabId,
+            layout: serverLayout ?? migrated?.layout ?? { type: 'leaf', paneId: tab.pane_id, title: 'Terminal', ratio: 1, zoomed: false },
+            activePaneId: tab.active_pane_id ?? migrated?.activePaneId ?? tab.pane_id,
+            broadcastMode: false,
+            broadcastActivity: 0,
+            previewVisible: migrated?.previewVisible ?? false,
+            previewAddress: migrated?.previewAddress ?? '',
+            previewUrl: migrated?.previewUrl ?? '',
+            previewKind: migrated?.previewKind ?? 'web',
           })
         }
       }
@@ -710,16 +897,29 @@ async function connectSyncWS() {
         }
       } catch { /* noop */ }
 
-      const serverIds = new Set(msg.tabs.map((t) => t.pane_id))
-      tabs.value = tabs.value.filter((t) => t.type === 'plugin' || serverIds.has(t.paneId))
+      // Remove terminal tabs whose leaf paneIds are no longer on the server
+      const serverTabIds = new Set(msg.tabs.map((t) => t.pane_id))
+      const serverLeafIds = new Set(msg.tabs.flatMap((t) => t.layout ? getAllLeaves(t.layout).map(l => l.paneId) : []))
+      tabs.value = tabs.value.filter((t) => {
+        if (t.type === 'plugin') return true
+        // Keep tab if it matches a server tab by tabId, or if at least one leaf is in a server layout
+        return serverTabIds.has(t.paneId) || getAllLeaves(t.layout).some(l => serverLeafIds.has(l.paneId))
+      })
 
       if (msg.active_pane_id) {
         const cur = tabs.value.find(t => t.paneId === activePaneId.value)
-        console.log('[tab_list] active_pane_id:', msg.active_pane_id, 'current:', activePaneId.value, 'curType:', cur?.type)
         if (!cur || cur.type !== 'plugin') {
-          activePaneId.value = msg.active_pane_id
-        } else {
-          console.log('[tab_list] skipping override, plugin tab is active')
+          // Find the tab containing this leaf paneId
+          const targetTab = tabs.value.find(t => {
+            if (t.type !== 'terminal') return false
+            return !!findLeaf(t.layout, msg.active_pane_id!)
+          }) as TerminalTab | undefined
+          if (targetTab) {
+            suppressSync = true
+            targetTab.activePaneId = msg.active_pane_id
+            activePaneId.value = targetTab.paneId
+            suppressSync = false
+          }
         }
       }
 
@@ -729,11 +929,20 @@ async function connectSyncWS() {
 
       persist()
     } else if (msg.type === 'tab_created') {
-      if (!tabs.value.some((t) => t.paneId === msg.pane_id)) {
+      // Check if this leaf paneId already exists in any tab
+      const exists = tabs.value.some(t => {
+        if (t.type !== 'terminal') return false
+        return !!findLeaf(t.layout, msg.pane_id)
+      })
+      if (!exists) {
+        const tabId = genPaneId()
         tabs.value.push({
           type: 'terminal',
-          paneId: msg.pane_id,
-          title: 'Terminal',
+          paneId: tabId,
+          layout: { type: 'leaf', paneId: msg.pane_id, title: 'Terminal', ratio: 1, zoomed: false },
+          activePaneId: msg.pane_id,
+          broadcastMode: false,
+      broadcastActivity: 0,
           previewVisible: false,
           previewAddress: '',
           previewUrl: '',
@@ -741,22 +950,64 @@ async function connectSyncWS() {
         })
       }
     } else if (msg.type === 'tab_closed') {
-      const idx = tabs.value.findIndex((t) => t.paneId === msg.pane_id)
-      if (idx !== -1 && tabs.value.length > 1) {
-        delete termRefs[msg.pane_id]
-        tabs.value.splice(idx, 1)
-        if (activePaneId.value === msg.pane_id) {
-          activePaneId.value = tabs.value[Math.min(idx, tabs.value.length - 1)].paneId
+      // Find which tab contains this leaf paneId
+      const tabIdx = tabs.value.findIndex(t => {
+        if (t.type !== 'terminal') return false
+        return !!findLeaf(t.layout, msg.pane_id)
+      })
+      if (tabIdx !== -1) {
+        const tab = tabs.value[tabIdx] as TerminalTab
+        const leaves = getAllLeaves(tab.layout)
+        if (leaves.length <= 1) {
+          // Last leaf, remove the tab
+          if (tabs.value.length > 1) {
+            delete termRefs[msg.pane_id]
+            tabs.value.splice(tabIdx, 1)
+            if (activePaneId.value === tab.paneId) {
+              activePaneId.value = tabs.value[Math.min(tabIdx, tabs.value.length - 1)].paneId
+            }
+            persist()
+          }
         }
-        persist()
+        // Multi-leaf: the backend only closes individual panes, which we handle via closePane
       }
     } else if (msg.type === 'tab_activated') {
       const cur = tabs.value.find(t => t.paneId === activePaneId.value)
-      console.log('[tab_activated] pane_id:', msg.pane_id, 'current:', activePaneId.value, 'curType:', cur?.type)
-      if (activePaneId.value !== msg.pane_id && (!cur || cur.type !== 'plugin')) {
+      if (!cur || cur.type !== 'plugin') {
+        // Find the tab containing this leaf paneId
+        const targetTab = tabs.value.find(t => {
+          if (t.type !== 'terminal') return false
+          return !!findLeaf(t.layout, msg.pane_id)
+        }) as TerminalTab | undefined
+        if (targetTab && activePaneId.value !== targetTab.paneId) {
+          suppressSync = true
+          targetTab.activePaneId = msg.pane_id
+          activePaneId.value = targetTab.paneId
+          suppressSync = false
+        }
+      }
+    } else if (msg.type === 'layout_updated') {
+      // Find the tab by its pane_id (tab-level id)
+      const targetTab = tabs.value.find(t => t.paneId === msg.pane_id) as TerminalTab | undefined
+      if (targetTab) {
         suppressSync = true
-        activePaneId.value = msg.pane_id
+        targetTab.layout = msg.layout
+        targetTab.activePaneId = msg.active_pane_id
         suppressSync = false
+
+        // Remove orphaned tabs whose sole leaf paneId is now inside this layout
+        const updatedLeafIds = new Set(getAllLeaves(targetTab.layout).map(l => l.paneId))
+        tabs.value = tabs.value.filter(t => {
+          if (t.type !== 'terminal') return true
+          if (t.paneId === targetTab.paneId) return true
+          const leaves = getAllLeaves(t.layout)
+          return !leaves.every(l => updatedLeafIds.has(l.paneId))
+        })
+
+        persist()
+        nextTick(() => {
+          getAllLeaves(targetTab.layout).forEach(l => termRefs[l.paneId]?.fit())
+        })
       }
     } else if (msg.type === 'plugin_changed') {
       console.log('[plugin_changed] plugin_id:', msg.plugin_id, 'change:', msg.change)
@@ -841,7 +1092,9 @@ onBeforeUnmount(() => {
 .tab-page.active.has-preview.pos-bottom {
   flex-direction: column;
 }
-.tab-page.active.has-preview > .terminal-pane-container {
+.tab-page.active.has-preview > .terminal-pane-container,
+.tab-page.active.has-preview > .split-container,
+.tab-page.active.has-preview > .split-leaf {
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -854,7 +1107,11 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 .tab-page.active.has-preview.pos-left > .terminal-pane-container,
-.tab-page.active.has-preview.pos-top > .terminal-pane-container {
+.tab-page.active.has-preview.pos-left > .split-container,
+.tab-page.active.has-preview.pos-left > .split-leaf,
+.tab-page.active.has-preview.pos-top > .terminal-pane-container,
+.tab-page.active.has-preview.pos-top > .split-container,
+.tab-page.active.has-preview.pos-top > .split-leaf {
   order: 1;
 }
 .tab-page.active.has-preview.pos-left > .preview-panel,
@@ -862,12 +1119,32 @@ onBeforeUnmount(() => {
   order: 0;
 }
 .tab-page.active.has-preview.pos-top > .terminal-pane-container,
-.tab-page.active.has-preview.pos-bottom > .terminal-pane-container {
+.tab-page.active.has-preview.pos-top > .split-container,
+.tab-page.active.has-preview.pos-top > .split-leaf,
+.tab-page.active.has-preview.pos-bottom > .terminal-pane-container,
+.tab-page.active.has-preview.pos-bottom > .split-container,
+.tab-page.active.has-preview.pos-bottom > .split-leaf {
   flex: 2;
 }
 .tab-page.active.has-preview.pos-top > .preview-panel,
 .tab-page.active.has-preview.pos-bottom > .preview-panel {
   flex: 1;
+}
+.broadcast-btn {
+  position: relative;
+  color: #ef4444;
+}
+.broadcast-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ef4444;
+  animation: broadcast-pulse 1s infinite;
+}
+@keyframes broadcast-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 .notif-btn {
   position: relative;

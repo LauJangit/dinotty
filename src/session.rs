@@ -102,6 +102,28 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
+fn collect_leaf_pane_ids(layout: &serde_json::Value) -> Vec<String> {
+    let mut ids = Vec::new();
+    collect_leaf_ids_recursive(layout, &mut ids);
+    ids
+}
+
+fn collect_leaf_ids_recursive(node: &serde_json::Value, ids: &mut Vec<String>) {
+    if let Some(node_type) = node.get("type").and_then(|v| v.as_str()) {
+        if node_type == "leaf" {
+            if let Some(pane_id) = node.get("paneId").and_then(|v| v.as_str()) {
+                ids.push(pane_id.to_string());
+            }
+        } else if node_type == "split" {
+            if let Some(children) = node.get("children").and_then(|v| v.as_array()) {
+                for child in children {
+                    collect_leaf_ids_recursive(child, ids);
+                }
+            }
+        }
+    }
+}
+
 fn parse_title_cwd(title: &str, home: &Path) -> Option<PathBuf> {
     let at = title.rfind('@')?;
     let tail = title.get(at + 1..)?;
@@ -126,6 +148,7 @@ pub struct SessionManager {
     pub sessions: DashMap<String, Arc<Session>>,
     pub sync_clients: Arc<Mutex<Vec<mpsc::UnboundedSender<String>>>>,
     pub active_pane_id: Arc<Mutex<Option<String>>>,
+    pub tab_layouts: DashMap<String, serde_json::Value>,
 }
 
 #[derive(Serialize)]
@@ -135,6 +158,7 @@ pub enum SyncMsg {
     TabCreated { pane_id: String },
     TabClosed { pane_id: String },
     TabActivated { pane_id: String },
+    LayoutUpdated { pane_id: String, layout: serde_json::Value, active_pane_id: String },
     PluginChanged { plugin_id: String, change: String },
     ProcessExited { plugin_id: String, pid: u32, exit_code: Option<i32> },
 }
@@ -142,6 +166,10 @@ pub enum SyncMsg {
 #[derive(Serialize, Clone)]
 pub struct TabInfo {
     pub pane_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layout: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_pane_id: Option<String>,
 }
 
 impl SessionManager {
@@ -150,6 +178,7 @@ impl SessionManager {
             sessions: DashMap::new(),
             sync_clients: Arc::new(Mutex::new(Vec::new())),
             active_pane_id: Arc::new(Mutex::new(None)),
+            tab_layouts: DashMap::new(),
         }
     }
 
@@ -170,7 +199,41 @@ impl SessionManager {
     }
 
     pub fn tab_list(&self) -> (Vec<TabInfo>, Option<String>) {
-        let tabs = self.sessions.iter().map(|e| TabInfo { pane_id: e.key().clone() }).collect();
+        // Collect stale tab layout keys (layouts whose leaf pane_ids no longer exist)
+        let stale: Vec<String> = self.tab_layouts.iter().filter_map(|e| {
+            let v = e.value();
+            let layout = v.get("layout")?;
+            let leaf_ids = collect_leaf_pane_ids(layout);
+            if leaf_ids.is_empty() || !leaf_ids.iter().any(|id| self.sessions.contains_key(id)) {
+                Some(e.key().clone())
+            } else {
+                None
+            }
+        }).collect();
+        for key in stale {
+            self.tab_layouts.remove(&key);
+        }
+
+        let mut tabs: Vec<TabInfo> = self.tab_layouts.iter().map(|e| {
+            let v = e.value();
+            let pane_id = e.key().clone();
+            let layout = v.get("layout").cloned();
+            let active_pane_id = v.get("active_pane_id").and_then(|v| v.as_str()).map(String::from);
+            TabInfo { pane_id, layout, active_pane_id }
+        }).collect();
+
+        // Include sessions that don't belong to any existing tab (neither as tab id nor as a leaf)
+        let leaf_ids: std::collections::HashSet<String> = tabs.iter()
+            .filter_map(|t| t.layout.as_ref())
+            .flat_map(|layout| collect_leaf_pane_ids(layout))
+            .collect();
+        for entry in self.sessions.iter() {
+            let pane_id = entry.key().clone();
+            if !tabs.iter().any(|t| t.pane_id == pane_id) && !leaf_ids.contains(&pane_id) {
+                tabs.push(TabInfo { pane_id, layout: None, active_pane_id: None });
+            }
+        }
+
         let active = self.active_pane_id.lock().unwrap().clone();
         (tabs, active)
     }

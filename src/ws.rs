@@ -38,6 +38,7 @@ pub enum SyncClientMsg {
     ActivateTab { pane_id: String },
     CreateTab { pane_id: String },
     CloseTab { pane_id: String },
+    UpdateLayout { pane_id: String, layout: serde_json::Value, active_pane_id: String },
 }
 
 #[derive(Serialize)]
@@ -99,7 +100,19 @@ async fn handle_sync_socket(socket: WebSocket, manager: Arc<SessionManager>) {
                         }
                         SyncClientMsg::CloseTab { pane_id } => {
                             manager.sessions.remove(&pane_id);
+                            manager.tab_layouts.remove(&pane_id);
                             manager.broadcast_sync(&SyncMsg::TabClosed { pane_id });
+                        }
+                        SyncClientMsg::UpdateLayout { pane_id, layout, active_pane_id } => {
+                            manager.tab_layouts.insert(pane_id.clone(), serde_json::json!({
+                                "layout": layout,
+                                "active_pane_id": active_pane_id,
+                            }));
+                            manager.broadcast_sync(&SyncMsg::LayoutUpdated {
+                                pane_id,
+                                layout,
+                                active_pane_id,
+                            });
                         }
                     }
                 }

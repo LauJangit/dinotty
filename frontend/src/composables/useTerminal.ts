@@ -68,6 +68,7 @@ export class TerminalInstance {
   onFileClick: ((path: string) => void) | null = null
   onPreviewLink: ((url: string) => void) | null = null
   onRawOutput: ((data: string) => void) | null = null
+  onInput: ((data: string) => void) | null = null
 
   constructor(paneId: string) {
     this.paneId = paneId
@@ -331,6 +332,7 @@ export class TerminalInstance {
 
     this.xterm!.onData((data) => {
       if (this._compositionGuard && !this._compositionGuard(data)) return
+      this.onInput?.(data)
       this._transport?.send({ type: 'input', data })
     })
   }
@@ -383,6 +385,7 @@ export class TerminalInstance {
       this._onDataRegistered = true
       this.xterm!.onData((data) => {
         if (this._compositionGuard && !this._compositionGuard(data)) return
+        this.onInput?.(data)
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
           this.ws.send(JSON.stringify({ type: 'input', data } as ClientMsg))
         }

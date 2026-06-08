@@ -17,6 +17,13 @@ const defs: KeyBindingDef[] = [
   { id: 'openBookmarks', defaultBinding: { key: 'b', shift: true }, icon: '★', titleKey: 'keybinding.openBookmarks' },
   { id: 'newTab', defaultBinding: { key: 't', shift: false }, icon: '＋', titleKey: 'keybinding.newTab' },
   { id: 'closeTab', defaultBinding: { key: 'w', shift: false }, icon: '✕', titleKey: 'keybinding.closeTab' },
+  { id: 'splitHorizontal', defaultBinding: { key: 'd', shift: false }, icon: '⊞', titleKey: 'keybinding.splitHorizontal' },
+  { id: 'splitVertical', defaultBinding: { key: 'd', shift: true }, icon: '⊟', titleKey: 'keybinding.splitVertical' },
+  { id: 'toggleBroadcast', defaultBinding: { key: 'i', shift: true }, icon: '⬤', titleKey: 'keybinding.toggleBroadcast' },
+  { id: 'toggleZoom', defaultBinding: { key: 'Enter', shift: true }, icon: '⤢', titleKey: 'keybinding.toggleZoom' },
+  { id: 'equalizePanes', defaultBinding: { key: '=', shift: false }, icon: '⊞', titleKey: 'keybinding.equalizePanes' },
+  { id: 'focusNextPane', defaultBinding: { key: ']', shift: false }, icon: '→', titleKey: 'keybinding.focusNextPane' },
+  { id: 'focusPrevPane', defaultBinding: { key: '[', shift: false }, icon: '←', titleKey: 'keybinding.focusPrevPane' },
 ]
 
 export function useKeybindings() {

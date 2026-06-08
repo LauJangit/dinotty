@@ -260,9 +260,11 @@ async function onMarketInstall(mp: MarketPlugin) {
     setStatus(`Installed ${mp.name} v${mp.version}`, true)
     await loadAll()
     await fetchMarket()
-    // Update detail plugin data
-    const updated = marketPlugins.value.find(p => p.id === mp.id)
-    if (updated) detailPlugin.value = updated
+    // Update detail plugin data only if already in detail view
+    if (detailPlugin.value?.id === mp.id) {
+      const updated = marketPlugins.value.find(p => p.id === mp.id)
+      if (updated) detailPlugin.value = updated
+    }
   } else {
     setStatus(result.error || 'Install failed', false)
   }

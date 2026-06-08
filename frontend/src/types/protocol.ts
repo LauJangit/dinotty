@@ -32,7 +32,7 @@ export type ServerMsg = OutputMsg | ShellInfoMsg | ReconnectedMsg
 // Sync WS messages
 export interface SyncTabList {
   type: 'tab_list'
-  tabs: { pane_id: string }[]
+  tabs: { pane_id: string; layout?: any; active_pane_id?: string }[]
   active_pane_id: string | null
 }
 
@@ -57,7 +57,14 @@ export interface SyncPluginChanged {
   change: string
 }
 
-export type SyncServerMsg = SyncTabList | SyncTabCreated | SyncTabClosed | SyncTabActivated | SyncPluginChanged
+export interface SyncLayoutUpdated {
+  type: 'layout_updated'
+  pane_id: string
+  layout: any
+  active_pane_id: string
+}
+
+export type SyncServerMsg = SyncTabList | SyncTabCreated | SyncTabClosed | SyncTabActivated | SyncPluginChanged | SyncLayoutUpdated
 
 export interface SyncCreateTab {
   type: 'create_tab'
@@ -74,4 +81,11 @@ export interface SyncActivateTab {
   pane_id: string
 }
 
-export type SyncClientMsg = SyncCreateTab | SyncCloseTab | SyncActivateTab
+export interface SyncUpdateLayout {
+  type: 'update_layout'
+  pane_id: string
+  layout: any
+  active_pane_id: string
+}
+
+export type SyncClientMsg = SyncCreateTab | SyncCloseTab | SyncActivateTab | SyncUpdateLayout
