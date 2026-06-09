@@ -92,6 +92,28 @@ function onDoubleClick() {
   transition: background 0.15s;
   z-index: 5;
   position: relative;
+  /* Expand touch target area for mobile — visual size stays 5px */
+  touch-action: none;
+}
+
+.split-divider::before {
+  content: '';
+  position: absolute;
+  z-index: 6;
+}
+
+.split-divider.horizontal::before {
+  top: -10px;
+  bottom: -10px;
+  left: -10px;
+  right: -10px;
+}
+
+.split-divider.vertical::before {
+  top: -10px;
+  bottom: -10px;
+  left: -10px;
+  right: -10px;
 }
 
 .split-divider::after {

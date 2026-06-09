@@ -3,6 +3,7 @@
     class="pane-header"
     :class="[direction ? `direction-${direction}` : '', { active: isActive, dragging: isDragging }]"
     @mousedown.prevent="onMouseDown"
+    @touchstart.prevent="onTouchStart"
   >
     <span class="pane-header-drag-handle">&#x2630;</span>
     <span class="pane-header-title">{{ title }}</span>
@@ -33,16 +34,39 @@ let currentZone: DropPosition | null = null
 let dragStarted = false
 let startX = 0
 let startY = 0
+let isTouchDrag = false
 const DRAG_THRESHOLD = 5
+
+function getPointerPos(e: MouseEvent | TouchEvent): { clientX: number; clientY: number } {
+  if ('touches' in e) {
+    const t = e.touches[0]
+    return { clientX: t.clientX, clientY: t.clientY }
+  }
+  return { clientX: e.clientX, clientY: e.clientY }
+}
 
 function onMouseDown(e: MouseEvent) {
   if (e.button !== 0) return
-  startX = e.clientX
-  startY = e.clientY
-  dragStarted = false
+  startDrag(e, false)
+}
 
-  window.addEventListener('mousemove', onMouseMove)
-  window.addEventListener('mouseup', onMouseUp)
+function onTouchStart(e: TouchEvent) {
+  if (e.touches.length !== 1) return
+  startDrag(e, true)
+}
+
+function startDrag(e: MouseEvent | TouchEvent, isTouch: boolean) {
+  const pos = getPointerPos(e)
+  startX = pos.clientX
+  startY = pos.clientY
+  dragStarted = false
+  isTouchDrag = isTouch
+
+  const moveEvent = isTouch ? 'touchmove' : 'mousemove'
+  const endEvent = isTouch ? 'touchend' : 'mouseup'
+
+  window.addEventListener(moveEvent, onPointerMove as EventListener, { passive: !isTouch } as AddEventListenerOptions)
+  window.addEventListener(endEvent, onPointerEnd)
 }
 
 function ensureDragStarted() {
@@ -50,10 +74,12 @@ function ensureDragStarted() {
   dragStarted = true
   isDragging.value = true
 
-  // Create full-viewport overlay to capture mouse events
-  overlay = document.createElement('div')
-  overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;cursor:grabbing;'
-  document.body.appendChild(overlay)
+  // On touch, skip overlay to avoid blocking touch events
+  if (!isTouchDrag) {
+    overlay = document.createElement('div')
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;cursor:grabbing;'
+    document.body.appendChild(overlay)
+  }
 
   // Create red preview div (hidden initially)
   preview = document.createElement('div')
@@ -61,19 +87,20 @@ function ensureDragStarted() {
   document.body.appendChild(preview)
 }
 
-function onMouseMove(e: MouseEvent) {
+function onPointerMove(e: MouseEvent | TouchEvent) {
+  const pos = getPointerPos(e)
   // Wait for movement threshold before starting drag
   if (!dragStarted) {
-    if (Math.abs(e.clientX - startX) < DRAG_THRESHOLD && Math.abs(e.clientY - startY) < DRAG_THRESHOLD) {
+    if (Math.abs(pos.clientX - startX) < DRAG_THRESHOLD && Math.abs(pos.clientY - startY) < DRAG_THRESHOLD) {
       return
     }
     ensureDragStarted()
   }
 
-  if (!overlay || !preview) return
+  if (!preview) return
 
   // Find target pane under cursor
-  const elements = document.elementsFromPoint(e.clientX, e.clientY)
+  const elements = document.elementsFromPoint(pos.clientX, pos.clientY)
   let targetEl: HTMLElement | null = null
   for (const el of elements) {
     const htmlEl = el as HTMLElement
@@ -103,8 +130,8 @@ function onMouseMove(e: MouseEvent) {
   const rect = targetEl.getBoundingClientRect()
 
   // Detect zone: each edge quarter
-  const relX = (e.clientX - rect.left) / rect.width
-  const relY = (e.clientY - rect.top) / rect.height
+  const relX = (pos.clientX - rect.left) / rect.width
+  const relY = (pos.clientY - rect.top) / rect.height
 
   let zone: DropPosition
   if (relY < 0.25) zone = 'top'
@@ -166,7 +193,7 @@ function onMouseMove(e: MouseEvent) {
   preview.style.height = `${h}px`
 }
 
-function onMouseUp() {
+function onPointerEnd() {
   // Only emit reorder if drag actually started and we have a valid target
   if (dragStarted && currentTargetId && currentZone) {
     emit('reorder', props.paneId, currentTargetId, currentZone)
@@ -186,8 +213,10 @@ function cleanup() {
   preview?.remove()
   preview = null
 
-  window.removeEventListener('mousemove', onMouseMove)
-  window.removeEventListener('mouseup', onMouseUp)
+  window.removeEventListener('mousemove', onPointerMove as EventListener)
+  window.removeEventListener('mouseup', onPointerEnd)
+  window.removeEventListener('touchmove', onPointerMove as EventListener)
+  window.removeEventListener('touchend', onPointerEnd)
 }
 
 onBeforeUnmount(() => {

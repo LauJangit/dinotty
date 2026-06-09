@@ -1,6 +1,6 @@
 use crate::vt_screen::VirtualScreen;
 use dashmap::DashMap;
-use portable_pty::MasterPty;
+use portable_pty::{Child, MasterPty};
 use serde::Serialize;
 use std::{
     io::Write,
@@ -8,6 +8,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Instant,
 };
+use tracing::info;
 use tokio::sync::mpsc;
 
 pub enum SessionStatus {
@@ -23,6 +24,7 @@ pub struct CwdState {
 pub struct Session {
     pub writer: Mutex<Box<dyn Write + Send>>,
     pub master: Mutex<Box<dyn MasterPty + Send>>,
+    pub child: Mutex<Box<dyn Child + Send + Sync>>,
     pub screen: Mutex<VirtualScreen>,
     pub clients: Mutex<Vec<mpsc::UnboundedSender<String>>>,
     pub status: Mutex<SessionStatus>,
@@ -59,7 +61,16 @@ impl Session {
         clients.retain(|tx| !tx.is_closed());
         !clients.is_empty()
     }
+}
 
+impl Drop for Session {
+    fn drop(&mut self) {
+        let mut child = self.child.lock().unwrap();
+        let pid = child.process_id();
+        let _ = child.kill();
+        let _ = child.wait();
+        info!("Session dropped, child reaped: pid={:?}", pid);
+    }
 }
 
 const OSC_SNIFF_CAP: usize = 32768;
@@ -106,6 +117,41 @@ fn collect_leaf_pane_ids(layout: &serde_json::Value) -> Vec<String> {
     let mut ids = Vec::new();
     collect_leaf_ids_recursive(layout, &mut ids);
     ids
+}
+
+fn remove_pane_from_layout(node: &serde_json::Value, pane_id: &str) -> Option<serde_json::Value> {
+    let node_type = node.get("type")?.as_str()?;
+    match node_type {
+        "leaf" => {
+            if node.get("paneId")?.as_str()? == pane_id {
+                None
+            } else {
+                Some(node.clone())
+            }
+        }
+        "split" => {
+            let children = node.get("children")?.as_array()?;
+            let new_children: Vec<serde_json::Value> = children
+                .iter()
+                .filter_map(|c| remove_pane_from_layout(c, pane_id))
+                .collect();
+            match new_children.len() {
+                0 => None,
+                1 => Some(new_children.into_iter().next().unwrap()),
+                _ => {
+                    let mut result = node.clone();
+                    result["children"] = serde_json::Value::Array(new_children);
+                    // Rebalance ratios evenly
+                    let n = result["children"].as_array().unwrap().len();
+                    result["ratios"] = serde_json::Value::Array(
+                        (0..n).map(|_| serde_json::Value::from(1.0 / n as f64)).collect()
+                    );
+                    Some(result)
+                }
+            }
+        }
+        _ => Some(node.clone()),
+    }
 }
 
 fn collect_leaf_ids_recursive(node: &serde_json::Value, ids: &mut Vec<String>) {
@@ -196,6 +242,33 @@ impl SessionManager {
 
     pub fn broadcast_plugin_changed(&self, plugin_id: String, change: String) {
         self.broadcast_sync(&SyncMsg::PluginChanged { plugin_id, change });
+    }
+
+    /// Remove a pane_id from all parent tab layouts. If removing it causes
+    /// a split to have only one child, the split collapses into that child.
+    pub fn purge_pane_from_layouts(&self, pane_id: &str) {
+        let updates: Vec<(String, serde_json::Value)> = self.tab_layouts.iter().filter_map(|entry| {
+            let tab_pane_id = entry.key();
+            if tab_pane_id == pane_id {
+                return None;
+            }
+            let val = entry.value();
+            let layout = val.get("layout")?;
+            let new_layout = remove_pane_from_layout(layout, pane_id)?;
+            if new_layout == *layout {
+                return None;
+            }
+            let active = val.get("active_pane_id").cloned();
+            let mut new_val = serde_json::json!({ "layout": new_layout });
+            if let Some(a) = active {
+                new_val["active_pane_id"] = a;
+            }
+            Some((tab_pane_id.clone(), new_val))
+        }).collect();
+
+        for (key, val) in updates {
+            self.tab_layouts.insert(key, val);
+        }
     }
 
     pub fn tab_list(&self) -> (Vec<TabInfo>, Option<String>) {

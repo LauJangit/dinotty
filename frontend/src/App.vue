@@ -6,17 +6,21 @@
       :active-pane-id="activePaneId"
       :indicators="notif.unreadByPane"
       :plugins="pluginList"
+      :can-broadcast="canBroadcast"
+      :broadcast-active="isBroadcastActive"
       @activate="activateTab"
       @close="closeTab"
-      @new="newTab"
+      @action="onNewMenuAction"
       @reorder="reorderTab"
       @open-plugin="openPlugin"
     >
-      <template #right>
+      <template #left>
         <button v-if="isBroadcastActive" type="button" class="tab-bar-icon-btn broadcast-btn" :title="t('split.toggleBroadcast')" @click="splitPane.toggleBroadcast()" @touchend.prevent="splitPane.toggleBroadcast()">
           <span class="broadcast-dot" />
         </button>
-        <button v-if="activeTabType === 'terminal'" type="button" class="tab-bar-icon-btn" :title="t('app.preview')" @click="openPreview" @touchend.prevent="openPreview"><PanelRight :size="16" /></button>
+      </template>
+      <template #right>
+        <button v-if="activeTabType === 'terminal'" type="button" class="tab-bar-icon-btn" :title="t('app.preview')" @click="openPreview" @touchend.prevent="openPreview"><Monitor :size="16" /></button>
         <button type="button" class="tab-bar-icon-btn" :title="t('app.settings')" @click="settingsOpen = true" @touchend.prevent="settingsOpen = true"><Settings :size="16" /></button>
         <button v-if="notif.notifications.value.length > 0" type="button" class="tab-bar-icon-btn notif-btn" :title="t('notification.title')" @click="notif.togglePanel()" @touchend.prevent="notif.togglePanel()">
           <Bell :size="16" />
@@ -132,7 +136,7 @@ import NotificationPanel from './components/notification/NotificationPanel.vue'
 import { useNotification } from './composables/useNotification'
 import { usePluginLoader, handlePluginChanged } from './composables/usePluginLoader'
 import PluginView from './components/plugin/PluginView.vue'
-import { Settings, Bell, PanelRight, Plus, X, Star, AppWindow } from 'lucide-vue-next'
+import { Settings, Bell, Monitor, Plus, X, Star, AppWindow } from 'lucide-vue-next'
 import LoginPage from './components/LoginPage.vue'
 
 const tabs = ref<Tab[]>([])
@@ -239,6 +243,10 @@ const activeTabType = computed(() => {
 const isBroadcastActive = computed(() => {
   const tab = tabs.value.find(t => t.paneId === activePaneId.value)
   return tab?.type === 'terminal' && tab.broadcastMode && getAllLeaves(tab.layout).length > 1
+})
+const canBroadcast = computed(() => {
+  const tab = tabs.value.find(t => t.paneId === activePaneId.value)
+  return tab?.type === 'terminal' && getAllLeaves(tab.layout).length > 1
 })
 const paneLabels = computed(() => {
   const m: Record<string, string> = {}
@@ -348,6 +356,15 @@ function newTab() {
   sendSync({ type: 'create_tab', pane_id: paneId })
   persist()
   nextTick(() => focusActive())
+}
+
+function onNewMenuAction(type: 'new-tab' | 'split-h' | 'split-v' | 'broadcast') {
+  switch (type) {
+    case 'new-tab': return newTab()
+    case 'split-h': return splitPane.splitPane('horizontal')
+    case 'split-v': return splitPane.splitPane('vertical')
+    case 'broadcast': return splitPane.toggleBroadcast()
+  }
 }
 
 function activateTab(tabId: string) {

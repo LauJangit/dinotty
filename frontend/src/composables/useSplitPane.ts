@@ -96,7 +96,11 @@ export function useSplitPane(opts: {
 
     if (parent.children.length === 1) {
       const remaining = parent.children[0]
-      replaceNode(tab.layout, parent, remaining)
+      if (parent === tab.layout) {
+        tab.layout = remaining
+      } else {
+        replaceNode(tab.layout, parent, remaining)
+      }
     }
 
     if (tab.activePaneId === paneId) {
@@ -108,9 +112,13 @@ export function useSplitPane(opts: {
     }
 
     sendSync({ type: 'close_tab', pane_id: paneId })
+    delete termRefs[paneId]
     persist()
     syncTabLayout(tab)
-    nextTick(() => termRefs[tab.activePaneId]?.focus())
+    nextTick(() => {
+      getAllLeaves(tab.layout).forEach(l => termRefs[l.paneId]?.fit())
+      termRefs[tab.activePaneId]?.focus()
+    })
     return true
   }
 
@@ -357,6 +365,11 @@ export function useSplitPane(opts: {
     // General case: remove source, then insert into/around target
     const removed = removeLeaf(tab.layout, sourcePaneId)
     if (!removed) return
+
+    // Collapse single-child root split (removeLeaf can't reassign caller's variable)
+    if (tab.layout.type === 'split' && tab.layout.children.length === 1) {
+      tab.layout = tab.layout.children[0]
+    }
 
     // After removal, target may have become the root leaf (parent collapsed)
     if (tab.layout.type === 'leaf' && tab.layout.paneId === targetPaneId) {

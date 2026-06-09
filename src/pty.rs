@@ -48,7 +48,7 @@ pub fn create_session(
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))
     };
 
-    pair.slave
+    let child = pair.slave
         .spawn_command(cmd)
         .map_err(|e| format!("spawn shell: {}", e))?;
     drop(pair.slave);
@@ -66,6 +66,7 @@ pub fn create_session(
     let session = Arc::new(Session {
         writer: std::sync::Mutex::new(writer),
         master: std::sync::Mutex::new(pair.master),
+        child: std::sync::Mutex::new(child),
         screen: std::sync::Mutex::new(VirtualScreen::new(80, 24)),
         clients: std::sync::Mutex::new(Vec::new()),
         status: std::sync::Mutex::new(SessionStatus::Connected),

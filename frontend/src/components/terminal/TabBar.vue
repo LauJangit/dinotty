@@ -20,7 +20,37 @@
         <button class="tab-close" @click.stop="$emit('close', tab.paneId)" @touchend.stop.prevent="$emit('close', tab.paneId)"><X :size="10" /></button>
       </div>
     </div>
-    <button id="tab-new-btn" title="New Tab (⌘T)" @click="$emit('new')" @touchend.prevent="$emit('new')"><Terminal :size="16" /></button>
+    <slot name="left" />
+    <div class="new-tab-split" ref="newMenuWrapRef">
+      <button id="tab-new-btn" title="New Tab (⌘T)" @click="newMenuOpen = !newMenuOpen" @touchend.prevent="newMenuOpen = !newMenuOpen"><Terminal :size="16" /></button>
+      <div v-if="newMenuOpen" class="new-menu-dropdown" @mouseleave="newMenuOpen = false">
+        <div class="new-menu-item" @click="emitAction('new-tab')" @touchend.prevent="emitAction('new-tab')">
+          <Terminal :size="14" class="new-menu-icon" />
+          <span class="new-menu-label">{{ t('keybinding.newTab') }}</span>
+          <kbd class="new-menu-kbd">{{ kbdNewTab }}</kbd>
+        </div>
+        <div class="new-menu-sep" />
+        <div class="new-menu-item" @click="emitAction('split-h')" @touchend.prevent="emitAction('split-h')">
+          <Columns2 :size="14" class="new-menu-icon" />
+          <span class="new-menu-label">{{ t('keybinding.splitHorizontal') }}</span>
+          <kbd class="new-menu-kbd">{{ kbdSplitH }}</kbd>
+        </div>
+        <div class="new-menu-item" @click="emitAction('split-v')" @touchend.prevent="emitAction('split-v')">
+          <Rows2 :size="14" class="new-menu-icon" />
+          <span class="new-menu-label">{{ t('keybinding.splitVertical') }}</span>
+          <kbd class="new-menu-kbd">{{ kbdSplitV }}</kbd>
+        </div>
+        <template v-if="canBroadcast">
+          <div class="new-menu-sep" />
+          <div class="new-menu-item" @click="emitAction('broadcast')" @touchend.prevent="emitAction('broadcast')">
+            <Radio :size="14" class="new-menu-icon" />
+            <span class="new-menu-label">{{ t('split.toggleBroadcast') }}</span>
+            <kbd class="new-menu-kbd">{{ kbdBroadcast }}</kbd>
+          </div>
+          <div v-if="broadcastActive" class="new-menu-status">{{ t('split.broadcastActive') }}</div>
+        </template>
+      </div>
+    </div>
     <div v-if="plugins.length > 0" class="tab-bar-plugin-wrap" ref="pluginWrapRef">
       <button type="button" class="tab-bar-icon-btn" title="Plugins" @click="pluginMenuOpen = !pluginMenuOpen" @touchend.prevent="pluginMenuOpen = !pluginMenuOpen"><Blocks :size="16" /></button>
       <div v-if="pluginMenuOpen" class="plugin-dropdown" @mouseleave="pluginMenuOpen = false">
@@ -42,7 +72,16 @@
 
 <script setup lang="ts">
 import { ref, watch, onBeforeUnmount } from 'vue'
-import { X, Terminal, Blocks } from 'lucide-vue-next'
+import { X, Terminal, Blocks, Columns2, Rows2, Radio } from 'lucide-vue-next'
+import { useI18n } from '../../composables/useI18n'
+import { useKeybindings } from '../../composables/useKeybindings'
+
+const { t } = useI18n()
+const { getBinding, formatBinding } = useKeybindings()
+const kbdNewTab = formatBinding(getBinding('newTab')).join('')
+const kbdSplitH = formatBinding(getBinding('splitHorizontal')).join('')
+const kbdSplitV = formatBinding(getBinding('splitVertical')).join('')
+const kbdBroadcast = formatBinding(getBinding('toggleBroadcast')).join('')
 
 export interface TabInfo {
   paneId: string
@@ -62,30 +101,44 @@ withDefaults(defineProps<{
   activePaneId: string | null
   indicators?: Record<string, string>
   plugins?: PluginInfo[]
+  canBroadcast?: boolean
+  broadcastActive?: boolean
 }>(), {
   indicators: () => ({}),
   plugins: () => ([]),
+  canBroadcast: false,
+  broadcastActive: false,
 })
 
 const emit = defineEmits<{
   activate: [paneId: string]
   close: [paneId: string]
-  new: []
+  action: [type: 'new-tab' | 'split-h' | 'split-v' | 'broadcast']
   reorder: [fromId: string, toId: string]
   'open-plugin': [pluginId: string]
 }>()
 
 const pluginMenuOpen = ref(false)
 const pluginWrapRef = ref<HTMLElement>()
+const newMenuOpen = ref(false)
+const newMenuWrapRef = ref<HTMLElement>()
+
+function emitAction(type: 'new-tab' | 'split-h' | 'split-v' | 'broadcast') {
+  emit('action', type)
+  newMenuOpen.value = false
+}
 
 function onDocTouchStart(e: TouchEvent) {
   if (pluginWrapRef.value && !pluginWrapRef.value.contains(e.target as Node)) {
     pluginMenuOpen.value = false
   }
+  if (newMenuWrapRef.value && !newMenuWrapRef.value.contains(e.target as Node)) {
+    newMenuOpen.value = false
+  }
 }
 
-watch(pluginMenuOpen, (open) => {
-  if (open) {
+watch([pluginMenuOpen, newMenuOpen], ([pluginOpen, newOpen]) => {
+  if (pluginOpen || newOpen) {
     document.addEventListener('touchstart', onDocTouchStart, { passive: true })
   } else {
     document.removeEventListener('touchstart', onDocTouchStart)
@@ -191,5 +244,58 @@ function onDragEnd() {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 200px;
+}
+.new-tab-split {
+  position: relative;
+}
+.new-menu-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 220px;
+  background: var(--bg-surface, #1e1e1e);
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  padding: 4px 0;
+  z-index: 500;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+.new-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.new-menu-item:hover {
+  background: var(--bg-hover, #2a2a2a);
+}
+.new-menu-icon {
+  flex-shrink: 0;
+  color: var(--text-muted, #888);
+}
+.new-menu-label {
+  flex: 1;
+}
+.new-menu-kbd {
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  font-family: inherit;
+  background: var(--bg-hover, #2a2a2a);
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--border, #444);
+}
+.new-menu-sep {
+  height: 1px;
+  background: var(--border, #333);
+  margin: 4px 0;
+}
+.new-menu-status {
+  font-size: 11px;
+  color: var(--accent, #8A8A8A);
+  padding: 2px 12px 6px;
 }
 </style>
