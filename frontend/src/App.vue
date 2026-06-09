@@ -6,9 +6,11 @@
       :active-pane-id="activePaneId"
       :indicators="notif.unreadByPane"
       :plugins="pluginList"
+      :can-broadcast="canBroadcast"
+      :broadcast-active="isBroadcastActive"
       @activate="activateTab"
       @close="closeTab"
-      @new="newTab"
+      @action="onNewMenuAction"
       @reorder="reorderTab"
       @open-plugin="openPlugin"
     >
@@ -242,6 +244,10 @@ const isBroadcastActive = computed(() => {
   const tab = tabs.value.find(t => t.paneId === activePaneId.value)
   return tab?.type === 'terminal' && tab.broadcastMode && getAllLeaves(tab.layout).length > 1
 })
+const canBroadcast = computed(() => {
+  const tab = tabs.value.find(t => t.paneId === activePaneId.value)
+  return tab?.type === 'terminal' && getAllLeaves(tab.layout).length > 1
+})
 const paneLabels = computed(() => {
   const m: Record<string, string> = {}
   for (const t of tabs.value) {
@@ -350,6 +356,15 @@ function newTab() {
   sendSync({ type: 'create_tab', pane_id: paneId })
   persist()
   nextTick(() => focusActive())
+}
+
+function onNewMenuAction(type: 'new-tab' | 'split-h' | 'split-v' | 'broadcast') {
+  switch (type) {
+    case 'new-tab': return newTab()
+    case 'split-h': return splitPane.splitPane('horizontal')
+    case 'split-v': return splitPane.splitPane('vertical')
+    case 'broadcast': return splitPane.toggleBroadcast()
+  }
 }
 
 function activateTab(tabId: string) {
