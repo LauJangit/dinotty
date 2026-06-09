@@ -87,17 +87,21 @@ export function useSplitPane(opts: {
       return false
     }
 
-    // If this is the last child in a single-child split, close the tab
-    if (parent.children.length <= 1) {
-      return false
-    }
-
     const idx = parent.children.findIndex(c => c.type === 'leaf' && c.paneId === paneId)
     if (idx === -1) return false
 
     parent.children.splice(idx, 1)
     parent.ratios.splice(idx, 1)
     redistributeRatios(parent)
+
+    if (parent.children.length === 1) {
+      const remaining = parent.children[0]
+      if (parent === tab.layout) {
+        tab.layout = remaining
+      } else {
+        replaceNode(tab.layout, parent, remaining)
+      }
+    }
 
     if (tab.activePaneId === paneId) {
       tab.activePaneId = findFirstLeaf(tab.layout).paneId
