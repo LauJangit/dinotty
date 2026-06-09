@@ -20,7 +20,7 @@
         </button>
       </template>
       <template #right>
-        <button v-if="activeTabType === 'terminal'" type="button" class="tab-bar-icon-btn" :title="t('app.preview')" @click="openPreview" @touchend.prevent="openPreview"><PanelRight :size="16" /></button>
+        <button v-if="activeTabType === 'terminal'" type="button" class="tab-bar-icon-btn" :title="t('app.preview')" @click="openPreview" @touchend.prevent="openPreview"><Monitor :size="16" /></button>
         <button type="button" class="tab-bar-icon-btn" :title="t('app.settings')" @click="settingsOpen = true" @touchend.prevent="settingsOpen = true"><Settings :size="16" /></button>
         <button v-if="notif.notifications.value.length > 0" type="button" class="tab-bar-icon-btn notif-btn" :title="t('notification.title')" @click="notif.togglePanel()" @touchend.prevent="notif.togglePanel()">
           <Bell :size="16" />
@@ -136,7 +136,7 @@ import NotificationPanel from './components/notification/NotificationPanel.vue'
 import { useNotification } from './composables/useNotification'
 import { usePluginLoader, handlePluginChanged } from './composables/usePluginLoader'
 import PluginView from './components/plugin/PluginView.vue'
-import { Settings, Bell, PanelRight, Plus, X, Star, AppWindow } from 'lucide-vue-next'
+import { Settings, Bell, Monitor, Plus, X, Star, AppWindow } from 'lucide-vue-next'
 import LoginPage from './components/LoginPage.vue'
 
 const tabs = ref<Tab[]>([])
