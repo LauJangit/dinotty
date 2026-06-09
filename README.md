@@ -155,6 +155,14 @@ docs/              # 设计文档
 - [插件开发](docs/plugin-development.md) — 完整的插件开发文档
 - [贡献指南](docs/contributing.md) — 分支策略、Commit 规范、代码风格
 
+## 贡献者
+
+感谢所有为 Dinotty 做出贡献的人！
+
+<a href="https://github.com/xichan96/dinotty/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=xichan96/dinotty" />
+</a>
+
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=xichan96/dinotty&type=Date)](https://star-history.com/#xichan96/dinotty&Date)

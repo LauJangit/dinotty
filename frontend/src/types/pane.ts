@@ -84,6 +84,11 @@ export function findParentSplit(node: PaneLayout, paneId: string): SplitPane | n
   return null
 }
 
+/** Check if a node is a split with only one child (collapsed split) */
+export function isSingleChildSplit(node: PaneLayout): boolean {
+  return node.type === 'split' && node.children.length === 1
+}
+
 /** Get all leaf nodes in order */
 export function getAllLeaves(node: PaneLayout): LeafPane[] {
   if (node.type === 'leaf') return [node]

@@ -155,6 +155,14 @@ JSON messages over `/ws`:
 - [Plugin Development](docs/plugin-development.md) — full plugin development guide
 - [Contributing](docs/contributing.en.md) — branch strategy, commit convention, code style
 
+## Contributors
+
+Thanks to all the people who have contributed to Dinotty!
+
+<a href="https://github.com/xichan96/dinotty/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=xichan96/dinotty" />
+</a>
+
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=xichan96/dinotty&type=Date)](https://star-history.com/#xichan96/dinotty&Date)
