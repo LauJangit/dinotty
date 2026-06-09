@@ -177,7 +177,9 @@ export function removeLeaf(root: PaneLayout, paneId: string): LeafPane | null {
   redistributeRatios(parent)
 
   // If only one child left, collapse the split
-  if (parent.children.length === 1) {
+  // Note: when parent === root, replaceNode can't find root as its own child.
+  // Callers should check for single-child root split after calling removeLeaf.
+  if (parent.children.length === 1 && parent !== root) {
     const remaining = parent.children[0]
     replaceNode(root, parent, remaining)
   }
