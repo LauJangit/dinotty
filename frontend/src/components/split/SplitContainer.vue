@@ -23,7 +23,13 @@
     >&times;</button>
     <template v-if="broadcastActive">
       <div class="broadcast-line" />
-      <div class="broadcast-badge">{{ t('split.broadcastActive') }}</div>
+      <div class="broadcast-icon" :title="t('split.broadcastTooltip')">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <rect x="1" y="7" width="12" height="6" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="none"/>
+          <path d="M4 5L2 7M10 5L12 7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+          <line x1="7" y1="1" x2="7" y2="7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+        </svg>
+      </div>
     </template>
     <div v-else-if="broadcastReceiving" class="broadcast-line receiving" />
     <TerminalPane
@@ -191,11 +197,13 @@ function getChildStyle(idx: number) {
 .split-leaf.broadcast-active {
   outline: 2px solid var(--accent-color, #4d80ff);
   outline-offset: -1px;
+  opacity: 1;
 }
 
 .split-leaf.broadcast-receiving {
   outline: 2px solid rgba(77, 128, 255, 0.35);
   outline-offset: -1px;
+  opacity: 1;
 }
 
 /* Close button — visible on hover, positioned inside header when present */
@@ -250,19 +258,15 @@ function getChildStyle(idx: number) {
   background: rgba(77, 128, 255, 0.35);
 }
 
-.broadcast-badge {
+.broadcast-icon {
   position: absolute;
-  top: 4px;
+  top: 3px;
   right: 28px;
   z-index: 10;
-  padding: 1px 8px;
-  border-radius: 3px;
-  background: rgba(77, 128, 255, 0.15);
   color: var(--accent-color, #4d80ff);
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
 }
 </style>

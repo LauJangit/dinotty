@@ -12,10 +12,12 @@
       @reorder="reorderTab"
       @open-plugin="openPlugin"
     >
-      <template #right>
+      <template #left>
         <button v-if="isBroadcastActive" type="button" class="tab-bar-icon-btn broadcast-btn" :title="t('split.toggleBroadcast')" @click="splitPane.toggleBroadcast()" @touchend.prevent="splitPane.toggleBroadcast()">
           <span class="broadcast-dot" />
         </button>
+      </template>
+      <template #right>
         <button v-if="activeTabType === 'terminal'" type="button" class="tab-bar-icon-btn" :title="t('app.preview')" @click="openPreview" @touchend.prevent="openPreview"><PanelRight :size="16" /></button>
         <button type="button" class="tab-bar-icon-btn" :title="t('app.settings')" @click="settingsOpen = true" @touchend.prevent="settingsOpen = true"><Settings :size="16" /></button>
         <button v-if="notif.notifications.value.length > 0" type="button" class="tab-bar-icon-btn notif-btn" :title="t('notification.title')" @click="notif.togglePanel()" @touchend.prevent="notif.togglePanel()">
