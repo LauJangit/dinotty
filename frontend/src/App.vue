@@ -1,5 +1,6 @@
 <template>
-  <LoginPage v-if="!authenticated" @success="onLoginSuccess" />
+  <SetupPage v-if="!authenticated && needsSetup" @success="onLoginSuccess" />
+  <LoginPage v-else-if="!authenticated" @success="onLoginSuccess" />
   <div v-else id="app-root">
     <TabBar
       :tabs="tabList"
@@ -138,6 +139,7 @@ import { usePluginLoader, handlePluginChanged } from './composables/usePluginLoa
 import PluginView from './components/plugin/PluginView.vue'
 import { Settings, Bell, Monitor, Plus, X, Star, AppWindow } from 'lucide-vue-next'
 import LoginPage from './components/LoginPage.vue'
+import SetupPage from './components/SetupPage.vue'
 
 const tabs = ref<Tab[]>([])
 const activePaneId = ref<string | null>(null)
@@ -145,6 +147,7 @@ const kbVisible = ref(false)
 let linkJustActivated = false
 const settingsOpen = ref(false)
 const authenticated = ref(hasAuthToken())
+const needsSetup = ref(false)
 const paletteRef = ref<InstanceType<typeof CommandPalette>>()
 const previewPanelRef = ref<InstanceType<typeof PreviewPanel> | null>(null)
 
@@ -1067,10 +1070,8 @@ onMounted(async () => {
     await getApiBase()
     const configured = await checkTokenConfigured()
     if (!configured) {
-      // First-time setup: skip login, open settings
-      authenticated.value = true
-      settingsOpen.value = true
-      void loadAll()
+      // First-time setup: show setup page
+      needsSetup.value = true
     }
   }
 })
