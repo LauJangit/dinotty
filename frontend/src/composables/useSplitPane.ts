@@ -3,7 +3,7 @@ import type { Tab, TerminalTab, PaneLayout, LeafPane, SplitPane, DropPosition } 
 import {
   findLeaf, findParentSplit, getAllLeaves, findFirstLeaf,
   replaceLeaf, replaceNode, redistributeRatios, clearAllZoom, equalizeRecursive,
-  removeLeaf,
+  removeLeaf, genSplitId,
 } from '../types/pane'
 import type TerminalPane from '../components/terminal/TerminalPane.vue'
 import type { SyncClientMsg } from '../types/protocol'
@@ -58,6 +58,7 @@ export function useSplitPane(opts: {
 
     const split: SplitPane = {
       type: 'split',
+      id: genSplitId(),
       direction,
       children: [{ ...currentLeaf, ratio: 0.5 }, newLeaf],
       ratios: [0.5, 0.5],
@@ -65,6 +66,10 @@ export function useSplitPane(opts: {
 
     if (tab.layout.type === 'leaf') {
       tab.layout = split
+    } else if (tab.layout.type === 'split' && tab.layout.children.length === 1 && tab.layout.direction === direction) {
+      // Single-child root split with same direction — add sibling directly
+      tab.layout.children.push(newLeaf)
+      redistributeRatios(tab.layout)
     } else {
       replaceLeaf(tab.layout, tab.activePaneId, split)
     }
@@ -90,6 +95,11 @@ export function useSplitPane(opts: {
     const idx = parent.children.findIndex(c => c.type === 'leaf' && c.paneId === paneId)
     if (idx === -1) return false
 
+    // If removing this leaf would leave the parent with 0 children, signal to close the tab
+    if (parent.children.length <= 1) {
+      return false
+    }
+
     parent.children.splice(idx, 1)
     parent.ratios.splice(idx, 1)
     redistributeRatios(parent)
@@ -97,8 +107,13 @@ export function useSplitPane(opts: {
     if (parent.children.length === 1) {
       const remaining = parent.children[0]
       if (parent === tab.layout) {
-        tab.layout = remaining
-      } else {
+        // Root-level: only collapse if the remaining child is a split
+        // (collapsing split→leaf destroys and recreates all TerminalPane components,
+        // breaking active sessions — e.g. htop loses its PTY)
+        if (remaining.type === 'split') {
+          tab.layout = remaining
+        }
+      } else if (remaining.type === 'split') {
         replaceNode(tab.layout, parent, remaining)
       }
     }
@@ -111,10 +126,10 @@ export function useSplitPane(opts: {
       tab.broadcastMode = false
     }
 
-    sendSync({ type: 'close_tab', pane_id: paneId })
     delete termRefs[paneId]
     persist()
     syncTabLayout(tab)
+    sendSync({ type: 'close_pane', pane_id: paneId })
     nextTick(() => {
       getAllLeaves(tab.layout).forEach(l => termRefs[l.paneId]?.fit())
       termRefs[tab.activePaneId]?.focus()
@@ -342,6 +357,7 @@ export function useSplitPane(opts: {
     if (sameParent && sourceParent.children.length === 2) {
       const newSplit: SplitPane = {
         type: 'split',
+        id: genSplitId(),
         direction,
         children: before
           ? [sourceParent.children.find(c => c.type === 'leaf' && c.paneId === sourcePaneId)!, sourceParent.children.find(c => c.type === 'leaf' && c.paneId === targetPaneId)!]
@@ -366,15 +382,11 @@ export function useSplitPane(opts: {
     const removed = removeLeaf(tab.layout, sourcePaneId)
     if (!removed) return
 
-    // Collapse single-child root split (removeLeaf can't reassign caller's variable)
-    if (tab.layout.type === 'split' && tab.layout.children.length === 1) {
-      tab.layout = tab.layout.children[0]
-    }
-
     // After removal, target may have become the root leaf (parent collapsed)
     if (tab.layout.type === 'leaf' && tab.layout.paneId === targetPaneId) {
       const newSplit: SplitPane = {
         type: 'split',
+        id: genSplitId(),
         direction,
         children: before ? [removed, tab.layout] : [tab.layout, removed],
         ratios: [0.5, 0.5],
@@ -407,6 +419,7 @@ export function useSplitPane(opts: {
         // Different direction: wrap target in a new split
         const newSplit: SplitPane = {
           type: 'split',
+          id: genSplitId(),
           direction,
           children: before ? [removed, effectiveTargetParent.children[targetIdx]] : [effectiveTargetParent.children[targetIdx], removed],
           ratios: [0.5, 0.5],
@@ -430,6 +443,7 @@ export function useSplitPane(opts: {
           // Different direction: wrap the split in a new split
           const newSplit: SplitPane = {
             type: 'split',
+            id: genSplitId(),
             direction,
             children: before ? [removed, targetNode] : [targetNode, removed],
             ratios: [0.5, 0.5],

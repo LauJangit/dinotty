@@ -137,7 +137,7 @@ fn remove_pane_from_layout(node: &serde_json::Value, pane_id: &str) -> Option<se
                 .collect();
             match new_children.len() {
                 0 => None,
-                1 => Some(new_children.into_iter().next().unwrap()),
+                _ if new_children.len() == children.len() => Some(node.clone()),
                 _ => {
                     let mut result = node.clone();
                     result["children"] = serde_json::Value::Array(new_children);

@@ -982,6 +982,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-tungstenite",
+ "tokio-util",
  "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
