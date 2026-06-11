@@ -452,7 +452,9 @@ function focusActive() {
   if (!tab) return
   if (tab.type === 'terminal') {
     const paneId = tab.activePaneId
-    termRefs[paneId]?.focus()
+    if (!(isTouchDevice() && kbVisible.value)) {
+      termRefs[paneId]?.focus()
+    }
     termRefs[paneId]?.fit()
   }
 }
