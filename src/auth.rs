@@ -41,7 +41,8 @@ pub async fn auth_middleware(
         return next.run(request).await;
     }
 
-    if path == "/" || path == "/api/notify" || path == "/manifest.json" || path == "/logo.png"
+    if path == "/" || path == "/api/notify" || path == "/api/token-configured"
+        || path == "/manifest.json" || path == "/logo.png"
         || path.starts_with("/assets/") || path.starts_with("/preview/") || path.starts_with("/icons/")
     {
         return next.run(request).await;
