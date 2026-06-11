@@ -38,6 +38,7 @@ pub enum SyncClientMsg {
     ActivateTab { pane_id: String },
     CreateTab { pane_id: String },
     CloseTab { pane_id: String },
+    ClosePane { pane_id: String },
     UpdateLayout { pane_id: String, layout: serde_json::Value, active_pane_id: String },
 }
 
@@ -105,6 +106,12 @@ async fn handle_sync_socket(socket: WebSocket, manager: Arc<SessionManager>) {
                             manager.purge_pane_from_layouts(&pane_id);
                             manager.broadcast_sync(&SyncMsg::TabClosed { pane_id });
                         }
+                        SyncClientMsg::ClosePane { pane_id } => {
+                            // Close a single pane in a split — only remove its session,
+                            // don't touch tab layout or broadcast tab_closed
+                            manager.sessions.remove(&pane_id);
+                            manager.purge_pane_from_layouts(&pane_id);
+                        }
                         SyncClientMsg::UpdateLayout { pane_id, layout, active_pane_id } => {
                             manager.tab_layouts.insert(pane_id.clone(), serde_json::json!({
                                 "layout": layout,
@@ -169,7 +176,6 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
         });
 
         // Read loop
-        let mut normal_close = false;
         while let Some(Ok(msg)) = ws_rx.next().await {
             match msg {
                 Message::Text(text) => {
@@ -204,21 +210,14 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
                         Err(e) => error!("parse msg: {}", e),
                     }
                 }
-                Message::Close(frame) => {
-                    normal_close = frame.as_ref().map(|f| f.code == 1000).unwrap_or(false);
-                    break;
-                }
+                Message::Close(_) => break,
                 _ => {}
             }
         }
 
         fwd.abort();
 
-        if normal_close && !session.has_clients() {
-            manager.sessions.remove(&pane_id);
-            manager.broadcast_sync(&SyncMsg::TabClosed { pane_id: pane_id.clone() });
-            info!("Session destroyed (last client closed): pane={}", pane_id);
-        } else if !session.has_clients() {
+        if !session.has_clients() {
             *session.status.lock().unwrap() = SessionStatus::Detached { since: std::time::Instant::now() };
             info!("Session detached (all clients gone): pane={}", pane_id);
         }
@@ -249,7 +248,6 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
     });
 
     // WS read loop
-    let mut normal_close = false;
     while let Some(Ok(msg)) = ws_rx.next().await {
         match msg {
             Message::Text(text) => {
@@ -284,23 +282,16 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
                     Err(e) => error!("parse msg: {}", e),
                 }
             }
-            Message::Close(frame) => {
-                normal_close = frame.as_ref().map(|f| f.code == 1000).unwrap_or(false);
-                break;
-            }
+            Message::Close(_) => break,
             _ => {}
         }
     }
 
     fwd.abort();
 
-    if normal_close && !session.has_clients() {
-        manager.sessions.remove(&pane_id);
-        manager.broadcast_sync(&SyncMsg::TabClosed { pane_id: pane_id.clone() });
-        info!("Session destroyed (normal close): pane={}", pane_id);
-    } else if !session.has_clients() {
+    if !session.has_clients() {
         *session.status.lock().unwrap() = SessionStatus::Detached { since: std::time::Instant::now() };
-        info!("Session detached (abnormal close): pane={}", pane_id);
+        info!("Session detached (all clients gone): pane={}", pane_id);
     }
 }
 

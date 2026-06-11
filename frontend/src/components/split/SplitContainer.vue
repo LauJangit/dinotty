@@ -49,14 +49,14 @@
     ref="containerRef"
     :class="['split-container', split.direction]"
   >
-    <template v-for="(child, idx) in split.children" :key="child.type === 'leaf' ? child.paneId : idx">
+    <template v-for="(child, idx) in split.children" :key="child.type === 'leaf' ? child.paneId : child.id">
       <SplitContainer
         :layout="child"
         :active-pane-id="activePaneId"
         :broadcast-mode="broadcastMode"
         :broadcast-activity="broadcastActivity"
-        :show-header="true"
-        :allow-close="true"
+        :show-header="allowClose"
+        :allow-close="allowClose"
         :parent-direction="split!.direction"
         :style="getChildStyle(idx)"
         @register="(id: string, el: any) => emit('register', id, el)"

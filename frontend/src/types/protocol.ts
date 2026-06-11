@@ -76,6 +76,11 @@ export interface SyncCloseTab {
   pane_id: string
 }
 
+export interface SyncClosePane {
+  type: 'close_pane'
+  pane_id: string
+}
+
 export interface SyncActivateTab {
   type: 'activate_tab'
   pane_id: string
@@ -88,4 +93,4 @@ export interface SyncUpdateLayout {
   active_pane_id: string
 }
 
-export type SyncClientMsg = SyncCreateTab | SyncCloseTab | SyncActivateTab | SyncUpdateLayout
+export type SyncClientMsg = SyncCreateTab | SyncCloseTab | SyncClosePane | SyncActivateTab | SyncUpdateLayout
