@@ -38,6 +38,7 @@ pub enum SyncClientMsg {
     ActivateTab { pane_id: String },
     CreateTab { pane_id: String },
     CloseTab { pane_id: String },
+    ClosePane { pane_id: String },
     UpdateLayout { pane_id: String, layout: serde_json::Value, active_pane_id: String },
 }
 
@@ -105,6 +106,12 @@ async fn handle_sync_socket(socket: WebSocket, manager: Arc<SessionManager>) {
                             manager.purge_pane_from_layouts(&pane_id);
                             manager.broadcast_sync(&SyncMsg::TabClosed { pane_id });
                         }
+                        SyncClientMsg::ClosePane { pane_id } => {
+                            // Close a single pane in a split — only remove its session,
+                            // don't touch tab layout or broadcast tab_closed
+                            manager.sessions.remove(&pane_id);
+                            manager.purge_pane_from_layouts(&pane_id);
+                        }
                         SyncClientMsg::UpdateLayout { pane_id, layout, active_pane_id } => {
                             manager.tab_layouts.insert(pane_id.clone(), serde_json::json!({
                                 "layout": layout,
@@ -168,8 +175,17 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
             }
         });
 
+        // Input channel: replaces old channel so only this connection writes to PTY
+        let mut input_rx = session.replace_input_channel();
+        let write_session = Arc::clone(&session);
+        tokio::spawn(async move {
+            while let Some(data) = input_rx.recv().await {
+                let mut w = write_session.writer.lock().unwrap();
+                let _ = w.write_all(data.as_bytes());
+            }
+        });
+
         // Read loop
-        let mut normal_close = false;
         while let Some(Ok(msg)) = ws_rx.next().await {
             match msg {
                 Message::Text(text) => {
@@ -191,8 +207,10 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
                                     input_buffer.push(ch);
                                 }
                             }
-                            let mut w = session.writer.lock().unwrap();
-                            let _ = w.write_all(data.as_bytes());
+                            let tx = session.input_tx.lock().unwrap();
+                            if let Some(tx) = tx.as_ref() {
+                                let _ = tx.send(data);
+                            }
                         }
                         Ok(ClientMsg::Resize { cols, rows }) => {
                             let m = session.master.lock().unwrap();
@@ -204,21 +222,14 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
                         Err(e) => error!("parse msg: {}", e),
                     }
                 }
-                Message::Close(frame) => {
-                    normal_close = frame.as_ref().map(|f| f.code == 1000).unwrap_or(false);
-                    break;
-                }
+                Message::Close(_) => break,
                 _ => {}
             }
         }
 
         fwd.abort();
 
-        if normal_close && !session.has_clients() {
-            manager.sessions.remove(&pane_id);
-            manager.broadcast_sync(&SyncMsg::TabClosed { pane_id: pane_id.clone() });
-            info!("Session destroyed (last client closed): pane={}", pane_id);
-        } else if !session.has_clients() {
+        if !session.has_clients() {
             *session.status.lock().unwrap() = SessionStatus::Detached { since: std::time::Instant::now() };
             info!("Session detached (all clients gone): pane={}", pane_id);
         }
@@ -248,8 +259,17 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
         }
     });
 
+    // Input channel: dedicated write task reads from channel → PTY writer
+    let mut input_rx = session.replace_input_channel();
+    let write_session = Arc::clone(&session);
+    tokio::spawn(async move {
+        while let Some(data) = input_rx.recv().await {
+            let mut w = write_session.writer.lock().unwrap();
+            let _ = w.write_all(data.as_bytes());
+        }
+    });
+
     // WS read loop
-    let mut normal_close = false;
     while let Some(Ok(msg)) = ws_rx.next().await {
         match msg {
             Message::Text(text) => {
@@ -271,8 +291,10 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
                                 input_buffer.push(ch);
                             }
                         }
-                        let mut w = session.writer.lock().unwrap();
-                        let _ = w.write_all(data.as_bytes());
+                        let tx = session.input_tx.lock().unwrap();
+                        if let Some(tx) = tx.as_ref() {
+                            let _ = tx.send(data);
+                        }
                     }
                     Ok(ClientMsg::Resize { cols, rows }) => {
                         let m = session.master.lock().unwrap();
@@ -284,23 +306,16 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
                     Err(e) => error!("parse msg: {}", e),
                 }
             }
-            Message::Close(frame) => {
-                normal_close = frame.as_ref().map(|f| f.code == 1000).unwrap_or(false);
-                break;
-            }
+            Message::Close(_) => break,
             _ => {}
         }
     }
 
     fwd.abort();
 
-    if normal_close && !session.has_clients() {
-        manager.sessions.remove(&pane_id);
-        manager.broadcast_sync(&SyncMsg::TabClosed { pane_id: pane_id.clone() });
-        info!("Session destroyed (normal close): pane={}", pane_id);
-    } else if !session.has_clients() {
+    if !session.has_clients() {
         *session.status.lock().unwrap() = SessionStatus::Detached { since: std::time::Instant::now() };
-        info!("Session detached (abnormal close): pane={}", pane_id);
+        info!("Session detached (all clients gone): pane={}", pane_id);
     }
 }
 

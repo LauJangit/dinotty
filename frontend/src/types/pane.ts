@@ -10,6 +10,7 @@ export interface LeafPane {
 /** 分割容器：水平或垂直排列子节点 */
 export interface SplitPane {
   type: 'split'
+  id: string             // Stable identifier for Vue key (survives reorder)
   direction: 'horizontal' | 'vertical'
   children: PaneLayout[]
   ratios: number[]
@@ -50,7 +51,7 @@ export function migrateTab(raw: any): TerminalTab {
     return {
       type: 'terminal',
       paneId: raw.paneId,
-      layout: { type: 'leaf', paneId: raw.paneId, title: raw.title ?? 'Terminal', ratio: 1, zoomed: false },
+      layout: ensureSplitRoot({ type: 'leaf', paneId: raw.paneId, title: raw.title ?? 'Terminal', ratio: 1, zoomed: false }),
       activePaneId: raw.paneId,
       broadcastMode: false,
       broadcastActivity: 0,
@@ -190,4 +191,27 @@ export function removeLeaf(root: PaneLayout, paneId: string): LeafPane | null {
   }
 
   return removed
+}
+
+/** Generate a stable ID for a SplitPane */
+export function genSplitId(): string {
+  return 's-' + crypto.randomUUID()
+}
+
+/** Ensure a SplitPane has an id (for deserialized/migrated data) */
+export function ensureSplitId(split: SplitPane): SplitPane {
+  if (!split.id) split.id = genSplitId()
+  return split
+}
+
+/** Wrap a leaf layout in a single-child split so the root is always a SplitPane */
+export function ensureSplitRoot(layout: PaneLayout): SplitPane {
+  if (layout.type === 'split') return ensureSplitId(layout)
+  return {
+    type: 'split',
+    id: genSplitId(),
+    direction: 'horizontal',
+    children: [layout],
+    ratios: [1.0],
+  }
 }

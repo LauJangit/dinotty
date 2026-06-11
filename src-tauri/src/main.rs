@@ -77,6 +77,7 @@ fn pty_spawn(
                 *g = Some(Arc::clone(&exit_cb));
             }
         }
+        session.clear_clients();
         emit_join_sync(&app, &pane_id, &session);
         spawn_tauri_output_forwarder(app.clone(), pane_id.clone(), Arc::clone(&session));
         return Ok(session.shell_type.clone());
@@ -138,6 +139,19 @@ fn pty_kill(pane_id: String, state: State<'_, Arc<SessionManager>>) -> Result<()
     state.broadcast_sync(&SyncMsg::TabClosed {
         pane_id: pane_id.clone(),
     });
+    Ok(())
+}
+
+#[tauri::command]
+fn pty_detach(pane_id: String, state: State<'_, Arc<SessionManager>>) -> Result<(), String> {
+    if let Some(entry) = state.sessions.get(&pane_id) {
+        let session = Arc::clone(entry.value());
+        if !session.has_clients() {
+            *session.status.lock().unwrap() = SessionStatus::Detached {
+                since: std::time::Instant::now(),
+            };
+        }
+    }
     Ok(())
 }
 
@@ -234,6 +248,7 @@ fn main() {
             pty_write,
             pty_resize,
             pty_kill,
+            pty_detach,
             embedded_http_origin,
             tauri_fetch,
         ])

@@ -330,11 +330,14 @@ export class TerminalInstance {
       this.onDisconnect?.()
     })
 
-    this.xterm!.onData((data) => {
-      if (this._compositionGuard && !this._compositionGuard(data)) return
-      this.onInput?.(data)
-      this._transport?.send({ type: 'input', data })
-    })
+    if (!this._onDataRegistered) {
+      this._onDataRegistered = true
+      this.xterm!.onData((data) => {
+        if (this._compositionGuard && !this._compositionGuard(data)) return
+        this.onInput?.(data)
+        this._transport?.send({ type: 'input', data })
+      })
+    }
   }
 
   // ── Private ──────────────────────────────────────────────

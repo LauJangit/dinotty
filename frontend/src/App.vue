@@ -43,7 +43,7 @@
             :active-pane-id="tab.activePaneId"
             :broadcast-mode="tab.broadcastMode"
             :broadcast-activity="tab.broadcastActivity"
-            :allow-close="tab.layout.type === 'split'"
+            :allow-close="getAllLeaves(tab.layout).length > 1"
             @register="registerTermRef"
             @title-change="onTitleChange"
             @focus="(id: string) => splitPane.focusPane(id)"
@@ -123,7 +123,7 @@ import ServerList from './components/ServerList.vue'
 import StatusBar from './components/terminal/StatusBar.vue'
 import type { SyncServerMsg, SyncClientMsg } from './types/protocol'
 import type { Tab, TerminalTab, PluginTab, PaneLayout } from './types/pane'
-import { migrateTab, getAllLeaves, findLeaf, findFirstLeaf } from './types/pane'
+import { migrateTab, getAllLeaves, findLeaf, findFirstLeaf, ensureSplitRoot } from './types/pane'
 import { useSettings } from './composables/useSettings'
 import { getApiBase, wsUrlWithToken, hasAuthToken, checkTokenConfigured, setAuthToken } from './composables/apiBase'
 import { isTauri } from './composables/useTransport'
@@ -346,7 +346,7 @@ function newTab() {
   tabs.value.push({
     type: 'terminal',
     paneId: tabId,
-    layout: { type: 'leaf', paneId, title: 'Terminal', ratio: 1, zoomed: false },
+    layout: ensureSplitRoot({ type: 'leaf', paneId, title: 'Terminal', ratio: 1, zoomed: false }),
     activePaneId: paneId,
     broadcastMode: false,
     broadcastActivity: 0,
@@ -402,11 +402,13 @@ function closeTab(tabId: string) {
   if (!tab) return
 
   if (tab.type === 'terminal') {
-    // Clean up all leaf pane refs and send close for each
+    // Clean up all leaf pane refs and close their sessions
     for (const leaf of getAllLeaves(tab.layout)) {
       delete termRefs[leaf.paneId]
-      sendSync({ type: 'close_tab', pane_id: leaf.paneId })
+      sendSync({ type: 'close_pane', pane_id: leaf.paneId })
     }
+    // Remove the tab layout entry and broadcast tab_closed
+    sendSync({ type: 'close_tab', pane_id: tab.paneId })
   }
 
   if (tabs.value.length === 1) {
@@ -415,7 +417,7 @@ function closeTab(tabId: string) {
     tabs.value[0] = {
       type: 'terminal',
       paneId: newTabId,
-      layout: { type: 'leaf', paneId: newPaneId, title: 'Terminal', ratio: 1, zoomed: false },
+      layout: ensureSplitRoot({ type: 'leaf', paneId: newPaneId, title: 'Terminal', ratio: 1, zoomed: false }),
       activePaneId: newPaneId,
       broadcastMode: false,
       broadcastActivity: 0,
@@ -450,7 +452,9 @@ function focusActive() {
   if (!tab) return
   if (tab.type === 'terminal') {
     const paneId = tab.activePaneId
-    termRefs[paneId]?.focus()
+    if (!(isTouchDevice() && kbVisible.value)) {
+      termRefs[paneId]?.focus()
+    }
     termRefs[paneId]?.fit()
   }
 }
@@ -887,7 +891,7 @@ async function connectSyncWS() {
           tabs.value.push({
             type: 'terminal',
             paneId: tabId,
-            layout: serverLayout ?? migrated?.layout ?? { type: 'leaf', paneId: tab.pane_id, title: 'Terminal', ratio: 1, zoomed: false },
+            layout: ensureSplitRoot(serverLayout ?? migrated?.layout ?? { type: 'leaf', paneId: tab.pane_id, title: 'Terminal', ratio: 1, zoomed: false }),
             activePaneId: tab.active_pane_id ?? migrated?.activePaneId ?? tab.pane_id,
             broadcastMode: false,
             broadcastActivity: 0,
@@ -959,7 +963,7 @@ async function connectSyncWS() {
         tabs.value.push({
           type: 'terminal',
           paneId: tabId,
-          layout: { type: 'leaf', paneId: msg.pane_id, title: 'Terminal', ratio: 1, zoomed: false },
+          layout: ensureSplitRoot({ type: 'leaf', paneId: msg.pane_id, title: 'Terminal', ratio: 1, zoomed: false }),
           activePaneId: msg.pane_id,
           broadcastMode: false,
       broadcastActivity: 0,
@@ -970,26 +974,22 @@ async function connectSyncWS() {
         })
       }
     } else if (msg.type === 'tab_closed') {
-      // Find which tab contains this leaf paneId
-      const tabIdx = tabs.value.findIndex(t => {
-        if (t.type !== 'terminal') return false
-        return !!findLeaf(t.layout, msg.pane_id)
-      })
+      // Tab-level close: find the tab by its paneId
+      const tabIdx = tabs.value.findIndex(t =>
+        t.type === 'terminal' && t.paneId === msg.pane_id,
+      )
       if (tabIdx !== -1) {
         const tab = tabs.value[tabIdx] as TerminalTab
-        const leaves = getAllLeaves(tab.layout)
-        if (leaves.length <= 1) {
-          // Last leaf, remove the tab
-          if (tabs.value.length > 1) {
-            delete termRefs[msg.pane_id]
-            tabs.value.splice(tabIdx, 1)
-            if (activePaneId.value === tab.paneId) {
-              activePaneId.value = tabs.value[Math.min(tabIdx, tabs.value.length - 1)].paneId
-            }
-            persist()
+        if (tabs.value.length > 1) {
+          for (const leaf of getAllLeaves(tab.layout)) {
+            delete termRefs[leaf.paneId]
           }
+          tabs.value.splice(tabIdx, 1)
+          if (activePaneId.value === tab.paneId) {
+            activePaneId.value = tabs.value[Math.min(tabIdx, tabs.value.length - 1)].paneId
+          }
+          persist()
         }
-        // Multi-leaf: the backend only closes individual panes, which we handle via closePane
       }
     } else if (msg.type === 'tab_activated') {
       const cur = tabs.value.find(t => t.paneId === activePaneId.value)
@@ -1007,11 +1007,18 @@ async function connectSyncWS() {
         }
       }
     } else if (msg.type === 'layout_updated') {
-      // Find the tab by its pane_id (tab-level id)
-      const targetTab = tabs.value.find(t => t.paneId === msg.pane_id) as TerminalTab | undefined
+      // Find the tab by tab-level paneId OR by shared leaf paneIds
+      // (tab-level paneIds are client-local, so fall back to leaf matching)
+      const targetTab = tabs.value.find(t => {
+        if (t.type !== 'terminal') return false
+        if (t.paneId === msg.pane_id) return true
+        const incomingLeafIds = getAllLeaves(msg.layout).map((l: any) => l.paneId)
+        const localLeafIds = getAllLeaves(t.layout).map(l => l.paneId)
+        return incomingLeafIds.some((id: string) => localLeafIds.includes(id))
+      }) as TerminalTab | undefined
       if (targetTab) {
         suppressSync = true
-        targetTab.layout = msg.layout
+        targetTab.layout = ensureSplitRoot(msg.layout)
         targetTab.activePaneId = msg.active_pane_id
         suppressSync = false
 

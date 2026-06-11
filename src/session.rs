@@ -27,6 +27,7 @@ pub struct Session {
     pub child: Mutex<Box<dyn Child + Send + Sync>>,
     pub screen: Mutex<VirtualScreen>,
     pub clients: Mutex<Vec<mpsc::UnboundedSender<String>>>,
+    pub input_tx: Mutex<Option<mpsc::UnboundedSender<String>>>,
     pub status: Mutex<SessionStatus>,
     pub size: Mutex<(u16, u16)>,
     #[allow(dead_code)]
@@ -45,10 +46,27 @@ impl Session {
         sniff_cwd_from_title_osc(sniff_buf, data, &home, cwd);
     }
 
+    /// Replace the input channel, closing the old one (if any) so the previous
+    /// PTY write task exits. Returns the new receiver for the caller to spawn
+    /// a write task on.
+    pub fn replace_input_channel(&self) -> mpsc::UnboundedReceiver<String> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let old = self.input_tx.lock().unwrap().replace(tx);
+        drop(old); // close old sender → old write task's recv() returns None
+        rx
+    }
+
     pub fn add_client(&self) -> mpsc::UnboundedReceiver<String> {
         let (tx, rx) = mpsc::unbounded_channel();
         self.clients.lock().unwrap().push(tx);
         rx
+    }
+
+    /// Remove all existing clients so old forwarder tasks exit cleanly.
+    /// Must be called before `add_client` on reconnection to prevent
+    /// duplicate output delivery.
+    pub fn clear_clients(&self) {
+        self.clients.lock().unwrap().clear();
     }
 
     pub fn broadcast(&self, msg: &str) {
@@ -137,7 +155,11 @@ fn remove_pane_from_layout(node: &serde_json::Value, pane_id: &str) -> Option<se
                 .collect();
             match new_children.len() {
                 0 => None,
-                1 => Some(new_children.into_iter().next().unwrap()),
+                _ if new_children.len() == children.len() => Some(node.clone()),
+                1 => {
+                    // Single-child split is degenerate — collapse by returning the child directly
+                    Some(new_children.into_iter().next().unwrap())
+                }
                 _ => {
                     let mut result = node.clone();
                     result["children"] = serde_json::Value::Array(new_children);
@@ -258,10 +280,12 @@ impl SessionManager {
             if new_layout == *layout {
                 return None;
             }
-            let active = val.get("active_pane_id").cloned();
+            let active = val.get("active_pane_id").and_then(|v| v.as_str());
+            let new_leaf_ids = collect_leaf_pane_ids(&new_layout);
+            let active_pane_id = active.filter(|id| new_leaf_ids.iter().any(|lid| lid == *id));
             let mut new_val = serde_json::json!({ "layout": new_layout });
-            if let Some(a) = active {
-                new_val["active_pane_id"] = a;
+            if let Some(a) = active_pane_id {
+                new_val["active_pane_id"] = serde_json::Value::String(a.to_string());
             }
             Some((tab_pane_id.clone(), new_val))
         }).collect();

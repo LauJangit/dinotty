@@ -3,7 +3,7 @@ members = ["src-tauri"]
 
 [package]
 name = "dinotty-server"
-version = "0.10.1"
+version = "0.10.2"
 edition = "2021"
 build = "build.rs"
 repository = "https://github.com/xichan96/dinotty"
@@ -29,6 +29,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 dirs = "5"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "gzip", "brotli", "blocking", "json"] }
 tokio-tungstenite = "0.24"
+tokio-util = { version = "0.7", features = ["io"] }
 bytes = "1"
 regex = "1.12.3"
 unicode-width = "0.2"

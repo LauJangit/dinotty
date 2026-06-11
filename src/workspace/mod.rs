@@ -526,16 +526,17 @@ pub async fn workspace_raw(
             (StatusCode::RANGE_NOT_SATISFIABLE, headers, Body::empty()).into_response()
         }
         ByteRangeResult::Full => {
-            let bytes = match tokio::fs::read(&target).await {
-                Ok(b) => b,
+            let file = match tokio::fs::File::open(&target).await {
+                Ok(f) => f,
                 Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
             };
+            let stream = tokio_util::io::ReaderStream::new(file);
             headers.insert(
                 header::CONTENT_LENGTH,
                 HeaderValue::from_str(&len.to_string())
                     .unwrap_or_else(|_| HeaderValue::from_static("0")),
             );
-            (StatusCode::OK, headers, Body::from(bytes)).into_response()
+            (StatusCode::OK, headers, Body::from_stream(stream)).into_response()
         }
     }
 }

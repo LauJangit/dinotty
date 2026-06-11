@@ -69,6 +69,7 @@ pub fn create_session(
         child: std::sync::Mutex::new(child),
         screen: std::sync::Mutex::new(VirtualScreen::new(80, 24)),
         clients: std::sync::Mutex::new(Vec::new()),
+        input_tx: std::sync::Mutex::new(None),
         status: std::sync::Mutex::new(SessionStatus::Connected),
         size: std::sync::Mutex::new((80, 24)),
         shell_type: shell_type.clone(),
@@ -79,9 +80,6 @@ pub fn create_session(
         }),
     });
     manager.sessions.insert(pane_id.clone(), Arc::clone(&session));
-    manager.broadcast_sync(&SyncMsg::TabCreated {
-        pane_id: pane_id.clone(),
-    });
 
     let session_clone = Arc::clone(&session);
     let pane_id_clone = pane_id.clone();

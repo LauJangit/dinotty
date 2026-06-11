@@ -929,7 +929,7 @@ dependencies = [
 
 [[package]]
 name = "dinotty-desktop"
-version = "0.10.1"
+version = "0.10.2"
 dependencies = [
  "axum 0.7.9",
  "dinotty-server",
@@ -953,7 +953,7 @@ dependencies = [
 
 [[package]]
 name = "dinotty-server"
-version = "0.10.1"
+version = "0.10.2"
 dependencies = [
  "axum 0.7.9",
  "axum-extra",
@@ -982,6 +982,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-tungstenite",
+ "tokio-util",
  "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
