@@ -142,6 +142,19 @@ fn pty_kill(pane_id: String, state: State<'_, Arc<SessionManager>>) -> Result<()
 }
 
 #[tauri::command]
+fn pty_detach(pane_id: String, state: State<'_, Arc<SessionManager>>) -> Result<(), String> {
+    if let Some(entry) = state.sessions.get(&pane_id) {
+        let session = Arc::clone(entry.value());
+        if !session.has_clients() {
+            *session.status.lock().unwrap() = SessionStatus::Detached {
+                since: std::time::Instant::now(),
+            };
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn embedded_http_origin() -> String {
     let port = EMBEDDED_HTTP_PORT.get().copied().unwrap_or(8999);
     format!("http://127.0.0.1:{port}")
@@ -234,6 +247,7 @@ fn main() {
             pty_write,
             pty_resize,
             pty_kill,
+            pty_detach,
             embedded_http_origin,
             tauri_fetch,
         ])

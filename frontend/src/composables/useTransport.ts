@@ -176,7 +176,7 @@ export class TauriIpcTransport implements Transport {
   }
 
   disconnect() {
-    this._invoke('pty_kill')
+    this._invoke('pty_detach')
     for (const u of this._unlistenFns) {
       u()
     }
