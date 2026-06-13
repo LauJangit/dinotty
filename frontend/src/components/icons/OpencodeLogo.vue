@@ -1,0 +1,11 @@
+<template>
+  <svg :width="size" :height="size" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" xmlns="http://www.w3.org/2000/svg">
+    <path d="M16 6H8v12h8V6zm4 16H4V2h16v20z"/>
+  </svg>
+</template>
+
+<script setup lang="ts">
+defineProps<{
+  size?: number
+}>()
+</script>

@@ -1,6 +1,9 @@
 import { reactive } from 'vue'
 import { getThemeByName, applyThemeToDOM, getXtermTheme } from '../themes'
 import { getApiBase, apiUrl, authFetch, hasAuthToken } from './apiBase'
+import ClaudeLogo from '../components/icons/ClaudeLogo.vue'
+import CodexLogo from '../components/icons/CodexLogo.vue'
+import OpencodeLogo from '../components/icons/OpencodeLogo.vue'
 export interface SettingsData {
   theme: {
     preset: string
@@ -90,6 +93,7 @@ export interface ActionKey {
   special?: string
   auto_enter?: boolean
   grow?: number
+  icon?: object
 }
 
 export interface ActionKeyboardConfig {
@@ -100,23 +104,22 @@ export const DEFAULT_ACTION_KEYBOARD: ActionKeyboardConfig = {
   rows: [
     [
       { label: '🔖', send: '', special: 'bookmarks' },
-      { label: 'cc', send: 'claude', auto_enter: true },
-      { label: 'oc', send: 'opencode', auto_enter: true },
+      { label: 'claude', send: 'claude', auto_enter: true, icon: ClaudeLogo },
+      { label: 'codex', send: 'codex', auto_enter: true, icon: CodexLogo },
+      { label: 'opencode', send: 'opencode', auto_enter: true, icon: OpencodeLogo },
     ],
     [
       { label: 'esc', send: '\x1b', style: 'danger', auto_enter: true },
       { label: 'ctrl+c', send: '\x03', style: 'danger', auto_enter: true },
       { label: 'clear', send: 'clear', auto_enter: true },
-      { label: '⌫', send: '', repeat: true, grow: 1.5 },
+      { label: '⌫', send: '\x7f', repeat: true, grow: 1.5 },
     ],
     [
       { label: 'PlanMode', send: '\x1b[Z', auto_enter: true, grow: 1.75 },
-      { label: '/', send: '/', grow: 1.5 },
       { label: 'tab', send: '\t', grow: 1.5 },
-      { label: '1', send: '1', auto_enter: true },
-      { label: '2', send: '2', auto_enter: true },
-      { label: '3', send: '3', auto_enter: true },
-      { label: '4', send: '4', auto_enter: true },
+      { label: '/', send: '/' },
+      { label: '/clear', send: '/clear', auto_enter: true },
+      { label: '/model', send: '/model', auto_enter: true },
     ],
   ],
 }

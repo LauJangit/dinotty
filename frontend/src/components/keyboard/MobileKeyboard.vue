@@ -18,7 +18,7 @@
           ref="textInputRef"
           class="mkb-text-input"
           :class="{ 'mkb-text-input-focused': textInputFocused }"
-          placeholder=""
+          :placeholder="t('mobileKb.actionPlaceholder')"
           enterkeyhint="send"
           v-model="textInput"
           @focus="onTextInputFocus"
@@ -94,14 +94,13 @@
         @key-press="onKeyPress"
         @special="onSpecial"
       />
-      <div class="mkb-action-arrow-enter">
-        <div class="mkb-action-arrowpad">
-          <div class="mkb-action-arrow-top">
-            <MkbKey :k="actionArrowUp" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
-          </div>
-          <div class="mkb-action-arrow-bot">
-            <MkbKey v-for="k in actionArrowBot" :key="k.l" :k="k" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
-          </div>
+      <div class="mkb-action-bottom">
+        <div class="mkb-action-grid">
+          <MkbKey :k="actionYes" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
+          <MkbKey :k="actionNo" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
+          <MkbKey :k="actionArrowUp" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
+          <MkbKey :k="actionContinue" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
+          <MkbKey :k="actionArrowBot[0]" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
         </div>
         <MkbKey :k="actionEnter" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
       </div>
@@ -302,7 +301,7 @@ const kbswitchAction = computed<KeyDef>(() => ({
   l: '',
   icon: Keyboard,
   sp: 'kbswitch',
-  g: 1.5,
+  g: 1.2,
   cls: 'mkb-mod mkb-action-back',
   id: 'mkb-kbswitch2',
 }))
@@ -325,12 +324,14 @@ const actionFollowingRows = computed(() => {
 const actionArrowUp: KeyDef = { l:'↑', s:'\x1b[A', cls:'mkb-mod mkb-action-arrow', repeat:true }
 
 const actionArrowBot: KeyDef[] = [
-  { l:'←', s:'\x1b[D', cls:'mkb-mod mkb-action-arrow', repeat:true },
   { l:'↓', s:'\x1b[B', cls:'mkb-mod mkb-action-arrow', repeat:true },
-  { l:'→', s:'\x1b[C', cls:'mkb-mod mkb-action-arrow', repeat:true },
 ]
 
 const actionEnter: KeyDef = { l:'↵', s:'\r', cls:'mkb-mod mkb-action-enter mkb-return' }
+
+const actionYes: KeyDef = { l:'yes', s:'yes\r', cls:'mkb-mod mkb-action-btn' }
+const actionNo: KeyDef = { l:'no', s:'no\r', cls:'mkb-mod mkb-action-btn' }
+const actionContinue: KeyDef = { l:'continue', s:'continue\r', cls:'mkb-mod mkb-action-btn mkb-action-continue' }
 
 function onTextInputFocus() {
   textInputFocused.value = true

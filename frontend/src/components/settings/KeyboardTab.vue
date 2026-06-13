@@ -63,16 +63,13 @@
           >✕</button>
         </div>
 
-        <div class="mkb-action-arrow-enter ak-wyg-fixed-cluster">
-          <div class="mkb-action-arrowpad">
-            <div class="mkb-action-arrow-top">
-              <div class="mkb-btn mkb-mod mkb-action-arrow">↑</div>
-            </div>
-            <div class="mkb-action-arrow-bot">
-              <div class="mkb-btn mkb-mod mkb-action-arrow">←</div>
-              <div class="mkb-btn mkb-mod mkb-action-arrow">↓</div>
-              <div class="mkb-btn mkb-mod mkb-action-arrow">→</div>
-            </div>
+        <div class="mkb-action-bottom ak-wyg-fixed-cluster">
+          <div class="mkb-action-grid">
+            <div class="mkb-btn mkb-mod mkb-action-btn">yes</div>
+            <div class="mkb-btn mkb-mod mkb-action-btn">no</div>
+            <div class="mkb-btn mkb-mod mkb-action-arrow">↑</div>
+            <div class="mkb-btn mkb-mod mkb-action-btn mkb-action-continue">continue</div>
+            <div class="mkb-btn mkb-mod mkb-action-arrow">↓</div>
           </div>
           <div class="mkb-btn mkb-mod mkb-action-enter mkb-return">↵</div>
         </div>
