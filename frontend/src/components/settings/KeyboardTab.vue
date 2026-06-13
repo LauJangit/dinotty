@@ -340,9 +340,27 @@ const akSendPreview = computed(() => {
   return akEdit.value.sendRaw
 })
 
+function cloneActionKeyboard() {
+  const clone = JSON.parse(JSON.stringify(DEFAULT_ACTION_KEYBOARD))
+  // Restore icon references (lost in JSON serialization)
+  const iconMap = new Map<string, object>()
+  for (const row of DEFAULT_ACTION_KEYBOARD.rows) {
+    for (const k of row) {
+      if (k.icon) iconMap.set(k.send, k.icon)
+    }
+  }
+  for (const row of clone.rows) {
+    for (const k of row) {
+      const icon = iconMap.get(k.send)
+      if (icon) k.icon = icon
+    }
+  }
+  return clone
+}
+
 function ensureActionKeyboard() {
   if (!settings.action_keyboard) {
-    settings.action_keyboard = JSON.parse(JSON.stringify(DEFAULT_ACTION_KEYBOARD))
+    settings.action_keyboard = cloneActionKeyboard()
   }
 }
 
@@ -455,7 +473,7 @@ function saveActionKey() {
 }
 
 function resetActionKeyboard() {
-  settings.action_keyboard = JSON.parse(JSON.stringify(DEFAULT_ACTION_KEYBOARD))
+  settings.action_keyboard = cloneActionKeyboard()
 }
 
 let recordHandler: ((e: KeyboardEvent) => void) | null = null

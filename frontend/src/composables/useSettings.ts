@@ -188,6 +188,26 @@ export function useSettings() {
   return { settings, saveSettings, applyCurrentTheme, getCurrentXtermTheme }
 }
 
+function restoreActionIcons() {
+  const cfg = settings.action_keyboard
+  if (!cfg?.rows) return
+  // Build a lookup from send → icon using DEFAULT_ACTION_KEYBOARD
+  const iconMap = new Map<string, object>()
+  for (const row of DEFAULT_ACTION_KEYBOARD.rows) {
+    for (const k of row) {
+      if (k.icon) iconMap.set(k.send, k.icon)
+    }
+  }
+  for (const row of cfg.rows) {
+    for (const k of row) {
+      if (!k.icon) {
+        const icon = iconMap.get(k.send)
+        if (icon) k.icon = icon
+      }
+    }
+  }
+}
+
 async function loadSettings() {
   if (!hasAuthToken()) return
   try {
@@ -196,6 +216,7 @@ async function loadSettings() {
     if (res.ok) {
       const data = await res.json()
       Object.assign(settings, data)
+      restoreActionIcons()
       applyCurrentTheme()
       // Sync action keyboard to localStorage for static mobile-keyboard.js
       if (settings.action_keyboard) {
