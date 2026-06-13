@@ -258,54 +258,41 @@
   font-size: 12px;
 }
 
-/* Arrow cross-pad + big Enter side by side */
-.mkb-action-arrow-enter {
+/* Bottom bar: grid + enter */
+.mkb-action-bottom {
   display: flex;
   flex-direction: row;
   gap: 4px;
   align-items: stretch;
 }
 
-.mkb-action-arrowpad {
+.mkb-action-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(3, 1fr);
   gap: 4px;
-  flex: 3;
+  flex: 1 1 0;
   min-width: 0;
 }
 
-.mkb-action-arrow-top {
-  grid-column: 1 / -1;
-  display: flex;
-  justify-content: center;
-  align-items: stretch;
-}
-
-.mkb-action-arrow-top .mkb-btn {
-  width: 100%;
-  max-width: 100%;
-  flex: 1 1 auto;
-  height: 36px;
-  min-height: 36px;
-  box-sizing: border-box;
-  font-size: 20px !important;
-}
-
-.mkb-action-arrow-bot {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 4px;
-}
-
-.mkb-action-arrow-bot .mkb-btn {
+.mkb-action-grid .mkb-btn {
   width: 100%;
   min-width: 0;
   height: 36px;
   min-height: 36px;
-  flex: none;
   box-sizing: border-box;
+}
+
+.mkb-action-grid .mkb-action-arrow {
   font-size: 20px !important;
+}
+
+.mkb-action-grid .mkb-action-btn {
+  font-size: 13px !important;
+}
+
+/* continue spans 2 columns (same width as yes + no) */
+.mkb-action-grid .mkb-action-continue {
+  grid-column: 1 / 3;
 }
 
 /* Big Enter: tall, right side */
@@ -388,16 +375,7 @@
   background: var(--border);
 }
 .mkb-text-input-glow.mkb-glow-active {
-  background: conic-gradient(from var(--mkb-glow-angle, 0deg), rgba(255,255,255,0.6), rgba(255,255,255,0.15), rgba(255,255,255,0.6), rgba(255,255,255,0.15), rgba(255,255,255,0.6));
-  animation: mkb-glow-spin 4s linear infinite;
-}
-@keyframes mkb-glow-spin {
-  to { --mkb-glow-angle: 360deg; }
-}
-@property --mkb-glow-angle {
-  syntax: '<angle>';
-  initial-value: 0deg;
-  inherits: false;
+  background: rgba(255, 255, 255, 0.15);
 }
 .mkb-text-input-focused {
   height: auto;

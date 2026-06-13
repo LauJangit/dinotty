@@ -19,15 +19,20 @@
       </div>
     </section>
 
-    <section class="settings-section" v-if="info.update_available !== undefined">
-      <div v-if="info.update_available" class="about-update about-update-available">
-        <span class="about-update-text">{{ t('settings.about.updateAvailable') }}: {{ info.latest_version }}</span>
-        <a v-if="info.latest_url" :href="info.latest_url" target="_blank" rel="noopener" class="about-update-btn">
-          {{ t('settings.about.download') }}
-        </a>
-      </div>
-      <div v-else class="about-update about-update-ok">
-        <span class="about-update-text">{{ t('settings.about.upToDate') }}</span>
+    <section class="settings-section">
+      <button class="about-check-btn" :disabled="checking" @click="checkForUpdates">
+        {{ checking ? t('settings.about.checking') : t('settings.about.checkForUpdates') }}
+      </button>
+      <div v-if="!checking && info.update_available !== undefined" style="margin-top: 10px;">
+        <div v-if="info.update_available" class="about-update about-update-available">
+          <span class="about-update-text">{{ t('settings.about.updateAvailable') }}: {{ info.latest_version }}</span>
+          <a v-if="info.latest_url" :href="info.latest_url" target="_blank" rel="noopener" class="about-update-btn">
+            {{ t('settings.about.download') }}
+          </a>
+        </div>
+        <div v-else class="about-update about-update-ok">
+          <span class="about-update-text">{{ t('settings.about.upToDate') }}</span>
+        </div>
       </div>
     </section>
   </div>
@@ -40,6 +45,8 @@ import { apiUrl, authFetch, getApiBase } from '../../composables/apiBase'
 
 const { t } = useI18n()
 
+const checking = ref(false)
+
 const info = ref<{
   version: string
   repo_url: string
@@ -51,7 +58,7 @@ const info = ref<{
   repo_url: '',
 })
 
-onMounted(async () => {
+async function loadInfo() {
   try {
     await getApiBase()
     const res = await authFetch(apiUrl('/api/info'))
@@ -66,7 +73,21 @@ onMounted(async () => {
   } catch {
     // ignore
   }
-})
+}
+
+async function checkForUpdates() {
+  checking.value = true
+  try {
+    await authFetch(apiUrl('/api/check-update'), { method: 'POST' })
+    await loadInfo()
+  } catch {
+    // ignore
+  } finally {
+    checking.value = false
+  }
+}
+
+onMounted(loadInfo)
 </script>
 
 <style scoped>
@@ -138,5 +159,23 @@ onMounted(async () => {
 }
 .about-update-btn:hover {
   background: rgba(245, 158, 11, 0.35);
+}
+.about-check-btn {
+  width: 100%;
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #30363d);
+  background: var(--bg-elevated, #161b22);
+  color: var(--fg-bright, #F0F6FC);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.about-check-btn:hover:not(:disabled) {
+  background: var(--bg-hover, #1c2128);
+}
+.about-check-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 </style>

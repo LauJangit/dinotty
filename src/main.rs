@@ -109,31 +109,48 @@ fn version_gt(a: &str, b: &str) -> bool {
     parse_version(a) > parse_version(b)
 }
 
-fn check_update(current_version: &str, repo_url: &str) -> Option<UpdateInfo> {
-    // Fetch latest tags from remote
-    let _ = Command::new("git")
-        .args(["fetch", "--tags"])
-        .output();
-
-    // Get the latest tag sorted by version
-    let latest_tag = Command::new("git")
-        .args(["tag", "--sort=-v:refname"])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| {
-            let output = String::from_utf8_lossy(&o.stdout);
-            output.lines().next().map(|l| l.trim().to_string())
+fn parse_github_repo(repo_url: &str) -> Option<(&str, &str)> {
+    // Handles: https://github.com/owner/repo or https://github.com/owner/repo.git
+    let url = repo_url.trim_end_matches(".git").trim_end_matches('/');
+    url.strip_prefix("https://github.com/")
+        .or_else(|| url.strip_prefix("http://github.com/"))
+        .and_then(|path| {
+            let mut parts = path.splitn(2, '/');
+            let owner = parts.next()?;
+            let repo = parts.next()?;
+            Some((owner, repo))
         })
-        .filter(|t| !t.is_empty())?;
+}
+
+async fn check_update(current_version: &str, repo_url: &str) -> Option<UpdateInfo> {
+    let (owner, repo) = parse_github_repo(repo_url)?;
+    let api_url = format!("https://api.github.com/repos/{}/{}/releases/latest", owner, repo);
+
+    let resp = proxy::HTTP_CLIENT_FOLLOW_REDIRECTS
+        .get(&api_url)
+        .send()
+        .await
+        .ok()?;
+
+    if !resp.status().is_success() {
+        tracing::warn!("GitHub releases API returned status: {}", resp.status());
+        return None;
+    }
+
+    let body: serde_json::Value = resp.json().await.ok()?;
+    let latest_tag = body.get("tag_name")?.as_str()?.to_string();
+    let html_url = body
+        .get("html_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&format!("{}/releases/tag/{}", repo_url, latest_tag))
+        .to_string();
 
     let update_available = version_gt(&latest_tag, current_version);
-    let latest_url = format!("{}/releases/tag/{}", repo_url, latest_tag);
 
     Some(UpdateInfo {
         update_available,
         latest_version: latest_tag,
-        latest_url,
+        latest_url: html_url,
     })
 }
 
@@ -292,6 +309,30 @@ async fn server_info(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(json)
 }
 
+async fn check_update_handler(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let ver = state.git_info.version.clone();
+    let repo = state.git_info.repo_url.clone();
+    match check_update(&ver, &repo).await {
+        Some(info) => {
+            let is_update = info.update_available;
+            let latest = info.latest_version.clone();
+            *state.update_info.write().await = Some(info);
+            if is_update {
+                tracing::info!("Update available: {} → {}", ver, latest);
+            }
+            let update = state.update_info.read().await.clone();
+            let mut json = serde_json::json!({ "ok": true });
+            if let Some(u) = update {
+                json["update_available"] = serde_json::json!(u.update_available);
+                json["latest_version"] = serde_json::json!(u.latest_version);
+                json["latest_url"] = serde_json::json!(u.latest_url);
+            }
+            Json(json)
+        }
+        None => Json(serde_json::json!({ "ok": false, "error": "Failed to check updates" })),
+    }
+}
+
 #[derive(serde::Deserialize)]
 struct UpdateTokenRequest {
     token: String,
@@ -374,15 +415,13 @@ async fn main() {
         let update_info = update_info.clone();
         let ver = git_info.version.clone();
         let repo = git_info.repo_url.clone();
-        tokio::task::spawn_blocking(move || {
-            match check_update(&ver, &repo) {
+        tokio::spawn(async move {
+            match check_update(&ver, &repo).await {
                 Some(info) => {
                     if info.update_available {
                         tracing::info!("Update available: {} → {}", ver, info.latest_version);
                     }
-                    tokio::runtime::Handle::current().block_on(async {
-                        *update_info.write().await = Some(info);
-                    });
+                    *update_info.write().await = Some(info);
                 }
                 None => {
                     tracing::info!("Update check: using latest version");
@@ -442,6 +481,7 @@ async fn main() {
         .route("/api/history", get(history::get_history).delete(history::delete_history))
         .route("/api/proxy", any(proxy::external_proxy_handler))
         .route("/api/info", get(server_info))
+        .route("/api/check-update", post(check_update_handler))
         .route("/api/token", get(get_token).put(update_token))
         // Plugin management
         .route("/api/plugins", get(plugin::list_plugins))

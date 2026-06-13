@@ -36,17 +36,22 @@ export function useMarketplace() {
     loading.value = true
     error.value = ''
     try {
-      const res = await authFetch(apiUrl('/api/plugins/market'))
+      const url = apiUrl('/api/plugins/market')
+      let res: Response
+      try {
+        res = await authFetch(url)
+      } catch {
+        // Network-level failure (connection refused, DNS, etc.) — retry once
+        await new Promise(r => setTimeout(r, 1500))
+        res = await authFetch(url)
+      }
       if (!res.ok) {
         // Auto-retry once on transient server errors (cold start / gateway issues)
         if (res.status >= 500) {
           await new Promise(r => setTimeout(r, 1500))
-          const retry = await authFetch(apiUrl('/api/plugins/market'))
-          if (!retry.ok) throw new Error(`HTTP ${retry.status}`)
-          plugins.value = await retry.json()
-          return
+          res = await authFetch(url)
         }
-        throw new Error(`HTTP ${res.status}`)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
       }
       plugins.value = await res.json()
     } catch (e: any) {

@@ -22,16 +22,14 @@
       @click.stop="emit('close', leaf!.paneId)"
     >&times;</button>
     <template v-if="broadcastActive">
-      <div class="broadcast-line" />
       <div class="broadcast-icon" :title="t('split.broadcastTooltip')">
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-          <rect x="1" y="7" width="12" height="6" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="none"/>
-          <path d="M4 5L2 7M10 5L12 7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-          <line x1="7" y1="1" x2="7" y2="7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.5" fill="none"/>
+          <circle cx="8" cy="8" r="1" fill="currentColor"/>
         </svg>
       </div>
     </template>
-    <div v-else-if="broadcastReceiving" class="broadcast-line receiving" />
+    <div v-else-if="broadcastReceiving" class="broadcast-dot" />
     <TerminalPane
       :ref="(el: any) => emit('register', leaf!.paneId, el)"
       :pane-id="leaf.paneId"
@@ -195,14 +193,10 @@ function getChildStyle(idx: number) {
 }
 
 .split-leaf.broadcast-active {
-  outline: 2px solid var(--accent-color, #4d80ff);
-  outline-offset: -1px;
   opacity: 1;
 }
 
 .split-leaf.broadcast-receiving {
-  outline: 2px solid rgba(77, 128, 255, 0.35);
-  outline-offset: -1px;
   opacity: 1;
 }
 
@@ -210,7 +204,7 @@ function getChildStyle(idx: number) {
 .pane-close-btn {
   position: absolute;
   top: 4px;
-  right: 4px;
+  left: 4px;
   z-index: 20;
   width: 20px;
   height: 20px;
@@ -238,29 +232,14 @@ function getChildStyle(idx: number) {
 }
 
 .pane-close-btn:hover {
-  background: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
+  background: var(--hover-bg, rgba(255, 255, 255, 0.08));
+  color: var(--text-primary, #e0e0e0);
 }
 
-/* Broadcast indicator — iTerm2 style */
-.broadcast-line {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: var(--accent-color, #4d80ff);
-  z-index: 10;
-  pointer-events: none;
-}
-
-.broadcast-line.receiving {
-  background: rgba(77, 128, 255, 0.35);
-}
-
+/* Broadcast indicator — subtle dot style */
 .broadcast-icon {
   position: absolute;
-  top: 3px;
+  top: 4px;
   right: 28px;
   z-index: 10;
   color: var(--accent-color, #4d80ff);
@@ -268,5 +247,19 @@ function getChildStyle(idx: number) {
   align-items: center;
   justify-content: center;
   cursor: default;
+  opacity: 0.85;
+}
+
+.broadcast-dot {
+  position: absolute;
+  top: 6px;
+  right: 28px;
+  z-index: 10;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-color, #4d80ff);
+  opacity: 0.35;
+  pointer-events: none;
 }
 </style>

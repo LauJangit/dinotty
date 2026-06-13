@@ -46,6 +46,7 @@ export function actionKeyToKeyDef(ak: ActionKey, opts?: { bottomIdx?: number }):
     l: ak.label || '',
     cls,
     repeat: ak.repeat,
+    icon: ak.icon as any,
   }
 
   const sp = ak.special && ak.special !== 'space' ? ak.special : undefined

@@ -63,16 +63,13 @@
           >✕</button>
         </div>
 
-        <div class="mkb-action-arrow-enter ak-wyg-fixed-cluster">
-          <div class="mkb-action-arrowpad">
-            <div class="mkb-action-arrow-top">
-              <div class="mkb-btn mkb-mod mkb-action-arrow">↑</div>
-            </div>
-            <div class="mkb-action-arrow-bot">
-              <div class="mkb-btn mkb-mod mkb-action-arrow">←</div>
-              <div class="mkb-btn mkb-mod mkb-action-arrow">↓</div>
-              <div class="mkb-btn mkb-mod mkb-action-arrow">→</div>
-            </div>
+        <div class="mkb-action-bottom ak-wyg-fixed-cluster">
+          <div class="mkb-action-grid">
+            <div class="mkb-btn mkb-mod mkb-action-btn">yes</div>
+            <div class="mkb-btn mkb-mod mkb-action-btn">no</div>
+            <div class="mkb-btn mkb-mod mkb-action-arrow">↑</div>
+            <div class="mkb-btn mkb-mod mkb-action-btn mkb-action-continue">continue</div>
+            <div class="mkb-btn mkb-mod mkb-action-arrow">↓</div>
           </div>
           <div class="mkb-btn mkb-mod mkb-action-enter mkb-return">↵</div>
         </div>
@@ -343,9 +340,27 @@ const akSendPreview = computed(() => {
   return akEdit.value.sendRaw
 })
 
+function cloneActionKeyboard() {
+  const clone = JSON.parse(JSON.stringify(DEFAULT_ACTION_KEYBOARD))
+  // Restore icon references (lost in JSON serialization)
+  const iconMap = new Map<string, object>()
+  for (const row of DEFAULT_ACTION_KEYBOARD.rows) {
+    for (const k of row) {
+      if (k.icon) iconMap.set(k.send, k.icon)
+    }
+  }
+  for (const row of clone.rows) {
+    for (const k of row) {
+      const icon = iconMap.get(k.send)
+      if (icon) k.icon = icon
+    }
+  }
+  return clone
+}
+
 function ensureActionKeyboard() {
   if (!settings.action_keyboard) {
-    settings.action_keyboard = JSON.parse(JSON.stringify(DEFAULT_ACTION_KEYBOARD))
+    settings.action_keyboard = cloneActionKeyboard()
   }
 }
 
@@ -458,7 +473,7 @@ function saveActionKey() {
 }
 
 function resetActionKeyboard() {
-  settings.action_keyboard = JSON.parse(JSON.stringify(DEFAULT_ACTION_KEYBOARD))
+  settings.action_keyboard = cloneActionKeyboard()
 }
 
 let recordHandler: ((e: KeyboardEvent) => void) | null = null

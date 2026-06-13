@@ -160,6 +160,7 @@ const messages: Record<Locale, Record<string, string>> = {
     'settings.keyboard.openApiSend': 'Send Test',
     'settings.keyboard.openApiExample': 'example',
     'keyboard.textInput.placeholder': 'Type text, then tap send…',
+    'mobileKb.actionPlaceholder': 'Type or paste commands…',
     'settings.panelPosition': 'Panel Position',
     'settings.panelPositionHint': 'Where the preview panel appears relative to the terminal',
     'settings.panelPos.auto': 'Auto',
@@ -262,6 +263,8 @@ const messages: Record<Locale, Record<string, string>> = {
     'settings.about.upToDate': 'Up to date',
     'settings.about.updateAvailable': 'Update available',
     'settings.about.download': 'Download',
+    'settings.about.checkForUpdates': 'Check for updates',
+    'settings.about.checking': 'Checking...',
   },
   zh: {
     'app.settings': '设置',
@@ -419,6 +422,7 @@ const messages: Record<Locale, Record<string, string>> = {
     'settings.keyboard.openApiSend': '发送测试',
     'settings.keyboard.openApiExample': '示例',
     'keyboard.textInput.placeholder': '输入文字后点发送键提交…',
+    'mobileKb.actionPlaceholder': '输入或粘贴命令…',
     'settings.panelPosition': '面板位置',
     'settings.panelPositionHint': '预览面板相对于终端的位置',
     'settings.panelPos.auto': '自动',
@@ -521,6 +525,8 @@ const messages: Record<Locale, Record<string, string>> = {
     'settings.about.upToDate': '已是最新版本',
     'settings.about.updateAvailable': '有新版本可用',
     'settings.about.download': '下载',
+    'settings.about.checkForUpdates': '检查更新',
+    'settings.about.checking': '检查中...',
   },
 }
 
