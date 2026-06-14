@@ -53,6 +53,8 @@ Terminal-based coding agents (Claude Code, opencode, Codex, OpenClaw, etc.) are 
 
 - **Server-side virtual terminal** — full VTE parser, server knows exact screen state, enables session recovery & screen snapshots
 - **Session persistence** — PTY processes survive disconnection, auto-reconnect with exponential backoff, refresh page to restore
+- **Split pane & multi-tab** — draggable split, multi-tab management with server-led pane lifecycle
+- **Server list** — manage multiple remote servers, quick switch connections
 - **Responsive layout** — portrait stacks vertically, landscape side-by-side; touch-optimized buttons & pane resizing
 - **Customizable shortcut keyboard** — add Ctrl/Esc/function keys for mobile, supports arbitrary escape sequences
 - **Built-in file browser** — code highlighting, Markdown rendering, Office document preview, audio/video playback
@@ -114,14 +116,18 @@ cd frontend && npx vue-tsc --noEmit
 ```
 src/               # Rust backend
   main.rs          # Axum router & server entry
+  lib.rs           # Library entry point
   ws.rs            # WebSocket ↔ PTY bridge
   vt_screen.rs     # Virtual terminal emulator (VTE-based)
   session.rs       # Session manager (multi-pane)
-  workspace.rs     # File workspace API
-  proxy.rs         # Reverse proxy for preview
+  pty.rs           # PTY creation & management
+  tabs.rs          # Tab & pane management
+  history.rs       # Session history
+  workspace/       # File workspace API
+  proxy/           # Reverse proxy for preview
   monitor.rs       # System monitor
   notification.rs  # Notification broadcast (bell/OSC detection)
-  plugin.rs        # Plugin system management
+  plugin/          # Plugin system management
   settings.rs      # Settings persistence
   auth.rs          # Authentication
   file_watcher.rs  # File change watching
@@ -129,8 +135,19 @@ src/               # Rust backend
 frontend/          # Vue 3 SPA
   src/
     App.vue
-    components/    # TabBar, TerminalPane, MobileKeyboard, etc.
-    composables/   # useTerminal, useTransport, useSettings, etc.
+    components/
+      split/           # SplitContainer, TabBar, PaneHeader, StatusBar
+      terminal/        # TerminalPane, MonitorPopover
+      command/         # CommandPalette, CommandBookmarks
+      keyboard/        # MobileKeyboard, HistoryPanel, SuggestionBar
+      notification/    # NotificationPanel, NotificationCard
+      preview/         # FileWorkspacePreview, PreviewPanel, WebPreview
+      settings/        # Settings tabs (General, Theme, Keyboard, etc.)
+      workspace/       # MonacoEditor, FilePreviewContent, gitDecorations
+      plugin/          # PluginView
+      ui/              # ConfirmModal and other shared components
+      ServerList.vue   # Server list
+    composables/   # useTerminal, useTransport, useSettings, useTabApi, etc.
 
 src-tauri/         # Tauri desktop client
 docs/              # Design documents

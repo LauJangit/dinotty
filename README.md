@@ -53,6 +53,8 @@
 
 - **服务端虚拟终端** — 完整 VTE 解析，服务端掌握精确屏幕状态，支持会话恢复与屏幕快照
 - **会话持久化** — PTY 进程在断网后存活，自动重连 + 指数退避，刷新页面即可恢复
+- **分屏与多 Tab** — 可拖拽分屏、多 Tab 管理，服务端主导的 Pane 生命周期
+- **服务器列表** — 管理多台远程服务器，快速切换连接
 - **响应式布局** — 竖屏上下排列，横屏左右并排；触控优化的按钮与面板缩放
 - **可自定义快捷键盘** — 为手机补齐 Ctrl/Esc/功能键，支持任意转义序列
 - **内建文件浏览器** — 代码高亮、Markdown 渲染、Office 文档预览、音视频播放
@@ -114,14 +116,18 @@ cd frontend && npx vue-tsc --noEmit
 ```
 src/               # Rust 后端
   main.rs          # Axum 路由与服务入口
+  lib.rs           # 库入口
   ws.rs            # WebSocket ↔ PTY 桥接
   vt_screen.rs     # 虚拟终端仿真器（基于 VTE）
   session.rs       # 会话管理器（多面板）
-  workspace.rs     # 文件工作区 API
-  proxy.rs         # 反向代理（预览）
+  pty.rs           # PTY 创建与管理
+  tabs.rs          # Tab 与 Pane 管理
+  history.rs       # 会话历史记录
+  workspace/       # 文件工作区 API
+  proxy/           # 反向代理（预览）
   monitor.rs       # 系统监控
   notification.rs  # 通知广播（bell/OSC 检测）
-  plugin.rs        # 插件系统管理
+  plugin/          # 插件系统管理
   settings.rs      # 设置持久化
   auth.rs          # 身份认证
   file_watcher.rs  # 文件变更监听
@@ -129,8 +135,19 @@ src/               # Rust 后端
 frontend/          # Vue 3 SPA
   src/
     App.vue
-    components/    # TabBar, TerminalPane, MobileKeyboard 等
-    composables/   # useTerminal, useTransport, useSettings 等
+    components/
+      split/           # SplitContainer, TabBar, PaneHeader, StatusBar
+      terminal/        # TerminalPane, MonitorPopover
+      command/         # CommandPalette, CommandBookmarks
+      keyboard/        # MobileKeyboard, HistoryPanel, SuggestionBar
+      notification/    # NotificationPanel, NotificationCard
+      preview/         # FileWorkspacePreview, PreviewPanel, WebPreview
+      settings/        # 各设置 Tab（General, Theme, Keyboard 等）
+      workspace/       # MonacoEditor, FilePreviewContent, gitDecorations
+      plugin/          # PluginView
+      ui/              # ConfirmModal 等通用组件
+      ServerList.vue   # 服务器列表
+    composables/   # useTerminal, useTransport, useSettings, useTabApi 等
 
 src-tauri/         # Tauri 桌面客户端
 docs/              # 设计文档
