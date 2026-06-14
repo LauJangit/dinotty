@@ -3,10 +3,11 @@ import type { Tab, TerminalTab, PaneLayout, LeafPane, SplitPane, DropPosition } 
 import {
   findLeaf, findParentSplit, getAllLeaves, findFirstLeaf,
   replaceLeaf, replaceNode, redistributeRatios, clearAllZoom, equalizeRecursive,
-  removeLeaf, genSplitId,
+  removeLeaf, genSplitId, ensureSplitRoot,
 } from '../types/pane'
 import type TerminalPane from '../components/terminal/TerminalPane.vue'
 import type { SyncClientMsg } from '../types/protocol'
+import { apiSplitPane, apiClosePane } from './useTabApi'
 
 export function useSplitPane(opts: {
   tabs: Ref<Tab[]>
@@ -39,105 +40,63 @@ export function useSplitPane(opts: {
   }
 
   /** Split the active pane in the given direction */
-  function splitPane(direction: 'horizontal' | 'vertical') {
+  async function splitPane(direction: 'horizontal' | 'vertical') {
     const tab = getActiveTerminal()
     if (!tab) return
     if (getAllLeaves(tab.layout).length >= 6) return
 
-    const newPaneId = genPaneId()
-    const currentLeaf = findLeaf(tab.layout, tab.activePaneId)
-    if (!currentLeaf || currentLeaf.type !== 'leaf') return
-
-    const newLeaf: LeafPane = {
-      type: 'leaf',
-      paneId: newPaneId,
-      title: 'Terminal',
-      ratio: 0.5,
-      zoomed: false,
+    try {
+      const result = await apiSplitPane(tab.paneId, tab.activePaneId, direction)
+      // Update local layout with server response
+      tab.layout = ensureSplitRoot(result.layout)
+      tab.activePaneId = result.new_pane_id
+      persist()
+      syncTabLayout(tab)
+      nextTick(() => termRefs[result.new_pane_id]?.focus())
+    } catch (e) {
+      console.error('Failed to split pane:', e)
     }
-
-    const split: SplitPane = {
-      type: 'split',
-      id: genSplitId(),
-      direction,
-      children: [{ ...currentLeaf, ratio: 0.5 }, newLeaf],
-      ratios: [0.5, 0.5],
-    }
-
-    if (tab.layout.type === 'leaf') {
-      tab.layout = split
-    } else if (tab.layout.type === 'split' && tab.layout.children.length === 1 && tab.layout.direction === direction) {
-      // Single-child root split with same direction — add sibling directly
-      tab.layout.children.push(newLeaf)
-      redistributeRatios(tab.layout)
-    } else {
-      replaceLeaf(tab.layout, tab.activePaneId, split)
-    }
-
-    tab.activePaneId = newPaneId
-    persist()
-    syncTabLayout(tab)
-    nextTick(() => termRefs[newPaneId]?.focus())
   }
 
   /** Close a pane. If it's the last leaf, close the entire tab. */
-  function closePane(paneId: string): boolean {
+  async function closePane(paneId: string): Promise<boolean> {
     const tab = findTabByPaneId(paneId)
     if (!tab) return false
 
-    const parent = findParentSplit(tab.layout, paneId)
-    if (!parent) {
+    // Check if this is the only leaf
+    const leaves = getAllLeaves(tab.layout)
+    if (leaves.length <= 1) {
       // This is the only leaf — signal to close the tab
       return false
     }
 
-    const idx = parent.children.findIndex(c => c.type === 'leaf' && c.paneId === paneId)
-    if (idx === -1) return false
+    try {
+      const result = await apiClosePane(tab.paneId, paneId)
 
-    // If removing this leaf would leave the parent with 0 children, signal to close the tab
-    if (parent.children.length <= 1) {
+      if (result.tab_closed) {
+        // Tab was removed entirely
+        return false
+      }
+
+      // Update local layout from server response
+      if (result.layout) {
+        tab.layout = ensureSplitRoot(result.layout)
+      }
+      if (result.active_pane_id) {
+        tab.activePaneId = result.active_pane_id
+      }
+      delete termRefs[paneId]
+      persist()
+      syncTabLayout(tab)
+      nextTick(() => {
+        getAllLeaves(tab.layout).forEach(l => termRefs[l.paneId]?.fit())
+        termRefs[tab.activePaneId]?.focus()
+      })
+      return true
+    } catch (e) {
+      console.error('Failed to close pane:', e)
       return false
     }
-
-    parent.children.splice(idx, 1)
-    parent.ratios.splice(idx, 1)
-    redistributeRatios(parent)
-
-    if (parent.children.length === 1) {
-      const remaining = parent.children[0]
-      if (parent === tab.layout) {
-        // Root-level: only collapse if the remaining child is a split
-        // (collapsing split→leaf destroys and recreates all TerminalPane components,
-        // breaking active sessions — e.g. htop loses its PTY)
-        if (remaining.type === 'split') {
-          tab.layout = remaining
-        }
-      } else {
-        // Nested split: always collapse regardless of remaining child type.
-        // A single-child non-root split is degenerate — leaving it causes
-        // findParentSplit to return the degenerate split on next closePane,
-        // which then returns false and triggers closeTab (closing the whole tab).
-        replaceNode(tab.layout, parent, remaining)
-      }
-    }
-
-    if (tab.activePaneId === paneId) {
-      tab.activePaneId = findFirstLeaf(tab.layout).paneId
-    }
-
-    if (getAllLeaves(tab.layout).length <= 1) {
-      tab.broadcastMode = false
-    }
-
-    delete termRefs[paneId]
-    persist()
-    syncTabLayout(tab)
-    sendSync({ type: 'close_pane', pane_id: paneId })
-    nextTick(() => {
-      getAllLeaves(tab.layout).forEach(l => termRefs[l.paneId]?.fit())
-      termRefs[tab.activePaneId]?.focus()
-    })
-    return true
   }
 
   /** Focus a specific pane */

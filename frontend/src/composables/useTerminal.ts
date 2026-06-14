@@ -60,6 +60,7 @@ export class TerminalInstance {
   touchMoved = false
   private _visibilityHandler: (() => void) | null = null
   private _dragDropCleanup: (() => void) | null = null
+  private _initialResizeTimer: ReturnType<typeof setInterval> | null = null
 
   onTitleChange: ((title: string) => void) | null = null
   onShellInfo: ((shell: string) => void) | null = null
@@ -220,9 +221,10 @@ export class TerminalInstance {
       },
     })
 
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => this.fitAddon?.fit())
-    })
+    // Retry the initial resize until it actually reaches the server.
+    // On new tabs the WebGL renderer and WebSocket may not be ready when the
+    // first RAF fires, so we loop until _doFitAndResize successfully sends.
+    this._scheduleInitialResize()
 
     this.xterm.onTitleChange((title) => {
       if (this._suppressTitleChange) return
@@ -279,8 +281,10 @@ export class TerminalInstance {
   }
 
   destroy() {
+    if (this._destroyed) return
     this._destroyed = true
     if (this._reconnectTimer) clearTimeout(this._reconnectTimer)
+    if (this._initialResizeTimer) clearInterval(this._initialResizeTimer)
     if (this._refitRaf) cancelAnimationFrame(this._refitRaf)
     this._resizeObserver?.disconnect()
     if (this._visibilityHandler) {
@@ -300,8 +304,12 @@ export class TerminalInstance {
       this.ws.close(1000)
       this.ws = null
     }
-    this.xterm?.dispose()
-    this.xterm = null
+    if (this.xterm) {
+      const xt = this.xterm
+      this.xterm = null
+      this.fitAddon = null
+      try { xt.dispose() } catch { /* already disposed or addon race */ }
+    }
   }
 
   private _connectViaTransport() {
@@ -313,14 +321,15 @@ export class TerminalInstance {
     })
 
     this._transport.onMessage((msg) => {
+      if (this._destroyed || !this.xterm) return
       if (msg.type === 'output') {
-        this.xterm!.write(msg.data)
+        this.xterm.write(msg.data)
         this.onRawOutput?.(msg.data)
       } else if (msg.type === 'shell_info') {
         this.onShellInfo?.(msg.shell_type)
       } else if (msg.type === 'reconnected') {
         this._suppressTitleChange = true
-        this.xterm!.reset()
+        this.xterm.reset()
         this._suppressTitleChange = false
         this._doFitAndResize(true)
       }
@@ -348,6 +357,7 @@ export class TerminalInstance {
     this.ws = new WebSocket(url)
 
     this.ws.onopen = () => {
+      console.log(`[TerminalInstance] WS onopen: pane=${this.paneId}`)
       this._reconnectAttempts = 0
       this._hideOverlay()
       this.onConnect?.()
@@ -355,24 +365,29 @@ export class TerminalInstance {
     }
 
     this.ws.onmessage = (e) => {
+      if (this._destroyed) { console.log(`[TerminalInstance] WS onmessage: pane=${this.paneId} IGNORED (destroyed)`); return }
       let msg: ServerMsg
       try { msg = JSON.parse(e.data) } catch { return }
+      if (!this.xterm) { console.log(`[TerminalInstance] WS onmessage: pane=${this.paneId} IGNORED (xterm null)`); return }
       if (msg.type === 'reconnected') {
         this._suppressTitleChange = true
-        this.xterm!.reset()
+        this.xterm.reset()
         this._suppressTitleChange = false
         this._reconnectAttempts = 0
         this._hideOverlay()
         this._doFitAndResize(true)
       } else if (msg.type === 'output') {
-        this.xterm!.write(msg.data)
+        console.log(`[TerminalInstance] WS output: pane=${this.paneId}, data_len=${msg.data.length}`)
+        this.xterm.write(msg.data)
         this.onRawOutput?.(msg.data)
       } else if (msg.type === 'shell_info') {
+        console.log(`[TerminalInstance] WS shell_info: pane=${this.paneId}, shell=${msg.shell_type}`)
         this.onShellInfo?.(msg.shell_type)
       }
     }
 
     this.ws.onclose = (e) => {
+      console.log(`[TerminalInstance] WS onclose: pane=${this.paneId}, code=${e.code}, reason=${e.reason}`)
       if (this._destroyed) return
       this.onDisconnect?.()
       if (e.code === 1000) {
@@ -382,7 +397,9 @@ export class TerminalInstance {
       }
     }
 
-    this.ws.onerror = () => {}
+    this.ws.onerror = (e) => {
+      console.error(`[TerminalInstance] WS error: pane=${this.paneId}`, e)
+    }
 
     if (!this._onDataRegistered) {
       this._onDataRegistered = true
@@ -441,11 +458,39 @@ export class TerminalInstance {
     })
   }
 
+  /**
+   * Retry the initial resize in a loop until it succeeds.
+   * Handles the race where the WebGL renderer, DOM layout, or WebSocket
+   * aren't ready when the first attempt fires.
+   */
+  private _scheduleInitialResize() {
+    if (this._initialResizeTimer) return
+    let attempts = 0
+    const MAX_ATTEMPTS = 40 // 40 × 50ms = 2s max
+    this._initialResizeTimer = setInterval(() => {
+      attempts++
+      if (this._destroyed || attempts > MAX_ATTEMPTS) {
+        if (this._initialResizeTimer) {
+          clearInterval(this._initialResizeTimer)
+          this._initialResizeTimer = null
+        }
+        return
+      }
+      // If we've already sent a resize (lastCols/lastRows are non-zero), stop.
+      if (this._lastCols > 0 && this._lastRows > 0) {
+        clearInterval(this._initialResizeTimer!)
+        this._initialResizeTimer = null
+        return
+      }
+      this._doFitAndResize(true)
+    }, 50)
+  }
+
   private _doFitAndResize(force = false) {
     if (!this.fitAddon || !this.xterm || !this._wrapper) return
     const rect = this._wrapper.getBoundingClientRect()
     if (rect.width === 0 || rect.height === 0) return
-    this.fitAddon.fit()
+    try { this.fitAddon.fit() } catch { return }
     const cols = this.xterm.cols
     const rows = this.xterm.rows
     if (cols < 2 || rows < 2) return
@@ -453,8 +498,6 @@ export class TerminalInstance {
     const heightChanged = rows !== this._lastRows
     this._lastCols = cols
     this._lastRows = rows
-    // When container height decreases (e.g. mobile keyboard opens), scroll to
-    // bottom so the current input line stays visible.
     if (heightChanged && !this._isMouseModeEnabled()) {
       this.xterm.scrollToBottom()
     }
@@ -696,7 +739,6 @@ export class TerminalInstance {
       if (modes !== undefined) {
         return modes !== 'NONE'
       }
-      console.warn('[useTerminal] _isMouseModeEnabled: xterm internal API unavailable — touch scroll may misbehave in mouse-tracking TUIs after an xterm.js upgrade')
       return false
     } catch {
       return false

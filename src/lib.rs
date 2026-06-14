@@ -11,3 +11,4 @@ pub mod monitor;
 pub mod notification;
 pub mod history;
 pub mod plugin;
+pub mod tabs;

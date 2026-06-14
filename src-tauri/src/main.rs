@@ -139,6 +139,28 @@ fn pty_kill(pane_id: String, state: State<'_, Arc<SessionManager>>) -> Result<()
     state.broadcast_sync(&SyncMsg::TabClosed {
         pane_id: pane_id.clone(),
     });
+    // Collect affected layouts before purging
+    let before_layouts: Vec<(String, serde_json::Value)> = state.tab_layouts.iter()
+        .map(|e| (e.key().clone(), e.value().clone()))
+        .collect();
+    state.purge_pane_from_layouts(&pane_id);
+    // Broadcast layout changes to all clients
+    for (tab_id, old_val) in &before_layouts {
+        if let Some(new_val) = state.tab_layouts.get(tab_id) {
+            if *new_val.value() != *old_val {
+                let layout = new_val.value().get("layout").cloned().unwrap_or(serde_json::Value::Null);
+                let active = new_val.value().get("active_pane_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                state.broadcast_sync(&SyncMsg::LayoutUpdated {
+                    pane_id: tab_id.clone(),
+                    layout,
+                    active_pane_id: active,
+                });
+            }
+        }
+    }
     Ok(())
 }
 

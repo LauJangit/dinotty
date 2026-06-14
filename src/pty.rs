@@ -120,8 +120,12 @@ pub fn create_session(
             }
         }
         if manager_clone.sessions.remove(&pane_id_clone).is_some() {
+            // Find the parent tab and clean up its layout; for single-pane tabs
+            // this returns the tab-level pane_id so we broadcast the correct ID.
+            let tab_pane_id = manager_clone.on_pty_exited(&pane_id_clone)
+                .unwrap_or_else(|| pane_id_clone.clone());
             manager_clone.broadcast_sync(&SyncMsg::TabClosed {
-                pane_id: pane_id_clone.clone(),
+                pane_id: tab_pane_id,
             });
         }
         info!("PTY exited, session removed: pane={}", pane_id_clone);

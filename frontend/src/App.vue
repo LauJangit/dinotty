@@ -17,7 +17,7 @@
     >
       <template #left>
         <button v-if="isBroadcastActive" type="button" class="tab-bar-icon-btn broadcast-btn" :title="t('split.toggleBroadcast')" @click="splitPane.toggleBroadcast()" @touchend.prevent="splitPane.toggleBroadcast()">
-          <span class="broadcast-dot" />
+          <Radar :size="16" />
         </button>
       </template>
       <template #right>
@@ -33,7 +33,7 @@
     <div id="tab-content" @touchend="onTerminalTouch">
       <div
         v-for="tab in tabs"
-        :key="tab.paneId"
+        :key="tabKey(tab)"
         class="tab-page"
         :class="{ active: tab.paneId === activePaneId, 'has-preview': tab.type === 'terminal' && tab.previewVisible, ['pos-' + resolvedPosition]: tab.type === 'terminal' && tab.previewVisible }"
       >
@@ -137,7 +137,8 @@ import NotificationPanel from './components/notification/NotificationPanel.vue'
 import { useNotification } from './composables/useNotification'
 import { usePluginLoader, handlePluginChanged } from './composables/usePluginLoader'
 import PluginView from './components/plugin/PluginView.vue'
-import { Settings, Bell, Monitor, Plus, X, Star, AppWindow } from 'lucide-vue-next'
+import { apiCreateTab, apiCloseTab, apiClosePane, apiActivatePane } from './composables/useTabApi'
+import { Settings, Bell, Monitor, Plus, X, Star, AppWindow, Radar } from 'lucide-vue-next'
 import LoginPage from './components/LoginPage.vue'
 import SetupPage from './components/SetupPage.vue'
 
@@ -272,6 +273,13 @@ function genPaneId(): string {
   })
 }
 
+/** Stable key for tab v-for — uses the first leaf paneId which never changes */
+function tabKey(tab: Tab): string {
+  if (tab.type !== 'terminal') return tab.paneId
+  const leaf = findFirstLeaf(tab.layout)
+  return leaf ? leaf.paneId : tab.paneId
+}
+
 function sendSync(msg: SyncClientMsg) {
   if (syncWs && syncWs.readyState === WebSocket.OPEN && !suppressSync) {
     syncWs.send(JSON.stringify(msg))
@@ -340,25 +348,30 @@ function getSavedTitle(paneId: string): string | null {
 
 const DEFAULT_PREVIEW_URL = ''
 
-function newTab() {
-  const tabId = genPaneId()
-  const paneId = genPaneId()
-  tabs.value.push({
-    type: 'terminal',
-    paneId: tabId,
-    layout: ensureSplitRoot({ type: 'leaf', paneId, title: 'Terminal', ratio: 1, zoomed: false }),
-    activePaneId: paneId,
-    broadcastMode: false,
-    broadcastActivity: 0,
-    previewVisible: false,
-    previewAddress: '',
-    previewUrl: '',
-    previewKind: 'web',
-  })
-  activePaneId.value = tabId
-  sendSync({ type: 'create_tab', pane_id: paneId })
-  persist()
-  nextTick(() => focusActive())
+async function newTab() {
+  try {
+    const result = await apiCreateTab()
+    const layout = ensureSplitRoot(result.layout)
+    tabs.value.push({
+      type: 'terminal',
+      paneId: result.tab_id,
+      layout,
+      activePaneId: result.pane_id,
+      broadcastMode: false,
+      broadcastActivity: 0,
+      previewVisible: false,
+      previewAddress: '',
+      previewUrl: '',
+      previewKind: 'web',
+    })
+    activePaneId.value = result.tab_id
+    persist()
+    // Notify other sync clients
+    sendSync({ type: 'create_tab', layout: result.layout, tab_id: result.tab_id, pane_id: result.pane_id })
+    nextTick(() => focusActive())
+  } catch (e) {
+    console.error('Failed to create tab:', e)
+  }
 }
 
 function onNewMenuAction(type: 'new-tab' | 'split-h' | 'split-v' | 'broadcast') {
@@ -370,11 +383,16 @@ function onNewMenuAction(type: 'new-tab' | 'split-h' | 'split-v' | 'broadcast') 
   }
 }
 
-function activateTab(tabId: string) {
+async function activateTab(tabId: string) {
   activePaneId.value = tabId
   const tab = tabs.value.find(t => t.paneId === tabId)
   if (tab?.type === 'terminal') {
     notif.clearPaneUnread(tab.activePaneId)
+    try {
+      await apiActivatePane(tab.paneId, tab.activePaneId)
+    } catch (e) {
+      console.error('Failed to activate pane:', e)
+    }
     sendSync({ type: 'activate_tab', pane_id: tab.activePaneId })
   }
   persist()
@@ -390,52 +408,44 @@ function reorderTab(fromId: string, toId: string) {
   persist()
 }
 
-function onClosePane(tabId: string, paneId: string) {
-  const closed = splitPane.closePane(paneId)
+async function onClosePane(tabId: string, paneId: string) {
+  const closed = await splitPane.closePane(paneId)
   if (!closed) {
     closeTab(tabId)
   }
 }
 
-function closeTab(tabId: string) {
+async function closeTab(tabId: string) {
   const tab = tabs.value.find(t => t.paneId === tabId)
   if (!tab) return
 
   if (tab.type === 'terminal') {
-    // Clean up all leaf pane refs and close their sessions
+    // Clean up local term refs
     for (const leaf of getAllLeaves(tab.layout)) {
       delete termRefs[leaf.paneId]
-      sendSync({ type: 'close_pane', pane_id: leaf.paneId })
     }
-    // Remove the tab layout entry and broadcast tab_closed
-    sendSync({ type: 'close_tab', pane_id: tab.paneId })
+
+    try {
+      await apiCloseTab(tabId)
+    } catch (e) {
+      console.error('Failed to close tab:', e)
+      return
+    }
+    // Notify other sync clients
+    sendSync({ type: 'close_tab', pane_id: tabId })
   }
 
-  if (tabs.value.length === 1) {
-    const newTabId = genPaneId()
-    const newPaneId = genPaneId()
-    tabs.value[0] = {
-      type: 'terminal',
-      paneId: newTabId,
-      layout: ensureSplitRoot({ type: 'leaf', paneId: newPaneId, title: 'Terminal', ratio: 1, zoomed: false }),
-      activePaneId: newPaneId,
-      broadcastMode: false,
-      broadcastActivity: 0,
-      previewVisible: false,
-      previewAddress: '',
-      previewUrl: '',
-      previewKind: 'web',
-    }
-    activePaneId.value = newTabId
-    sendSync({ type: 'create_tab', pane_id: newPaneId })
-    persist()
-    return
-  }
-
+  // Remove tab from local array
   const idx = tabs.value.findIndex((t) => t.paneId === tabId)
   if (idx === -1) return
 
   tabs.value.splice(idx, 1)
+
+  // If this was the last tab, create a new one
+  if (tabs.value.length === 0) {
+    await newTab()
+    return
+  }
 
   if (activePaneId.value === tabId) {
     const newIdx = Math.min(idx, tabs.value.length - 1)
@@ -684,11 +694,11 @@ const paletteCommands = computed<Command[]>(() => {
       title: 'Close Tab',
       subtitle: 'Close the current tab',
       kbd: formatBinding(getBinding('closeTab')),
-      action: () => {
+      action: async () => {
         if (activePaneId.value) {
           const tab = tabs.value.find(t => t.paneId === activePaneId.value)
           if (tab?.type === 'terminal' && getAllLeaves(tab.layout).length > 1) {
-            if (!splitPane.closePane(tab.activePaneId)) {
+            if (!await splitPane.closePane(tab.activePaneId)) {
               closeTab(activePaneId.value)
             }
           } else {
@@ -786,12 +796,12 @@ function onGlobalKeydown(e: KeyboardEvent) {
     togglePalette: () => paletteRef.value?.toggle(),
     openBookmarks: () => openQuickPicks(),
     newTab: () => newTab(),
-    closeTab: () => {
+    closeTab: async () => {
       if (!activePaneId.value) return
       const tab = tabs.value.find(t => t.paneId === activePaneId.value)
       if (tab?.type === 'terminal' && getAllLeaves(tab.layout).length > 1) {
         // Multi-pane: close current pane
-        if (!splitPane.closePane(tab.activePaneId)) {
+        if (!await splitPane.closePane(tab.activePaneId)) {
           closeTab(activePaneId.value)
         }
       } else {
@@ -870,10 +880,12 @@ async function connectSyncWS() {
     }
 
     if (msg.type === 'tab_list') {
-      // Collect all local leaf paneIds
+      // Collect all local leaf paneIds and tab-level paneIds
       const localLeafIds = new Set<string>()
+      const localTabIds = new Set<string>()
       for (const t of tabs.value) {
         if (t.type === 'terminal') {
+          localTabIds.add(t.paneId)
           for (const leaf of getAllLeaves(t.layout)) {
             localLeafIds.add(leaf.paneId)
           }
@@ -882,15 +894,14 @@ async function connectSyncWS() {
 
       // Create tabs for any server paneIds we don't have locally
       for (const tab of msg.tabs) {
-        if (!localLeafIds.has(tab.pane_id)) {
+        if (!localLeafIds.has(tab.pane_id) && !localTabIds.has(tab.pane_id) && !localTabIds.has(tab.tab_id)) {
           // Prefer server layout, then localStorage, then default single leaf
           const serverLayout = tab.layout ?? null
           const saved = !serverLayout ? getSavedTab(tab.pane_id) : null
           const migrated = saved ? migrateTab(saved) : null
-          const tabId = genPaneId()
           tabs.value.push({
             type: 'terminal',
-            paneId: tabId,
+            paneId: tab.tab_id,
             layout: ensureSplitRoot(serverLayout ?? migrated?.layout ?? { type: 'leaf', paneId: tab.pane_id, title: 'Terminal', ratio: 1, zoomed: false }),
             activePaneId: tab.active_pane_id ?? migrated?.activePaneId ?? tab.pane_id,
             broadcastMode: false,
@@ -922,11 +933,11 @@ async function connectSyncWS() {
       } catch { /* noop */ }
 
       // Remove terminal tabs whose leaf paneIds are no longer on the server
-      const serverTabIds = new Set(msg.tabs.map((t) => t.pane_id))
+      const serverTabIds = new Set(msg.tabs.map((t) => t.tab_id))
       const serverLeafIds = new Set(msg.tabs.flatMap((t) => t.layout ? getAllLeaves(t.layout).map(l => l.paneId) : []))
       tabs.value = tabs.value.filter((t) => {
         if (t.type === 'plugin') return true
-        // Keep tab if it matches a server tab by tabId, or if at least one leaf is in a server layout
+        // Keep tab if it matches a server tab by tabId or leaf paneId, or if at least one leaf is in a server layout
         return serverTabIds.has(t.paneId) || getAllLeaves(t.layout).some(l => serverLeafIds.has(l.paneId))
       })
 
@@ -951,44 +962,64 @@ async function connectSyncWS() {
         newTab()
       }
 
+      // Fallback: ensure at least one tab is active after sync
+      if (!activePaneId.value || !tabs.value.some(t => t.paneId === activePaneId.value)) {
+        if (tabs.value.length > 0) {
+          activePaneId.value = tabs.value[0].paneId
+        }
+      }
+
       persist()
     } else if (msg.type === 'tab_created') {
-      // Check if this leaf paneId already exists in any tab
+      // Check if this tab already exists locally (either our own or from tab_list)
       const exists = tabs.value.some(t => {
         if (t.type !== 'terminal') return false
-        return !!findLeaf(t.layout, msg.pane_id)
+        return t.paneId === msg.tab_id || !!findLeaf(t.layout, msg.pane_id)
       })
       if (!exists) {
-        const tabId = genPaneId()
+        // Broadcast from another client — create the tab
+        const layout = msg.layout ? ensureSplitRoot(msg.layout) : ensureSplitRoot({ type: 'leaf', paneId: msg.pane_id, title: 'Terminal', ratio: 1, zoomed: false })
         tabs.value.push({
           type: 'terminal',
-          paneId: tabId,
-          layout: ensureSplitRoot({ type: 'leaf', paneId: msg.pane_id, title: 'Terminal', ratio: 1, zoomed: false }),
+          paneId: msg.tab_id,
+          layout,
           activePaneId: msg.pane_id,
           broadcastMode: false,
-      broadcastActivity: 0,
+          broadcastActivity: 0,
           previewVisible: false,
           previewAddress: '',
           previewUrl: '',
           previewKind: 'web',
         })
+        suppressSync = true
+        activePaneId.value = msg.tab_id
+        suppressSync = false
+        persist()
+        nextTick(() => focusActive())
       }
     } else if (msg.type === 'tab_closed') {
-      // Tab-level close: find the tab by its paneId
-      const tabIdx = tabs.value.findIndex(t =>
+      // Find the tab by its paneId (server's tab_id), or by leaf paneId in layouts
+      let tabIdx = tabs.value.findIndex(t =>
         t.type === 'terminal' && t.paneId === msg.pane_id,
       )
+      if (tabIdx === -1) {
+        // Fallback: search by leaf paneId in layouts (handles PTY exit case)
+        tabIdx = tabs.value.findIndex(t =>
+          t.type === 'terminal' && !!findLeaf(t.layout, msg.pane_id),
+        )
+      }
       if (tabIdx !== -1) {
         const tab = tabs.value[tabIdx] as TerminalTab
-        if (tabs.value.length > 1) {
-          for (const leaf of getAllLeaves(tab.layout)) {
-            delete termRefs[leaf.paneId]
-          }
-          tabs.value.splice(tabIdx, 1)
-          if (activePaneId.value === tab.paneId) {
-            activePaneId.value = tabs.value[Math.min(tabIdx, tabs.value.length - 1)].paneId
-          }
+        for (const leaf of getAllLeaves(tab.layout)) {
+          delete termRefs[leaf.paneId]
+        }
+        tabs.value.splice(tabIdx, 1)
+        if (tabs.value.length === 0) {
+          newTab()
+        } else if (activePaneId.value === tab.paneId) {
+          activePaneId.value = tabs.value[Math.min(tabIdx, tabs.value.length - 1)].paneId
           persist()
+          nextTick(() => focusActive())
         }
       }
     } else if (msg.type === 'tab_activated') {
@@ -1017,8 +1048,16 @@ async function connectSyncWS() {
         return incomingLeafIds.some((id: string) => localLeafIds.includes(id))
       }) as TerminalTab | undefined
       if (targetTab) {
+        const incomingLeafIds = getAllLeaves(msg.layout).map((l: any) => l.paneId)
+        const localLeafIds = getAllLeaves(targetTab.layout).map(l => l.paneId)
+        const sameLeaves = incomingLeafIds.length === localLeafIds.length
+          && incomingLeafIds.every((id: string) => localLeafIds.includes(id))
+
         suppressSync = true
-        targetTab.layout = ensureSplitRoot(msg.layout)
+        if (!sameLeaves) {
+          // Structural change from another client — replace layout
+          targetTab.layout = ensureSplitRoot(msg.layout)
+        }
         targetTab.activePaneId = msg.active_pane_id
         suppressSync = false
 
@@ -1158,18 +1197,11 @@ onBeforeUnmount(() => {
 .broadcast-btn {
   position: relative;
   color: #ef4444;
-}
-.broadcast-dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #ef4444;
-  animation: broadcast-pulse 1s infinite;
+  animation: broadcast-pulse 2s ease-in-out infinite;
 }
 @keyframes broadcast-pulse {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
+  50% { opacity: 0.5; }
 }
 .notif-btn {
   position: relative;

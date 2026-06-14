@@ -36,7 +36,13 @@ pub enum ClientMsg {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SyncClientMsg {
     ActivateTab { pane_id: String },
-    CreateTab { pane_id: String },
+    CreateTab {
+        layout: serde_json::Value,
+        #[serde(default)]
+        tab_id: Option<String>,
+        #[serde(default)]
+        pane_id: Option<String>,
+    },
     CloseTab { pane_id: String },
     ClosePane { pane_id: String },
     UpdateLayout { pane_id: String, layout: serde_json::Value, active_pane_id: String },
@@ -76,11 +82,21 @@ async fn handle_sync_socket(socket: WebSocket, manager: Arc<SessionManager>) {
     let msg = serde_json::to_string(&tab_list).unwrap();
     if ws_tx.send(Message::Text(msg.into())).await.is_err() { return; }
 
-    // Register this client for sync broadcasts
-    let mut rx = manager.add_sync_client();
+    // Use mpsc channel to bridge broadcast messages and direct responses to the WebSocket
+    let (client_id, mut rx) = manager.add_sync_client();
+    let (msg_tx, mut msg_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
-    let fwd = tokio::spawn(async move {
+    // Forward broadcast messages into the shared channel
+    let msg_tx_broadcast = msg_tx.clone();
+    tokio::spawn(async move {
         while let Some(data) = rx.recv().await {
+            if msg_tx_broadcast.send(data).is_err() { break; }
+        }
+    });
+
+    // Forward all messages from the shared channel to the WebSocket
+    let fwd = tokio::spawn(async move {
+        while let Some(data) = msg_rx.recv().await {
             if ws_tx.send(Message::Text(data.into())).await.is_err() { break; }
         }
     });
@@ -93,35 +109,85 @@ async fn handle_sync_socket(socket: WebSocket, manager: Arc<SessionManager>) {
                     match sync_msg {
                         SyncClientMsg::ActivateTab { pane_id } => {
                             *manager.active_pane_id.lock().unwrap() = Some(pane_id.clone());
-                            manager.broadcast_sync(&SyncMsg::TabActivated { pane_id });
+                            manager.broadcast_sync_others(&SyncMsg::TabActivated { pane_id }, &client_id);
                         }
-                        SyncClientMsg::CreateTab { pane_id } => {
-                            *manager.active_pane_id.lock().unwrap() = Some(pane_id.clone());
-                            manager.broadcast_sync(&SyncMsg::TabCreated { pane_id });
+                        SyncClientMsg::CreateTab { layout, tab_id, pane_id } => {
+                            let tab_id = tab_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                            let leaf_id = pane_id
+                                .or_else(|| crate::session::first_leaf_id(&layout))
+                                .unwrap_or_else(|| tab_id.clone());
+                            *manager.active_pane_id.lock().unwrap() = Some(leaf_id.clone());
+                            manager.insert_tab(tab_id.clone(), serde_json::json!({
+                                "layout": layout,
+                                "active_pane_id": leaf_id,
+                            }));
+                            // Reply to the sender with server-generated IDs
+                            let _ = msg_tx.send(serde_json::to_string(&SyncMsg::TabCreated {
+                                tab_id: tab_id.clone(),
+                                pane_id: leaf_id.clone(),
+                                layout: Some(layout.clone()),
+                            }).unwrap());
+                            // Broadcast to other clients
+                            manager.broadcast_sync_others(&SyncMsg::TabCreated {
+                                tab_id,
+                                pane_id: leaf_id,
+                                layout: Some(layout),
+                            }, &client_id);
                         }
                         SyncClientMsg::CloseTab { pane_id } => {
-                            manager.sessions.remove(&pane_id);
-                            manager.tab_layouts.remove(&pane_id);
+                            // Collect leaf pane IDs from the layout before removing it
+                            let leaf_ids: Vec<String> = manager.tab_layouts.get(&pane_id)
+                                .and_then(|v| v.get("layout").cloned())
+                                .map(|layout| crate::session::collect_leaf_pane_ids(&layout))
+                                .unwrap_or_default();
+                            // Remove PTY sessions for all leaves in this tab
+                            for leaf_id in &leaf_ids {
+                                manager.sessions.remove(leaf_id);
+                            }
+                            manager.remove_tab(&pane_id);
                             // Remove stale pane_id from any parent tab layouts
                             manager.purge_pane_from_layouts(&pane_id);
-                            manager.broadcast_sync(&SyncMsg::TabClosed { pane_id });
+                            manager.broadcast_sync_others(&SyncMsg::TabClosed { pane_id }, &client_id);
                         }
                         SyncClientMsg::ClosePane { pane_id } => {
-                            // Close a single pane in a split — only remove its session,
-                            // don't touch tab layout or broadcast tab_closed
                             manager.sessions.remove(&pane_id);
-                            manager.purge_pane_from_layouts(&pane_id);
+                            // Collect affected layouts before purging
+                            let before_layouts: Vec<(String, serde_json::Value)> = manager.tab_layouts.iter()
+                                .map(|e| (e.key().clone(), e.value().clone()))
+                                .collect();
+                            let emptied_tabs = manager.purge_pane_from_layouts(&pane_id);
+                            // Broadcast layout changes to other clients
+                            for (tab_id, old_val) in &before_layouts {
+                                if let Some(new_val) = manager.tab_layouts.get(tab_id) {
+                                    if *new_val.value() != *old_val {
+                                        let layout = new_val.value().get("layout").cloned().unwrap_or(serde_json::Value::Null);
+                                        let active = new_val.value().get("active_pane_id")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("")
+                                            .to_string();
+                                        manager.broadcast_sync_others(&SyncMsg::LayoutUpdated {
+                                            pane_id: tab_id.clone(),
+                                            layout,
+                                            active_pane_id: active,
+                                        }, &client_id);
+                                    }
+                                }
+                            }
+                            // Broadcast TabClosed for tabs that became empty
+                            for tab_id in emptied_tabs {
+                                manager.broadcast_sync_others(&SyncMsg::TabClosed { pane_id: tab_id }, &client_id);
+                            }
                         }
                         SyncClientMsg::UpdateLayout { pane_id, layout, active_pane_id } => {
-                            manager.tab_layouts.insert(pane_id.clone(), serde_json::json!({
+                            manager.insert_tab(pane_id.clone(), serde_json::json!({
                                 "layout": layout,
                                 "active_pane_id": active_pane_id,
                             }));
-                            manager.broadcast_sync(&SyncMsg::LayoutUpdated {
+                            manager.broadcast_sync_others(&SyncMsg::LayoutUpdated {
                                 pane_id,
                                 layout,
                                 active_pane_id,
-                            });
+                            }, &client_id);
                         }
                     }
                 }
@@ -154,25 +220,41 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
             let chunks = screen.snapshot_scrollback_chunks(200);
             let snap = screen.snapshot();
             let rx = session.add_client();
+            info!("Snapshot for pane={}: cols={}, rows={}, scrollback_chunks={}, snapshot_len={}", pane_id, cols, rows, chunks.len(), snap.len());
             (cols, rows, chunks, snap, rx)
         };
 
         // Send reconnected message
         let msg = serde_json::to_string(&ServerMsg::Reconnected { cols, rows }).unwrap();
-        if ws_tx.send(Message::Text(msg.into())).await.is_err() { return; }
+        info!("Sending reconnected to pane={}: {}", pane_id, msg);
+        if ws_tx.send(Message::Text(msg.into())).await.is_err() {
+            error!("Failed to send reconnected msg to pane={}", pane_id);
+            return;
+        }
         for chunk in &scrollback_chunks {
             let msg = serde_json::to_string(&ServerMsg::Output { data: chunk }).unwrap();
             if ws_tx.send(Message::Text(msg.into())).await.is_err() { return; }
         }
 
         let msg = serde_json::to_string(&ServerMsg::Output { data: &snapshot }).unwrap();
-        if ws_tx.send(Message::Text(msg.into())).await.is_err() { return; }
+        info!("Sending snapshot to pane={}: msg_len={}", pane_id, msg.len());
+        if ws_tx.send(Message::Text(msg.into())).await.is_err() {
+            error!("Failed to send snapshot to pane={}", pane_id);
+            return;
+        }
+        info!("All initial messages sent to pane={}", pane_id);
 
+        let pane_id_fwd = pane_id.clone();
         let fwd = tokio::spawn(async move {
             while let Some(data) = rx.recv().await {
+                info!("Forwarder: pane={}, data_len={}", pane_id_fwd, data.len());
                 let msg = serde_json::to_string(&ServerMsg::Output { data: &data }).unwrap();
-                if ws_tx.send(Message::Text(msg.into())).await.is_err() { break; }
+                if ws_tx.send(Message::Text(msg.into())).await.is_err() {
+                    error!("Forwarder: failed to send WS message for pane={}", pane_id_fwd);
+                    break;
+                }
             }
+            info!("Forwarder: exited for pane={}", pane_id_fwd);
         });
 
         // Input channel: replaces old channel so only this connection writes to PTY
@@ -237,6 +319,7 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
     }
 
     // ── New session ──
+    info!("No existing session found for pane={}, creating new PTY session (this is unexpected for new tabs!)", pane_id);
     let (session, shell_type) = match crate::pty::create_session(Arc::clone(&manager), pane_id.clone(), None) {
         Ok(x) => x,
         Err(e) => {
@@ -252,11 +335,17 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
     let _ = ws_tx.send(Message::Text(shell_info.into())).await;
 
     // Forward PTY output to this WS client
+    let pane_id_fwd = pane_id.clone();
     let fwd = tokio::spawn(async move {
         while let Some(data) = rx.recv().await {
+            info!("Forwarder (new): pane={}, data_len={}", pane_id_fwd, data.len());
             let msg = serde_json::to_string(&ServerMsg::Output { data: &data }).unwrap();
-            if ws_tx.send(Message::Text(msg.into())).await.is_err() { break; }
+            if ws_tx.send(Message::Text(msg.into())).await.is_err() {
+                error!("Forwarder (new): failed to send WS message for pane={}", pane_id_fwd);
+                break;
+            }
         }
+        info!("Forwarder (new): exited for pane={}", pane_id_fwd);
     });
 
     // Input channel: dedicated write task reads from channel → PTY writer

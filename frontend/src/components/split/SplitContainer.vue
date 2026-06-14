@@ -22,14 +22,21 @@
       @click.stop="emit('close', leaf!.paneId)"
     >&times;</button>
     <template v-if="broadcastActive">
-      <div class="broadcast-icon" :title="t('split.broadcastTooltip')">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-          <circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.5" fill="none"/>
-          <circle cx="8" cy="8" r="1" fill="currentColor"/>
+      <div class="broadcast-icon broadcast-icon--active" :title="t('split.broadcastTooltip')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2 12C2 6.5 6.5 2 12 2"/>
+          <path d="M6 12c0-3.3 2.7-6 6-6"/>
+          <circle cx="12" cy="12" r="2" fill="currentColor"/>
         </svg>
       </div>
     </template>
-    <div v-else-if="broadcastReceiving" class="broadcast-dot" />
+    <div v-else-if="broadcastReceiving" class="broadcast-icon broadcast-icon--receiving" :title="t('split.broadcastTooltip')">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2 12C2 6.5 6.5 2 12 2"/>
+        <path d="M6 12c0-3.3 2.7-6 6-6"/>
+        <circle cx="12" cy="12" r="2" fill="currentColor"/>
+      </svg>
+    </div>
     <TerminalPane
       :ref="(el: any) => emit('register', leaf!.paneId, el)"
       :pane-id="leaf.paneId"
@@ -227,6 +234,11 @@ function getChildStyle(idx: number) {
   top: 11px;
 }
 
+/* Push header title right to avoid overlapping the close button */
+.split-leaf:has(.pane-close-btn) .pane-header {
+  padding-left: 28px;
+}
+
 .split-leaf:hover .pane-close-btn {
   opacity: 1;
 }
@@ -236,30 +248,30 @@ function getChildStyle(idx: number) {
   color: var(--text-primary, #e0e0e0);
 }
 
-/* Broadcast indicator — subtle dot style */
+/* Broadcast indicator — radar style */
 .broadcast-icon {
   position: absolute;
   top: 4px;
-  right: 28px;
+  right: 8px;
   z-index: 10;
-  color: var(--accent-color, #4d80ff);
+  color: var(--text-secondary, #888);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: default;
-  opacity: 0.85;
 }
 
-.broadcast-dot {
-  position: absolute;
-  top: 6px;
-  right: 28px;
-  z-index: 10;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent-color, #4d80ff);
-  opacity: 0.35;
-  pointer-events: none;
+.broadcast-icon--active {
+  opacity: 0.9;
+  animation: radar-pulse 2s ease-in-out infinite;
+}
+
+.broadcast-icon--receiving {
+  opacity: 0.45;
+}
+
+@keyframes radar-pulse {
+  0%, 100% { opacity: 0.9; }
+  50% { opacity: 0.5; }
 }
 </style>

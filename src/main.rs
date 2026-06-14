@@ -1,4 +1,4 @@
-use dinotty_server::{auth, session, settings, ws, proxy, workspace, file_watcher, monitor, notification, history, plugin};
+use dinotty_server::{auth, session, settings, ws, proxy, workspace, file_watcher, monitor, notification, history, plugin, tabs};
 
 use axum::{
     body::Body,
@@ -454,6 +454,13 @@ async fn main() {
         .route("/ws/notify", get(ws::notification_ws_handler))
         .route("/api/notify", post(notification::post_notify))
         .route("/api/input", post(ws::post_input))
+        // Tab/Pane management
+        .route("/api/tabs", get(tabs::list_tabs).post(tabs::create_tab))
+        .route("/api/tabs/:tab_id", delete(tabs::close_tab))
+        .route("/api/tabs/:tab_id/pane", post(tabs::split_pane))
+        .route("/api/tabs/:tab_id/pane/:pane_id", delete(tabs::close_pane))
+        .route("/api/tabs/:tab_id/pane/:pane_id/activate", put(tabs::activate_pane))
+        .route("/api/tabs/:tab_id/layout", put(tabs::update_layout))
         .route("/api/auth", post(check_auth))
         .route("/api/token-configured", get(token_configured))
         .route("/api/settings", get(settings::get_settings).put(settings::put_settings))

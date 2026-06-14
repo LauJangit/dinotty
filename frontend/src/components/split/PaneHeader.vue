@@ -5,7 +5,6 @@
     @mousedown.prevent="onMouseDown"
     @touchstart.prevent="onTouchStart"
   >
-    <span class="pane-header-drag-handle">&#x2630;</span>
     <span class="pane-header-title">{{ title }}</span>
   </div>
 </template>
@@ -254,13 +253,6 @@ onBeforeUnmount(() => {
 
 .pane-header.dragging {
   opacity: 0.5;
-}
-
-.pane-header-drag-handle {
-  font-size: 12px;
-  color: var(--text-tertiary, #666);
-  margin-right: 6px;
-  opacity: 0.6;
 }
 
 .pane-header-title {

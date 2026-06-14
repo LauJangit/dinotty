@@ -32,13 +32,15 @@ export type ServerMsg = OutputMsg | ShellInfoMsg | ReconnectedMsg
 // Sync WS messages
 export interface SyncTabList {
   type: 'tab_list'
-  tabs: { pane_id: string; layout?: any; active_pane_id?: string }[]
+  tabs: { tab_id: string; pane_id: string; layout?: any; active_pane_id?: string }[]
   active_pane_id: string | null
 }
 
 export interface SyncTabCreated {
   type: 'tab_created'
+  tab_id: string
   pane_id: string
+  layout?: any
 }
 
 export interface SyncTabClosed {
@@ -68,7 +70,9 @@ export type SyncServerMsg = SyncTabList | SyncTabCreated | SyncTabClosed | SyncT
 
 export interface SyncCreateTab {
   type: 'create_tab'
-  pane_id: string
+  layout: any
+  tab_id?: string
+  pane_id?: string
 }
 
 export interface SyncCloseTab {

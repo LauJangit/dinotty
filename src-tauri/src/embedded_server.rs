@@ -25,6 +25,7 @@ use dinotty_server::proxy;
 use dinotty_server::session::SessionManager;
 use dinotty_server::settings;
 use dinotty_server::history::HistoryState;
+use dinotty_server::tabs;
 use dinotty_server::ws;
 use dinotty_server::workspace;
 
@@ -293,6 +294,14 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
         .route("/ws/monitor", get(monitor::ws_monitor_handler))
         .route("/ws/notify", get(ws::notification_ws_handler))
         .route("/ws/history", get(history::ws_history_handler))
+        // Tab/Pane management
+        .route("/api/tabs", get(tabs::list_tabs).post(tabs::create_tab))
+        .route("/api/tabs/:tab_id", delete(tabs::close_tab))
+        .route("/api/tabs/:tab_id/pane", post(tabs::split_pane))
+        .route("/api/tabs/:tab_id/pane/:pane_id", delete(tabs::close_pane))
+        .route("/api/tabs/:tab_id/pane/:pane_id/activate", put(tabs::activate_pane))
+        .route("/api/tabs/:tab_id/layout", put(tabs::update_layout))
+        .route("/api/input", post(ws::post_input))
         .route("/api/settings", get(settings::get_settings).put(settings::put_settings))
         .route("/api/settings/background", post(settings::upload_background).get(settings::get_background))
         .route("/api/workspace/resolve", get(workspace::workspace_resolve))
