@@ -10,7 +10,7 @@
 
 ---
 
-A **mobile-first** terminal server purpose-built for **coding agents**. Run Claude Code, opencode, Codex, or OpenClaw on your phone with the same experience as on your laptop — use fragmented time to stay productive while you're on the go.
+A **multi-device** terminal server purpose-built for **coding agents**. Run Claude Code, opencode, Codex, or OpenClaw on any device — desktop-class on your laptop, always in your pocket on your phone. Switch seamlessly, never lose a session.
 
 ## Screenshots
 
@@ -30,12 +30,12 @@ A **mobile-first** terminal server purpose-built for **coding agents**. Run Clau
 
 ## Why Dinotty?
 
-Terminal-based coding agents (Claude Code, opencode, Codex, OpenClaw, etc.) are powerful, but they are tethered to your desktop. Dinotty lets you:
+Terminal-based coding agents (Claude Code, opencode, Codex, OpenClaw, etc.) are powerful, but they're locked inside a single terminal window. Dinotty lets you:
 
-- **Kick off a coding task from your phone** while waiting in line, commuting, or walking around
-- **Check on a long-running agent** without pulling out your laptop
-- **Review and verify agent output** — code diffs, rendered pages, generated files — right from your phone's browser
-- **Never lose your session** — put your phone to sleep, switch apps, lose signal — come back and everything is exactly where you left it
+- **Manage agents from any device** — deep coding on desktop, scan a QR code on your phone when you leave your desk to keep monitoring and managing your agent's work without interruption
+- **Multi-device sync, seamless switching** — start on your laptop, continue on your phone; return to your laptop and pick up right where you left off
+- **Verify agent output directly** — code diffs, rendered pages, generated files, all visible in the built-in browser
+- **Never lose your session** — disconnect, lock your screen, switch devices — come back and everything is exactly where you left it
 
 ### Lightweight — Not a Remote Desktop
 
@@ -82,6 +82,24 @@ Terminal-based coding agents (Claude Code, opencode, Codex, OpenClaw, etc.) are 
 | Token auth | ✅ | ✅ | ❌ | ✅ |
 
 Other web terminals are thin WebSocket-to-PTY pipes. Dinotty runs a **full virtual terminal emulator on the server**, enabling session recovery and screen snapshots. Combined with the built-in file/web browser, it provides a self-contained environment where coding agents work and users verify results.
+
+## AI Coding Solutions Comparison
+
+| | Dinotty | Claude Code Remote | Codex Web | Happy | hapi | Termius | tmux |
+|---|---|---|---|---|---|---|---|
+| Positioning | Web terminal server | Built-in multi-device | Cloud agent | AI Agent remote client | AI Agent remote client | SSH client | Terminal multiplexer |
+| Approach | Server-side VTE + Web UI | Anthropic cloud + local | OpenAI cloud | CLI proxy wrapper | CLI proxy wrapper | Native app | Server-side process |
+| Web access | ✅ | ✅ claude.ai/code | ✅ chatgpt.com/codex | ✅ | ✅ PWA | ❌ | ❌ |
+| Native app | Tauri (optional) | iOS + Android | ❌ | iOS + Android | ❌ (PWA) | All platforms | ❌ |
+| General terminal | ✅ Any command | ❌ AI agents only | ❌ AI agents only | ❌ AI agents only | ❌ AI agents only | ✅ SSH | ✅ |
+| Coding agent support | ✅ File browser/preview/notify | ✅ Built-in | ✅ Built-in | ✅ Voice/approve | ✅ Voice/workspace | ❌ | ❌ |
+| Plugin system | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Multi-device sync | ✅ Browser-based | ✅ Cross-device session sync | ✅ Cloud sessions | ✅ | ✅ | ✅ Vault | ❌ Requires SSH |
+| Relay service | Planned | ✅ Anthropic hosted | ✅ OpenAI hosted | ✅ | ✅ | SaaS | ❌ |
+| Deployment | Self-hosted | SaaS | SaaS | Relay service | Self-hosted/relay | SaaS | Self-hosted |
+| Code runs on | Your own server | Local / Anthropic cloud | OpenAI cloud | Local | Local | Remote SSH | Remote server |
+
+Claude Code and Codex each offer built-in remote solutions, but are limited to their own agent ecosystem. Happy and hapi are third-party remote control layers that wrap CLI tools for phone-based approval and voice interaction. Dinotty is a general-purpose web terminal server where agents run natively on the server, with a full working environment including file browser, web preview, and plugin system, delivering a professional experience on both desktop and mobile.
 
 ## Quick Start
 

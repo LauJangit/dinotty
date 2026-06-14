@@ -10,7 +10,7 @@
 
 ---
 
-为 **Coding Agent** 打造的**移动优先**终端服务器。在手机上运行 Claude Code、opencode、Codex 或 OpenClaw，获得与电脑上完全一致的体验——利用碎片时间，随时随地编程。
+为 **Coding Agent** 打造的**多端同步**终端服务器。在任意设备上运行 Claude Code、opencode、Codex 或 OpenClaw，桌面端专业高效，移动端随时掌控——无缝切换，会话永不丢失。
 
 ## 截图
 
@@ -30,12 +30,12 @@
 
 ## 为什么选择 Dinotty？
 
-终端 Coding Agent（Claude Code、opencode、Codex、OpenClaw 等）功能强大，但它们被束缚在桌面上。Dinotty 让你：
+终端 Coding Agent（Claude Code、opencode、Codex、OpenClaw 等）功能强大，但它们被束缚在单一终端窗口里。Dinotty 让你：
 
-- **在手机上启动编程任务**——排队、通勤时掏出手机就能让 agent 干活
-- **随时查看长时间运行的 agent**——不用打开笔记本电脑
-- **直接在手机上验证 agent 产出**——代码 diff、渲染的网页、生成的文件，浏览器里一目了然
-- **永远不会丢失会话**——手机息屏、切换 App、断网——回来后一切都在原处
+- **在任意设备上管理 agent**——桌面端深度编码，离开工位时手机扫码即可继续查看和管理 agent 工作，工作连贯不中断
+- **多端同步，无缝切换**——电脑上写到一半，掏出手机继续；回到电脑，一切原样
+- **直接验证 agent 产出**——代码 diff、渲染的网页、生成的文件，内置浏览器一目了然
+- **永远不会丢失会话**——断网、息屏、切换设备——回来后一切都在原处
 
 ### 轻量级——不是远程桌面
 
@@ -82,6 +82,24 @@
 | Token 认证 | ✅ | ✅ | ❌ | ✅ |
 
 其他 Web 终端只是 WebSocket 到 PTY 的透传管道。Dinotty 在服务端运行**完整的虚拟终端仿真器**，使得会话恢复、屏幕快照成为可能，结合内建文件/网页浏览器，提供自包含的 Coding Agent 工作环境。
+
+## AI Coding 方案对比
+
+| | Dinotty | Claude Code Remote | Codex Web | Happy | hapi | Termius | tmux |
+|---|---|---|---|---|---|---|---|
+| 定位 | Web 终端服务器 | 内建多端同步 | 云端 Agent | AI Agent 远程客户端 | AI Agent 远程客户端 | SSH 客户端 | 终端复用器 |
+| 技术方案 | 服务端 VTE + Web UI | Anthropic 云 + 本地 | OpenAI 云 | CLI 代理包装 | CLI 代理包装 | 原生 App | 服务端进程 |
+| Web 访问 | ✅ | ✅ claude.ai/code | ✅ chatgpt.com/codex | ✅ | ✅ PWA | ❌ | ❌ |
+| 原生 App | Tauri（可选） | iOS + Android | ❌ | iOS + Android | ❌（PWA） | 全平台 | ❌ |
+| 通用终端 | ✅ 任意命令 | ❌ 仅 AI Agent | ❌ 仅 AI Agent | ❌ 仅 AI Agent | ❌ 仅 AI Agent | ✅ SSH | ✅ |
+| Coding Agent 适配 | ✅ 文件浏览/预览/通知 | ✅ 内建 | ✅ 内建 | ✅ 语音/审批 | ✅ 语音/工作区 | ❌ | ❌ |
+| 插件系统 | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| 多端同步 | ✅ 浏览器即同步 | ✅ 跨设备会话同步 | ✅ 云端会话 | ✅ | ✅ | ✅ Vault | ❌ 需 SSH |
+| 中继服务 | 计划中 | ✅ Anthropic 托管 | ✅ OpenAI 托管 | ✅ | ✅ | SaaS | ❌ |
+| 部署方式 | 自托管 | SaaS | SaaS | 中继服务 | 自托管/中继 | SaaS | 自托管 |
+| 代码运行位置 | 自有服务器 | 本地 / Anthropic 云 | OpenAI 云 | 本地 | 本地 | 远程 SSH | 远程服务器 |
+
+Claude Code 和 Codex 各自提供了内建的远程方案，但仅限于自身 Agent 生态。Happy/hapi 是第三方远程控制层，包装 CLI 实现手机审批和语音交互。Dinotty 是通用 Web 终端服务器，Agent 在服务端原生运行，同时提供文件浏览、网页预览、插件系统等完整工作环境，桌面端和移动端均有专业体验。
 
 ## 快速开始
 
