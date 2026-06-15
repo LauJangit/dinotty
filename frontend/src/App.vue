@@ -158,7 +158,7 @@ function setPreviewPanelRef(el: any) {
 const bookmarksRef = ref<InstanceType<typeof CommandBookmarks>>()
 const serverListRef = ref<InstanceType<typeof ServerList>>()
 
-const { settings: appSettings } = useSettings()
+const { settings: appSettings, loadSettings } = useSettings()
 const { t } = useI18n()
 const { getBinding, formatBinding } = useKeybindings()
 const notif = useNotification()
@@ -548,6 +548,7 @@ function getSendFn(): ((data: string) => void) | null {
 async function onLoginSuccess() {
   authenticated.value = true
   await getApiBase()
+  await loadSettings()
   void loadAll()
   void connectSyncWS()
   initMonitorHistory()

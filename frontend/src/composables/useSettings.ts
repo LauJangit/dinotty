@@ -185,7 +185,7 @@ export function useSettings() {
     loadSettings()
     loaded = true
   }
-  return { settings, saveSettings, applyCurrentTheme, getCurrentXtermTheme }
+  return { settings, saveSettings, loadSettings, applyCurrentTheme, getCurrentXtermTheme }
 }
 
 function restoreActionIcons() {
