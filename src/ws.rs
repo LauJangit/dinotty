@@ -74,13 +74,39 @@ pub async fn sync_handler(
 }
 
 async fn handle_sync_socket(socket: WebSocket, manager: Arc<SessionManager>) {
-    let (mut ws_tx, mut ws_rx) = socket.split();
+    let (ws_tx, mut ws_rx) = socket.split();
+
+    // Channel for all outbound WS messages
+    let (ws_out_tx, mut ws_out_rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
+
+    // Writer task: reads from channel, writes to WebSocket sink
+    let writer_task = tokio::spawn(async move {
+        let mut ws_tx = ws_tx;
+        while let Some(msg) = ws_out_rx.recv().await {
+            if ws_tx.send(msg).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Ping sender task: keep connection alive through NAT/proxy
+    let ping_tx = ws_out_tx.clone();
+    let ping_task = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        interval.tick().await; // skip first immediate tick
+        loop {
+            interval.tick().await;
+            if ping_tx.send(Message::Ping(vec![])).is_err() {
+                break;
+            }
+        }
+    });
 
     // Send current tab list with active tab
     let (tabs, active_pane_id) = manager.tab_list();
     let tab_list = SyncMsg::TabList { tabs, active_pane_id };
     let msg = serde_json::to_string(&tab_list).unwrap();
-    if ws_tx.send(Message::Text(msg.into())).await.is_err() { return; }
+    if ws_out_tx.send(Message::Text(msg.into())).is_err() { return; }
 
     // Use mpsc channel to bridge broadcast messages and direct responses to the WebSocket
     let (client_id, mut rx) = manager.add_sync_client();
@@ -95,9 +121,10 @@ async fn handle_sync_socket(socket: WebSocket, manager: Arc<SessionManager>) {
     });
 
     // Forward all messages from the shared channel to the WebSocket
+    let fwd_ws_out_tx = ws_out_tx.clone();
     let fwd = tokio::spawn(async move {
         while let Some(data) = msg_rx.recv().await {
-            if ws_tx.send(Message::Text(data.into())).await.is_err() { break; }
+            if fwd_ws_out_tx.send(Message::Text(data.into())).is_err() { break; }
         }
     });
 
@@ -192,17 +219,48 @@ async fn handle_sync_socket(socket: WebSocket, manager: Arc<SessionManager>) {
                     }
                 }
             }
+            Message::Ping(data) => {
+                let _ = ws_out_tx.send(Message::Pong(data));
+            }
             Message::Close(_) => break,
             _ => {}
         }
     }
     fwd.abort();
+    writer_task.abort();
+    ping_task.abort();
 }
 
 async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionManager>, history: HistoryState) {
     info!("WebSocket connected: pane={}", pane_id);
-    let (mut ws_tx, mut ws_rx) = socket.split();
+    let (ws_tx, mut ws_rx) = socket.split();
     let mut input_buffer = String::new();
+
+    // Channel for all outbound WS messages (PTY output, Ping, Pong)
+    let (ws_out_tx, mut ws_out_rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
+
+    // Writer task: reads from channel, writes to WebSocket sink
+    let writer_task = tokio::spawn(async move {
+        let mut ws_tx = ws_tx;
+        while let Some(msg) = ws_out_rx.recv().await {
+            if ws_tx.send(msg).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Ping sender task: keep connection alive through NAT/proxy
+    let ping_tx = ws_out_tx.clone();
+    let ping_task = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        interval.tick().await; // skip first immediate tick
+        loop {
+            interval.tick().await;
+            if ping_tx.send(Message::Ping(vec![])).is_err() {
+                break;
+            }
+        }
+    });
 
     // Check if session already exists (reconnection / multi-client case)
     let existing_session = manager.sessions.get(&pane_id).map(|r| Arc::clone(r.value()));
@@ -227,29 +285,30 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
         // Send reconnected message
         let msg = serde_json::to_string(&ServerMsg::Reconnected { cols, rows }).unwrap();
         info!("Sending reconnected to pane={}: {}", pane_id, msg);
-        if ws_tx.send(Message::Text(msg.into())).await.is_err() {
+        if ws_out_tx.send(Message::Text(msg.into())).is_err() {
             error!("Failed to send reconnected msg to pane={}", pane_id);
             return;
         }
         for chunk in &scrollback_chunks {
             let msg = serde_json::to_string(&ServerMsg::Output { data: chunk }).unwrap();
-            if ws_tx.send(Message::Text(msg.into())).await.is_err() { return; }
+            if ws_out_tx.send(Message::Text(msg.into())).is_err() { return; }
         }
 
         let msg = serde_json::to_string(&ServerMsg::Output { data: &snapshot }).unwrap();
         info!("Sending snapshot to pane={}: msg_len={}", pane_id, msg.len());
-        if ws_tx.send(Message::Text(msg.into())).await.is_err() {
+        if ws_out_tx.send(Message::Text(msg.into())).is_err() {
             error!("Failed to send snapshot to pane={}", pane_id);
             return;
         }
         info!("All initial messages sent to pane={}", pane_id);
 
         let pane_id_fwd = pane_id.clone();
+        let fwd_ws_out_tx = ws_out_tx.clone();
         let fwd = tokio::spawn(async move {
             while let Some(data) = rx.recv().await {
                 info!("Forwarder: pane={}, data_len={}", pane_id_fwd, data.len());
                 let msg = serde_json::to_string(&ServerMsg::Output { data: &data }).unwrap();
-                if ws_tx.send(Message::Text(msg.into())).await.is_err() {
+                if fwd_ws_out_tx.send(Message::Text(msg.into())).is_err() {
                     error!("Forwarder: failed to send WS message for pane={}", pane_id_fwd);
                     break;
                 }
@@ -304,12 +363,17 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
                         Err(e) => error!("parse msg: {}", e),
                     }
                 }
+                Message::Ping(data) => {
+                    let _ = ws_out_tx.send(Message::Pong(data));
+                }
                 Message::Close(_) => break,
                 _ => {}
             }
         }
 
         fwd.abort();
+        writer_task.abort();
+        ping_task.abort();
 
         if !session.has_clients() {
             *session.status.lock().unwrap() = SessionStatus::Detached { since: std::time::Instant::now() };
@@ -332,15 +396,16 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
 
     // Send shell info
     let shell_info = serde_json::to_string(&ServerMsg::ShellInfo { shell_type: &shell_type }).unwrap();
-    let _ = ws_tx.send(Message::Text(shell_info.into())).await;
+    let _ = ws_out_tx.send(Message::Text(shell_info.into()));
 
     // Forward PTY output to this WS client
     let pane_id_fwd = pane_id.clone();
+    let fwd_ws_out_tx = ws_out_tx.clone();
     let fwd = tokio::spawn(async move {
         while let Some(data) = rx.recv().await {
             info!("Forwarder (new): pane={}, data_len={}", pane_id_fwd, data.len());
             let msg = serde_json::to_string(&ServerMsg::Output { data: &data }).unwrap();
-            if ws_tx.send(Message::Text(msg.into())).await.is_err() {
+            if fwd_ws_out_tx.send(Message::Text(msg.into())).is_err() {
                 error!("Forwarder (new): failed to send WS message for pane={}", pane_id_fwd);
                 break;
             }
@@ -395,12 +460,17 @@ async fn handle_socket(socket: WebSocket, pane_id: String, manager: Arc<SessionM
                     Err(e) => error!("parse msg: {}", e),
                 }
             }
+            Message::Ping(data) => {
+                let _ = ws_out_tx.send(Message::Pong(data));
+            }
             Message::Close(_) => break,
             _ => {}
         }
     }
 
     fwd.abort();
+    writer_task.abort();
+    ping_task.abort();
 
     if !session.has_clients() {
         *session.status.lock().unwrap() = SessionStatus::Detached { since: std::time::Instant::now() };
@@ -416,13 +486,40 @@ pub async fn notification_ws_handler(
 }
 
 async fn handle_notification_socket(socket: WebSocket, notifier: Arc<NotificationBroadcast>) {
-    let (mut ws_tx, mut ws_rx) = socket.split();
+    let (ws_tx, mut ws_rx) = socket.split();
     let mut rx = notifier.subscribe();
 
+    // Channel for all outbound WS messages
+    let (ws_out_tx, mut ws_out_rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
+
+    // Writer task
+    let writer_task = tokio::spawn(async move {
+        let mut ws_tx = ws_tx;
+        while let Some(msg) = ws_out_rx.recv().await {
+            if ws_tx.send(msg).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Ping sender task
+    let ping_tx = ws_out_tx.clone();
+    let ping_task = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            if ping_tx.send(Message::Ping(vec![])).is_err() {
+                break;
+            }
+        }
+    });
+
+    let fwd_ws_out_tx = ws_out_tx.clone();
     let fwd = tokio::spawn(async move {
         while let Ok(event) = rx.recv().await {
             let json = serde_json::to_string(&event).unwrap();
-            if ws_tx.send(Message::Text(json.into())).await.is_err() {
+            if fwd_ws_out_tx.send(Message::Text(json.into())).is_err() {
                 break;
             }
         }
@@ -430,11 +527,17 @@ async fn handle_notification_socket(socket: WebSocket, notifier: Arc<Notificatio
 
     // Keep connection alive until client disconnects
     while let Some(Ok(msg)) = ws_rx.next().await {
-        if matches!(msg, Message::Close(_)) {
-            break;
+        match msg {
+            Message::Ping(data) => {
+                let _ = ws_out_tx.send(Message::Pong(data));
+            }
+            Message::Close(_) => break,
+            _ => {}
         }
     }
     fwd.abort();
+    writer_task.abort();
+    ping_task.abort();
 }
 
 #[derive(Deserialize)]
@@ -476,4 +579,89 @@ pub async fn post_input(
         }
         None => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "pane not found" }))),
     }
+}
+
+pub async fn handle_open_api_ws(
+    socket: WebSocket,
+    manager: Arc<SessionManager>,
+    pane_id: String,
+) {
+    let session = match manager.sessions.get(&pane_id) {
+        Some(s) => Arc::clone(s.value()),
+        None => return,
+    };
+
+    let (ws_tx, mut ws_rx) = socket.split();
+    let (ws_out_tx, mut ws_out_rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
+
+    // Writer task
+    let writer_task = tokio::spawn(async move {
+        let mut ws_tx = ws_tx;
+        while let Some(msg) = ws_out_rx.recv().await {
+            if ws_tx.send(msg).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Ping task
+    let ping_tx = ws_out_tx.clone();
+    let ping_task = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            if ping_tx.send(Message::Ping(vec![])).is_err() {
+                break;
+            }
+        }
+    });
+
+    // Register as broadcast client
+    let mut rx = session.add_client();
+
+    // Forward broadcast output to WS
+    let fwd_ws_out_tx = ws_out_tx.clone();
+    let pane_id_fwd = pane_id.clone();
+    let fwd = tokio::spawn(async move {
+        while let Some(data) = rx.recv().await {
+            let msg = serde_json::to_string(&ServerMsg::Output { data: &data }).unwrap();
+            if fwd_ws_out_tx.send(Message::Text(msg.into())).is_err() {
+                break;
+            }
+        }
+        let _ = pane_id_fwd; // keep for logging if needed
+    });
+
+    // Read loop: accept Input and Resize messages
+    while let Some(Ok(msg)) = ws_rx.next().await {
+        match msg {
+            Message::Text(text) => {
+                if let Ok(client_msg) = serde_json::from_str::<ClientMsg>(&text) {
+                    match client_msg {
+                        ClientMsg::Input { data } => {
+                            let mut w = session.writer.lock().unwrap();
+                            let _ = w.write_all(data.as_bytes());
+                        }
+                        ClientMsg::Resize { cols, rows } => {
+                            let m = session.master.lock().unwrap();
+                            let _ = m.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
+                            drop(m);
+                            *session.size.lock().unwrap() = (cols, rows);
+                            session.screen.lock().unwrap().resize(cols as usize, rows as usize);
+                        }
+                    }
+                }
+            }
+            Message::Ping(data) => {
+                let _ = ws_out_tx.send(Message::Pong(data));
+            }
+            Message::Close(_) => break,
+            _ => {}
+        }
+    }
+
+    fwd.abort();
+    writer_task.abort();
+    ping_task.abort();
 }
