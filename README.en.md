@@ -5,6 +5,14 @@
 <h1 align="center">Dinotty</h1>
 
 <p align="center">
+  <a href="https://github.com/xichan96/dinotty/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License"></a>
+  <img src="https://img.shields.io/badge/language-Rust-orange" alt="Rust">
+  <img src="https://img.shields.io/badge/frontend-Vue%203-brightgreen" alt="Vue 3">
+  <a href="https://github.com/xichan96/dinotty/stargazers"><img src="https://img.shields.io/github/stars/xichan96/dinotty?style=social" alt="GitHub Stars"></a>
+  <a href="https://github.com/xichan96/dinotty/issues"><img src="https://img.shields.io/github/issues/xichan96/dinotty" alt="GitHub Issues"></a>
+</p>
+
+<p align="center">
   English | <a href="./README.md">中文</a>
 </p>
 
