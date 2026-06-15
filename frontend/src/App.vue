@@ -601,18 +601,15 @@ function onServerConnect(host: string, port: number) {
 }
 
 function openPlugin(pluginId: string) {
-  console.log('[openPlugin] called with:', pluginId)
   try {
     const paneId = `plugin:${pluginId}`
     const existing = tabs.value.find(t => t.paneId === paneId)
     if (existing) {
-      console.log('[openPlugin] tab already exists, activating')
       activateTab(paneId)
       return
     }
 
     const plugin = loadedPlugins.get(pluginId)
-    console.log('[openPlugin] plugin lookup:', !!plugin, plugin?.state)
     if (!plugin || plugin.state !== 'active') {
       const msg = plugin?.state === 'error'
         ? `Plugin "${pluginId}" failed to load: ${plugin.error ?? 'unknown error'}`
@@ -628,12 +625,10 @@ function openPlugin(pluginId: string) {
       title: plugin.manifest.name,
       pluginId,
     }
-    console.log('[openPlugin] pushing tab:', newTab)
     tabs.value.push(newTab)
     activePaneId.value = paneId
     sendSync({ type: 'activate_tab', pane_id: paneId })
     persist()
-    console.log('[openPlugin] done, tabs count:', tabs.value.length, 'activePaneId:', activePaneId.value)
     nextTick(() => focusActive())
   } catch (err) {
     console.error('[openPlugin] error:', err)
@@ -1076,7 +1071,6 @@ async function connectSyncWS() {
         })
       }
     } else if (msg.type === 'plugin_changed') {
-      console.log('[plugin_changed] plugin_id:', msg.plugin_id, 'change:', msg.change)
       handlePluginChanged(msg.plugin_id, msg.change)
     }
   }

@@ -357,7 +357,6 @@ export class TerminalInstance {
     this.ws = new WebSocket(url)
 
     this.ws.onopen = () => {
-      console.log(`[TerminalInstance] WS onopen: pane=${this.paneId}`)
       this._reconnectAttempts = 0
       this._hideOverlay()
       this.onConnect?.()
@@ -365,10 +364,10 @@ export class TerminalInstance {
     }
 
     this.ws.onmessage = (e) => {
-      if (this._destroyed) { console.log(`[TerminalInstance] WS onmessage: pane=${this.paneId} IGNORED (destroyed)`); return }
+      if (this._destroyed) return
       let msg: ServerMsg
       try { msg = JSON.parse(e.data) } catch { return }
-      if (!this.xterm) { console.log(`[TerminalInstance] WS onmessage: pane=${this.paneId} IGNORED (xterm null)`); return }
+      if (!this.xterm) return
       if (msg.type === 'reconnected') {
         this._suppressTitleChange = true
         this.xterm.reset()
@@ -377,17 +376,14 @@ export class TerminalInstance {
         this._hideOverlay()
         this._doFitAndResize(true)
       } else if (msg.type === 'output') {
-        console.log(`[TerminalInstance] WS output: pane=${this.paneId}, data_len=${msg.data.length}`)
         this.xterm.write(msg.data)
         this.onRawOutput?.(msg.data)
       } else if (msg.type === 'shell_info') {
-        console.log(`[TerminalInstance] WS shell_info: pane=${this.paneId}, shell=${msg.shell_type}`)
         this.onShellInfo?.(msg.shell_type)
       }
     }
 
     this.ws.onclose = (e) => {
-      console.log(`[TerminalInstance] WS onclose: pane=${this.paneId}, code=${e.code}, reason=${e.reason}`)
       if (this._destroyed) return
       this.onDisconnect?.()
       if (e.code === 1000) {
