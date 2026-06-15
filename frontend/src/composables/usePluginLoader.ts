@@ -290,16 +290,13 @@ function createPluginContext(pluginId: string): PluginContext {
 
 async function loadPlugin(id: string): Promise<LoadedPlugin> {
   // 1. Fetch manifest
-  console.log(`[plugin] loadPlugin(${id}): fetching manifest`)
   const manifestRes = await authFetch(apiUrl(`/api/plugins/${id}/plugin.json`))
   if (!manifestRes.ok) throw new Error(`Plugin ${id}: manifest not found (${manifestRes.status})`)
   const manifest: PluginManifest = await manifestRes.json()
-  console.log(`[plugin] loadPlugin(${id}): manifest ok, entry=${manifest.entry || './main.js'}`)
 
   // 2. Fetch main.js via authFetch (includes auth token) then import from blob URL
   const entry = manifest.entry || './main.js'
   const jsUrl = apiUrl(`/api/plugins/${id}/${entry.replace('./', '')}`)
-  console.log(`[plugin] loadPlugin(${id}): fetching ${jsUrl}`)
   const jsRes = await authFetch(jsUrl)
   if (!jsRes.ok) throw new Error(`Plugin ${id}: failed to fetch ${entry} (${jsRes.status})`)
   const jsContent = await jsRes.text()
@@ -314,7 +311,6 @@ async function loadPlugin(id: string): Promise<LoadedPlugin> {
   } finally {
     URL.revokeObjectURL(blobUrl)
   }
-  console.log(`[plugin] loadPlugin(${id}): module loaded, activate=${typeof mod.activate}`)
 
   if (typeof mod.activate !== 'function') {
     throw new Error(`Plugin ${id}: main.js must export activate(context)`)
@@ -323,12 +319,9 @@ async function loadPlugin(id: string): Promise<LoadedPlugin> {
   // 3. Load optional CSS (fetch via authFetch then inject as style element)
   if (manifest.styles) {
     const cssUrl = apiUrl(`/api/plugins/${id}/${manifest.styles.replace('./', '')}`)
-    console.log(`[plugin] loadPlugin(${id}): loading CSS from ${cssUrl}`)
     const cssRes = await authFetch(cssUrl)
-    console.log(`[plugin] loadPlugin(${id}): CSS response status=${cssRes.status}`)
     if (cssRes.ok) {
       const cssText = await cssRes.text()
-      console.log(`[plugin] loadPlugin(${id}): CSS loaded, ${cssText.length} bytes`)
       const styleEl = document.createElement('style')
       styleEl.textContent = cssText
       styleEl.dataset.pluginId = id
@@ -336,8 +329,6 @@ async function loadPlugin(id: string): Promise<LoadedPlugin> {
     } else {
       console.error(`[plugin] loadPlugin(${id}): CSS fetch failed, status=${cssRes.status}`)
     }
-  } else {
-    console.log(`[plugin] loadPlugin(${id}): no styles defined in manifest`)
   }
 
   // 4. Activate
@@ -352,7 +343,6 @@ async function loadPlugin(id: string): Promise<LoadedPlugin> {
       ),
     ])
     exports = (result as PluginExports) || null
-    console.log(`[plugin] loadPlugin(${id}): activated, has component=${!!exports?.component}`)
   } catch (e: any) {
     throw new Error(`Plugin ${id}: activate() threw: ${e.message}`)
   }
@@ -404,11 +394,9 @@ export async function handlePluginChanged(pluginId: string, change: string) {
       try {
         if (ch === 'deleted') {
           await unloadPlugin(id)
-          console.log(`[plugin] hot-reload: unloaded ${id}`)
         } else {
           await unloadPlugin(id)
           await loadPlugin(id)
-          console.log(`[plugin] hot-reload: reloaded ${id} (${ch})`)
         }
       } catch (e: any) {
         console.error(`[plugin] hot-reload failed for ${id}:`, e.message)
@@ -429,16 +417,13 @@ export function usePluginLoader() {
         return
       }
       const list: PluginManifest[] = await res.json()
-      console.log('[plugin] loadAll: backend returned', list.length, 'plugins:', list.map(p => p.id))
 
       for (const manifest of list) {
         if (loadedPlugins.has(manifest.id)) {
-          console.log('[plugin] loadAll: skipping', manifest.id, '(already loaded)')
           continue
         }
         try {
           await loadPlugin(manifest.id)
-          console.log('[plugin] loadAll: loaded', manifest.id)
         } catch (e: any) {
           console.error(`[plugin] loadAll: failed ${manifest.id}:`, e.message)
           loadedPlugins.set(manifest.id, {
@@ -451,7 +436,6 @@ export function usePluginLoader() {
           })
         }
       }
-      console.log('[plugin] loadAll: done. loadedPlugins keys:', [...loadedPlugins.keys()])
     } catch (e: any) {
       console.error('[plugin] failed to load plugins:', e.message)
     }
