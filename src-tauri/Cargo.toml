@@ -2,6 +2,7 @@
 name = "dinotty-desktop"
 version = "0.10.5"
 edition = "2021"
+license = "MIT"
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
