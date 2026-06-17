@@ -428,10 +428,25 @@ function reorderTab(fromId: string, toId: string) {
 }
 
 async function onClosePane(tabId: string, paneId: string) {
-  const closed = await splitPane.closePane(paneId)
-  if (!closed) {
-    requestCloseTab(tabId)
+  const tab = tabs.value.find(t => t.paneId === tabId)
+  if (!tab) return
+
+  // Bypass 1: non-terminal tab
+  if (tab.type !== 'terminal') {
+    await splitPane.closePane(paneId)
+    return
   }
+
+  // Bypass 2: user disabled confirmation
+  if (appSettings.confirm_before_close_tab === false) {
+    await splitPane.closePane(paneId)
+    return
+  }
+
+  // Show confirmation (handles both pane and tab close)
+  pendingCloseTabId.value = tabId
+  pendingClosePaneId.value = paneId
+  confirmCloseVisible.value = true
 }
 
 async function requestCloseTab(tabId: string) {
@@ -456,6 +471,7 @@ async function requestCloseTab(tabId: string) {
 }
 
 const pendingCloseTabId = ref<string | null>(null)
+const pendingClosePaneId = ref<string | null>(null)
 const confirmCloseVisible = ref(false)
 
 const pendingCloseTabTitle = computed(() => {
@@ -481,14 +497,27 @@ const pendingCloseMessage = computed(() => {
 })
 
 async function onConfirmClose() {
-  const id = pendingCloseTabId.value
+  const tabId = pendingCloseTabId.value
+  const paneId = pendingClosePaneId.value
   pendingCloseTabId.value = null
+  pendingClosePaneId.value = null
   confirmCloseVisible.value = false
-  if (id) await closeTab(id)
+
+  if (paneId) {
+    // Pane close: try close pane first, fall back to tab close if last
+    const closed = await splitPane.closePane(paneId)
+    if (!closed && tabId) {
+      await closeTab(tabId)
+    }
+  } else if (tabId) {
+    // Tab close (no pane specified)
+    await closeTab(tabId)
+  }
 }
 
 function onCancelClose() {
   pendingCloseTabId.value = null
+  pendingClosePaneId.value = null
   confirmCloseVisible.value = false
 }
 
