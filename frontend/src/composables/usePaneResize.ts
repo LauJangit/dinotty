@@ -31,6 +31,7 @@ function startPaneResizeInternal(
       })()
 
   const onMove = (ev: MouseEvent | TouchEvent) => {
+    if ('touches' in ev) ev.preventDefault()
     const pos = getPointerPos(ev as MouseEvent | TouchEvent)
     const rect = parent.getBoundingClientRect()
     const total = horiz ? rect.width : rect.height
@@ -53,7 +54,7 @@ function startPaneResizeInternal(
     window.dispatchEvent(new Event('resize'))
   }
 
-  window.addEventListener(moveEvent, onMove as EventListener)
+  window.addEventListener(moveEvent, onMove as EventListener, { passive: !isTouch } as AddEventListenerOptions)
   window.addEventListener(endEvent, onEnd)
 }
 

@@ -77,6 +77,7 @@ export function useFileWorkspaceLayout(): FileWorkspaceLayout {
     const startX = e.touches[0].clientX
     const startW = treePaneWidth.value
     const onMove = (ev: TouchEvent) => {
+      ev.preventDefault()
       const touch = ev.touches[0]
       const rect = body.getBoundingClientRect()
       const maxW = Math.min(rect.width * 0.78, 560)
@@ -88,7 +89,7 @@ export function useFileWorkspaceLayout(): FileWorkspaceLayout {
       window.removeEventListener('touchend', onEnd)
       persistTreePaneWidth(treePaneWidth.value)
     }
-    window.addEventListener('touchmove', onMove, { passive: true })
+    window.addEventListener('touchmove', onMove, { passive: false })
     window.addEventListener('touchend', onEnd)
   }
 
