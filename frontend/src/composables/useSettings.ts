@@ -22,6 +22,7 @@ export interface SettingsData {
   action_keyboard: ActionKeyboardConfig | null
   keyboard_sound: boolean
   show_virtual_keyboard: boolean
+  confirm_before_close_tab: boolean
   locale: string
   panel_position: 'auto' | 'right' | 'left' | 'top' | 'bottom'
   port?: number | null
@@ -140,6 +141,7 @@ export const settings = reactive<SettingsData>({
   action_keyboard: null,
   keyboard_sound: false,
   show_virtual_keyboard: false,
+  confirm_before_close_tab: true,
   locale: 'zh',
   panel_position: 'auto',
   monitor: {
