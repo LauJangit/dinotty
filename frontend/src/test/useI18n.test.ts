@@ -7,7 +7,8 @@ import { settings } from '../composables/useSettings'
 // Spec: openspec/changes/confirm-before-close-tab/specs/tab-close-confirmation/spec.md
 
 // Required keys: 3 settings.* keys (General tab toggle row) + 4 confirm.* keys (modal)
-const EN_KEYS = [
+// Renamed from EN_KEYS to TASK3_KEYS (M1: name was misleading — used in both locales)
+const TASK3_KEYS = [
   'settings.confirmBeforeCloseTab',
   'settings.confirmBeforeCloseTabHint',
   'settings.behavior',
@@ -24,7 +25,7 @@ describe('useI18n - confirm-before-close-tab strings', () => {
       settings.locale = 'en'
     })
 
-    it.each(EN_KEYS)('t(%s) returns a non-empty string (key exists in messages.en)', (key) => {
+    it.each(TASK3_KEYS)('t(%s) returns a non-empty string (key exists in messages.en)', (key) => {
       const { t } = useI18n()
       const value = t(key)
       // If key is missing, t() returns the key itself. We assert it's different
@@ -40,7 +41,7 @@ describe('useI18n - confirm-before-close-tab strings', () => {
       settings.locale = 'zh'
     })
 
-    it.each(EN_KEYS)('t(%s) returns a non-empty string (key exists in messages.zh)', (key) => {
+    it.each(TASK3_KEYS)('t(%s) returns a non-empty string (key exists in messages.zh)', (key) => {
       const { t } = useI18n()
       const value = t(key)
       expect(value).not.toBe(key)
@@ -50,7 +51,7 @@ describe('useI18n - confirm-before-close-tab strings', () => {
   })
 
   describe('parity', () => {
-    it('en and zh both define the same 7 new keys (no missing translation)', async () => {
+    it('en and zh both define the same 7 new keys (no missing translation)', () => {
       // Dynamic import to peek at the messages table via the actual `t` behavior
       // across both locales for the same key set.
       const enResults: Record<string, string> = {}
@@ -58,13 +59,13 @@ describe('useI18n - confirm-before-close-tab strings', () => {
       // en pass
       settings.locale = 'en'
       const enT = useI18n().t
-      for (const k of EN_KEYS) enResults[k] = enT(k)
+      for (const k of TASK3_KEYS) enResults[k] = enT(k)
       // zh pass
       settings.locale = 'zh'
       const zhT = useI18n().t
-      for (const k of EN_KEYS) zhResults[k] = zhT(k)
+      for (const k of TASK3_KEYS) zhResults[k] = zhT(k)
 
-      for (const k of EN_KEYS) {
+      for (const k of TASK3_KEYS) {
         // In both locales, t() must NOT fall back to the key itself
         expect(enResults[k], `en missing translation for ${k}`).not.toBe(k)
         expect(zhResults[k], `zh missing translation for ${k}`).not.toBe(k)
@@ -87,5 +88,51 @@ describe('useI18n - confirm-before-close-tab strings', () => {
       expect(enConfirmTitle.trim().length).toBeGreaterThan(0)
       expect(zhConfirmTitle.trim().length).toBeGreaterThan(0)
     })
+  })
+
+  // I2: Positive assertions — lock down the exact value of each new key.
+  // These catch silent regressions (e.g. typo, accidental edits, value drift)
+  // that the non-empty assertion above cannot.
+  //
+  // `confirm.closeTabMessage` is intentionally a *prefix* sentence: the
+  // caller (Task 5 App.vue) appends the tab title before the closing
+  // punctuation, e.g. `t('confirm.closeTabMessage') + ' "' + title + '"?'`
+  // and the resulting sentence must read naturally in each locale.
+  describe('exact values (positive assertions)', () => {
+    it.each([
+      [
+        'en',
+        'settings.confirmBeforeCloseTab',
+        'Confirm before closing terminal tab',
+      ],
+      [
+        'en',
+        'settings.confirmBeforeCloseTabHint',
+        'Show a dialog before closing a tab that may run an AI agent',
+      ],
+      ['en', 'settings.behavior', 'Behavior'],
+      ['en', 'confirm.closeTabTitle', 'Close session?'],
+      [
+        'en',
+        'confirm.closeTabMessage',
+        'Closing this session will terminate a possibly running AI agent. Proceed to',
+      ],
+      ['en', 'confirm.closeTabConfirm', 'Close'],
+      ['en', 'confirm.closeTabCancel', 'Cancel'],
+      ['zh', 'settings.confirmBeforeCloseTab', '关闭终端 tab 前显示确认'],
+      ['zh', 'settings.confirmBeforeCloseTabHint', '关闭运行 AI 代理的终端 tab 时，弹出确认对话框'],
+      ['zh', 'settings.behavior', '行为'],
+      ['zh', 'confirm.closeTabTitle', '关闭会话？'],
+      ['zh', 'confirm.closeTabMessage', '关闭此会话将终止可能正在运行的 AI 代理。仍要关闭'],
+      ['zh', 'confirm.closeTabConfirm', '关闭'],
+      ['zh', 'confirm.closeTabCancel', '取消'],
+    ] as const)(
+      't(%j) in %s locale returns the exact expected value',
+      (locale, key, expected) => {
+        settings.locale = locale
+        const { t } = useI18n()
+        expect(t(key)).toBe(expected)
+      },
+    )
   })
 })
