@@ -2,7 +2,7 @@
   <div
     :class="['split-divider', direction]"
     @mousedown.prevent="onDragStart"
-    @touchstart.passive="onTouchStart"
+    @touchstart.prevent="onTouchStart"
     @dblclick="onDoubleClick"
   />
 </template>
@@ -49,6 +49,7 @@ function startDrag(e: MouseEvent | TouchEvent) {
   })()
 
   const onMove = (ev: MouseEvent | TouchEvent) => {
+    if ('touches' in ev) ev.preventDefault()
     const pos = getPointerPos(ev)
     const rect = props.containerEl.getBoundingClientRect()
     const total = horiz ? rect.width : rect.height
