@@ -47,7 +47,6 @@ function onCancel() {
 function onKey(e: KeyboardEvent) {
   if (e.key === 'Escape' && props.visible) {
     e.preventDefault()
-    e.stopPropagation()
     onCancel()
   }
 }
