@@ -87,6 +87,9 @@
             <span v-if="isBusy(detailPlugin.id)" class="plugin-spinner"></span>
             {{ t('settings.plugins.updateFromMarket') }}
           </button>
+          <button v-if="detailPlugin.installed_version" class="plugin-action-btn plugin-danger" @click="onUninstall(detailPlugin.id)" :disabled="isBusy(detailPlugin.id)">
+            {{ t('settings.plugins.uninstall') }}
+          </button>
           <a v-if="detailPlugin.homepage" :href="detailPlugin.homepage" target="_blank" class="plugin-link">
             {{ t('settings.plugins.viewOnGithub') }}
           </a>
@@ -105,23 +108,27 @@
     <!-- Installed Tab -->
     <div v-show="tab === 'installed'">
       <div class="plugin-toolbar">
-        <label class="plugin-action-btn" :class="{ disabled: isBusy('file-install') }">
-          <input type="file" accept=".tar.gz,.tgz" hidden @change="onInstallFile" :disabled="isBusy('file-install')" />
-          <span v-if="isBusy('file-install')" class="plugin-spinner"></span>
-          <span>{{ t('settings.plugins.installFile') }}</span>
+        <button class="plugin-action-btn" @click="showDirInstall = !showDirInstall" :disabled="isBusy('dir-install')">
+          <span v-if="isBusy('dir-install')" class="plugin-spinner"></span>
+          {{ t('settings.plugins.installFolder') }}
+        </button>
+        <button class="plugin-action-btn" @click="onRefresh" :disabled="isBusy('refresh')">
+          <span v-if="isBusy('refresh')" class="plugin-spinner"></span>
+          {{ t('settings.plugins.refresh') }}
+        </button>
+      </div>
+      <div v-if="showDirInstall" class="plugin-dir-install">
+        <button class="plugin-browse-btn" @click="showPicker = true">
+          {{ installDirPath || t('settings.plugins.browseFolder') }}
+        </button>
+        <label class="plugin-dev-toggle" :title="t('settings.plugins.devLinkHint')">
+          <input type="checkbox" v-model="devLinkMode" />
+          <span>{{ t('settings.plugins.devLinkCheckbox') }}</span>
         </label>
-        <div class="plugin-toolbar-right">
-          <input
-            v-model="devPath"
-            class="shortcut-input"
-            style="width: 200px"
-            placeholder="/path/to/my-plugin"
-          />
-          <button class="plugin-action-btn" @click="onDevLink" :disabled="!devPath.trim() || isBusy('dev-link')">
-            <span v-if="isBusy('dev-link')" class="plugin-spinner"></span>
-            {{ t('settings.plugins.devLink') }}
-          </button>
-        </div>
+        <button class="plugin-action-btn" @click="onInstallFromDir" :disabled="!installDirPath.trim() || isBusy('dir-install')">
+          <span v-if="isBusy('dir-install')" class="plugin-spinner"></span>
+          {{ t('settings.plugins.install') }}
+        </button>
       </div>
 
       <div v-if="settingsPlugins.length === 0" class="plugin-empty">
@@ -130,6 +137,7 @@
       <div v-for="p in settingsPlugins" :key="p.id" class="plugin-card">
         <div class="plugin-card-header">
           <span class="plugin-card-name">{{ p.name }}</span>
+          <span v-if="p.isDevLink" class="plugin-badge dev">{{ t('settings.plugins.devBadge') }}</span>
           <span v-if="p.state === 'error'" class="plugin-badge error">error</span>
           <span class="plugin-card-version">v{{ p.version }}</span>
         </div>
@@ -156,6 +164,14 @@
       </div>
     </div>
 
+    <FilePickerModal
+      :visible="showPicker"
+      pane-id=""
+      root="~"
+      @update:visible="showPicker = $event"
+      @select="onPickerSelect"
+    />
+
     <ConfirmModal
       :visible="!!confirmUninstall"
       :title="t('settings.plugins.uninstall')"
@@ -170,12 +186,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useI18n } from '../../composables/useI18n'
 import { authFetch, apiUrl } from '../../composables/apiBase'
 import { usePluginLoader } from '../../composables/usePluginLoader'
 import { useMarketplace, type MarketPlugin } from '../../composables/useMarketplace'
 import ConfirmModal from '../ui/ConfirmModal.vue'
+import FilePickerModal from '../preview/FilePickerModal.vue'
 
 const { t, locale } = useI18n()
 const { loadedPlugins, loadAll, unloadPlugin } = usePluginLoader()
@@ -184,9 +201,12 @@ const { plugins: marketPlugins, loading: marketLoading, error: marketError, inst
 const tab = ref<'market' | 'installed'>('market')
 const statusMsg = ref('')
 const statusOk = ref(false)
-const devPath = ref('')
+const devLinkMode = ref(false)
+const showDirInstall = ref(false)
+const installDirPath = ref('')
 const busyOps = ref<Set<string>>(new Set())
 const confirmUninstall = ref<string | null>(null)
+const showPicker = ref(false)
 
 // Detail view state
 const detailPlugin = ref<MarketPlugin | null>(null)
@@ -206,6 +226,7 @@ const settingsPlugins = computed(() =>
     version: p.manifest.version,
     description: p.manifest.description,
     state: p.state,
+    isDevLink: p.isDevLink,
     marketEntry: marketPlugins.value.find(mp => mp.id === p.id),
   })),
 )
@@ -228,7 +249,11 @@ function unmarkBusy(key: string) {
   busyOps.value = next
 }
 
-onMounted(() => fetchMarket())
+watch(tab, (val) => {
+  if (val === 'market' && marketPlugins.value.length === 0 && !marketLoading.value && !marketError.value) {
+    fetchMarket()
+  }
+}, { immediate: true })
 
 async function renderMarkdown(src: string): Promise<string> {
   const [m, dp] = await Promise.all([import('marked'), import('dompurify')])
@@ -282,18 +307,26 @@ async function onUpdateFromRepo(mp: MarketPlugin) {
   }
 }
 
-async function onInstallFile(e: Event) {
-  const input = e.target as HTMLInputElement
-  const file = input.files?.[0]
-  if (!file) return
-  markBusy('file-install')
+function onPickerSelect(path: string) {
+  installDirPath.value = path
+}
+
+async function onInstallFromDir() {
+  const path = installDirPath.value.trim()
+  if (!path) return
+  markBusy('dir-install')
   try {
-    const form = new FormData()
-    form.append('file', file)
-    const res = await authFetch(apiUrl('/api/plugins/install'), { method: 'POST', body: form })
+    const res = await authFetch(apiUrl('/api/plugins/install-dir'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path, dev_link: devLinkMode.value }),
+    })
     if (res.ok) {
       const manifest = await res.json()
-      setStatus(`Installed ${manifest.name} v${manifest.version}`, true)
+      const mode = devLinkMode.value ? 'Linked' : 'Installed'
+      setStatus(`${mode} ${manifest.name} v${manifest.version}`, true)
+      installDirPath.value = ''
+      showDirInstall.value = false
       await loadAll()
       await fetchMarket()
     } else {
@@ -301,8 +334,7 @@ async function onInstallFile(e: Event) {
       setStatus(err.error || 'Install failed', false)
     }
   } finally {
-    unmarkBusy('file-install')
-    input.value = ''
+    unmarkBusy('dir-install')
   }
 }
 
@@ -343,33 +375,25 @@ async function doUninstall() {
   if (res.ok) {
     setStatus(`Uninstalled ${id}`, true)
     await fetchMarket()
+    if (detailPlugin.value?.id === id) {
+      const updated = marketPlugins.value.find(p => p.id === id)
+      if (updated) detailPlugin.value = updated
+    }
   }
 }
 
-async function onDevLink() {
-  const path = devPath.value.trim()
-  if (!path) return
-  markBusy('dev-link')
+async function onRefresh() {
+  markBusy('refresh')
   try {
-    const res = await authFetch(apiUrl('/api/plugins/dev-link'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path }),
-    })
-    if (res.ok) {
-      const manifest = await res.json()
-      setStatus(`Linked ${manifest.name} from ${path}`, true)
-      devPath.value = ''
-      await loadAll()
-      await fetchMarket()
-    } else {
-      const err = await res.json().catch(() => ({ error: 'Dev-link failed' }))
-      setStatus(err.error || 'Dev-link failed', false)
-    }
+    await Promise.all([loadAll(), fetchMarket()])
+    setStatus(t('settings.plugins.refresh') + ' ✓', true)
+  } catch {
+    setStatus('Refresh failed', false)
   } finally {
-    unmarkBusy('dev-link')
+    unmarkBusy('refresh')
   }
 }
+
 </script>
 
 <style scoped>
@@ -408,6 +432,45 @@ async function onDevLink() {
   align-items: center;
   gap: 8px;
   margin-left: auto;
+}
+.plugin-dir-install {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0 12px;
+}
+.plugin-browse-btn {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 10px;
+  font-size: 12px;
+  color: var(--fg-muted, #858585);
+  background: var(--bg-input, #2a2a2c);
+  border: 1px solid var(--border, #444);
+  border-radius: 5px;
+  cursor: pointer;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s;
+}
+.plugin-browse-btn:hover {
+  color: var(--fg, #cccccc);
+  border-color: var(--fg-muted, #858585);
+}
+.plugin-dev-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-muted, #888);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+.plugin-dev-toggle input[type="checkbox"] {
+  accent-color: var(--accent, #8a8a8a);
 }
 .plugin-install-btn {
   display: inline-flex;
@@ -527,6 +590,10 @@ async function onDevLink() {
 .plugin-badge.error {
   color: var(--color-red, #ef4444);
   background: rgba(239, 68, 68, 0.15);
+}
+.plugin-badge.dev {
+  color: var(--color-orange, #f59e0b);
+  background: rgba(245, 158, 11, 0.15);
 }
 .plugin-card-desc {
   margin: 6px 0 10px;

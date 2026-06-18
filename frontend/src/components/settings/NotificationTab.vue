@@ -11,25 +11,30 @@
     </section>
 
     <section class="settings-section">
-      <h3 class="section-title">{{ t('notification.triggers') }}</h3>
-      <div class="settings-row">
-        <label>Terminal Bell (\a)</label>
-        <label class="toggle">
-          <input type="checkbox" v-model="cfg.bell.enabled" @change="saveSettings()" />
-          <span class="toggle-track"><span class="toggle-thumb"></span></span>
-        </label>
-      </div>
-      <div class="settings-row sub">
-        <label>{{ t('notification.debounce') }}</label>
-        <input type="number" class="num-input" v-model.number="cfg.bell.debounce_ms" min="0" max="5000" step="50" @change="saveSettings()" /> ms
-      </div>
-      <div class="settings-row">
-        <label>OSC {{ t('notification.oscNotify') }}</label>
-        <label class="toggle">
-          <input type="checkbox" v-model="cfg.osc_notify" @change="saveSettings()" />
-          <span class="toggle-track"><span class="toggle-thumb"></span></span>
-        </label>
-      </div>
+      <h3 class="section-title section-title--collapsible" @click="triggersOpen = !triggersOpen">
+        <span class="chevron" :class="{ open: triggersOpen }">&#x25B8;</span>
+        {{ t('notification.triggers') }}
+      </h3>
+      <template v-if="triggersOpen">
+        <div class="settings-row">
+          <label>Terminal Bell (\a)</label>
+          <label class="toggle">
+            <input type="checkbox" v-model="cfg.bell.enabled" @change="saveSettings()" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+        <div class="settings-row sub">
+          <label>{{ t('notification.debounce') }}</label>
+          <input type="number" class="num-input" v-model.number="cfg.bell.debounce_ms" min="0" max="5000" step="50" @change="saveSettings()" /> ms
+        </div>
+        <div class="settings-row">
+          <label>OSC {{ t('notification.oscNotify') }}</label>
+          <label class="toggle">
+            <input type="checkbox" v-model="cfg.osc_notify" @change="saveSettings()" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+      </template>
     </section>
 
     <section class="settings-section">
@@ -155,6 +160,7 @@ import { getApiBase, authFetch } from '../../composables/apiBase'
 const { settings, saveSettings } = useSettings()
 const { t } = useI18n()
 
+const triggersOpen = ref(true)
 const cfg = computed(() => settings.notification)
 const builtinNames = getBuiltinSoundNames()
 const soundTypes: NotificationType[] = ['info', 'success', 'warning', 'error', 'urgent']
@@ -251,6 +257,24 @@ async function sendTest() {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin: 0 0 10px;
+}
+.section-title--collapsible {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.section-title--collapsible:hover {
+  color: var(--fg, #ccc);
+}
+.chevron {
+  font-size: 10px;
+  transition: transform 0.15s ease;
+  display: inline-block;
+}
+.chevron.open {
+  transform: rotate(90deg);
 }
 .sub {
   padding-left: 16px;

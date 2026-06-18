@@ -120,6 +120,7 @@ export interface LoadedPlugin {
   exports: PluginExports | null
   state: 'active' | 'error'
   error?: string
+  isDevLink?: boolean
 }
 
 // ─── Module Scope State ───────────────────────────────────────────────────────
@@ -416,23 +417,28 @@ export function usePluginLoader() {
         console.warn('[plugin] GET /api/plugins returned', res.status)
         return
       }
-      const list: PluginManifest[] = await res.json()
+      const list: Array<{ manifest: PluginManifest; isDevLink?: boolean; state?: string; error?: string }> = await res.json()
 
-      for (const manifest of list) {
-        if (loadedPlugins.has(manifest.id)) {
+      for (const item of list) {
+        const id = item.manifest.id
+        if (loadedPlugins.has(id)) {
+          loadedPlugins.get(id)!.isDevLink = item.isDevLink
           continue
         }
         try {
-          await loadPlugin(manifest.id)
+          await loadPlugin(id)
+          const lp = loadedPlugins.get(id)
+          if (lp) lp.isDevLink = item.isDevLink
         } catch (e: any) {
-          console.error(`[plugin] loadAll: failed ${manifest.id}:`, e.message)
-          loadedPlugins.set(manifest.id, {
-            id: manifest.id,
-            manifest,
+          console.error(`[plugin] loadAll: failed ${id}:`, e.message)
+          loadedPlugins.set(id, {
+            id,
+            manifest: item.manifest,
             module: { activate() { return {} } },
             exports: null,
             state: 'error',
             error: e.message,
+            isDevLink: item.isDevLink,
           })
         }
       }
@@ -474,6 +480,7 @@ export function usePluginLoader() {
       description: p.manifest.description,
       icon: p.manifest.icon,
       state: p.state,
+      isDevLink: p.isDevLink,
     }))
   })
 
