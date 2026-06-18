@@ -3,11 +3,41 @@
     <div v-if="visible" class="bookmarks-backdrop" @click.self="close" @keydown.escape="close">
       <div class="bookmarks-panel">
         <div class="bookmarks-header">
-          <h2>Saved Commands</h2>
-          <button class="bookmarks-close" @click="close">✕</button>
+          <h2>{{ t('bookmarks.title') }}</h2>
+          <div class="bookmarks-header-actions">
+            <button class="bookmarks-add-toggle" @click="toggleAddMode" :class="{ active: addMode }">
+              <Plus :size="14" />
+            </button>
+            <button class="bookmarks-close" @click="close">
+              <X :size="14" />
+            </button>
+          </div>
         </div>
 
         <div class="bookmarks-body">
+          <!-- Add form (collapsible) -->
+          <div v-if="addMode" class="bookmark-add-form">
+            <input
+              ref="nameInputRef"
+              v-model="newName"
+              :placeholder="t('bookmarks.name')"
+              class="bookmark-input"
+              @keydown.enter="commandInputRef?.focus()"
+            />
+            <input
+              ref="commandInputRef"
+              v-model="newCommand"
+              :placeholder="t('bookmarks.command')"
+              class="bookmark-input wide"
+              @keydown.meta.enter="addBookmark"
+              @keydown.ctrl.enter="addBookmark"
+            />
+            <input v-model="newGroup" :placeholder="t('bookmarks.group')" class="bookmark-input short" />
+            <button class="bookmark-add-btn" @click="addBookmark" :disabled="!newCommand.trim()">
+              <Check :size="14" />
+            </button>
+          </div>
+
           <!-- Group filter -->
           <div v-if="groups.length > 1" class="bookmarks-groups">
             <button
@@ -19,24 +49,30 @@
             >{{ g }}</button>
           </div>
 
-          <div v-if="filteredBookmarks.length === 0" class="bookmarks-empty">
-            No saved commands yet
+          <div v-if="filteredBookmarks.length === 0 && !addMode" class="bookmarks-empty">
+            {{ t('bookmarks.empty') }}
           </div>
 
-          <div v-for="(bm, i) in filteredBookmarks" :key="bm.id" class="bookmark-item">
+          <div
+            v-for="(bm, i) in filteredBookmarks"
+            :key="bm.id"
+            class="bookmark-item"
+            :class="{ 'drag-over-top': dropTarget === bm.id && dropPos === 'top', 'drag-over-bottom': dropTarget === bm.id && dropPos === 'bottom', dragging: dragId === bm.id }"
+            draggable="true"
+            @dragstart="onDragStart($event, bm.id)"
+            @dragover.prevent="onDragOver($event, bm.id)"
+            @dragleave="onDragLeave(bm.id)"
+            @drop.prevent="onDrop(bm.id)"
+            @dragend="onDragEnd"
+          >
+            <GripVertical :size="14" class="bookmark-grip" />
             <div class="bookmark-info" @click="sendBookmark(bm)">
               <span class="bookmark-name">{{ bm.name || bm.command }}</span>
               <span class="bookmark-cmd">{{ bm.command }}</span>
             </div>
-            <button class="bookmark-del" @click="removeBookmark(bm.id)">✕</button>
-          </div>
-
-          <!-- Add form -->
-          <div class="bookmark-add-form">
-            <input v-model="newName" placeholder="Name" class="bookmark-input" />
-            <input v-model="newCommand" placeholder="Command" class="bookmark-input wide" />
-            <input v-model="newGroup" placeholder="Group" class="bookmark-input short" />
-            <button class="bookmark-add-btn" @click="addBookmark">+</button>
+            <button class="bookmark-del" @click="removeBookmark(bm.id)">
+              <X :size="12" />
+            </button>
           </div>
         </div>
       </div>
@@ -45,8 +81,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, nextTick } from 'vue'
+import { Plus, X, Check, GripVertical } from 'lucide-vue-next'
 import { useSettings } from '../../composables/useSettings'
+import { useI18n } from '../../composables/useI18n'
 
 const props = defineProps<{
   getSendFn: () => ((data: string) => void) | null
@@ -55,10 +93,19 @@ const props = defineProps<{
 
 const visible = ref(false)
 const activeGroup = ref('All')
+const addMode = ref(false)
 const newName = ref('')
 const newCommand = ref('')
 const newGroup = ref('')
+const nameInputRef = ref<HTMLInputElement>()
+const commandInputRef = ref<HTMLInputElement>()
 
+// Drag state
+const dragId = ref<string | null>(null)
+const dropTarget = ref<string | null>(null)
+const dropPos = ref<'top' | 'bottom' | null>(null)
+
+const { t } = useI18n()
 const { settings, saveSettings } = useSettings()
 
 const groups = computed(() => {
@@ -74,8 +121,20 @@ const filteredBookmarks = computed(() => {
   return settings.bookmarks.filter((b) => b.group === activeGroup.value)
 })
 
-function open() { visible.value = true }
-function close() { visible.value = false }
+function open() {
+  visible.value = true
+  addMode.value = false
+}
+function close() {
+  visible.value = false
+  addMode.value = false
+}
+function toggleAddMode() {
+  addMode.value = !addMode.value
+  if (addMode.value) {
+    nextTick(() => nameInputRef.value?.focus())
+  }
+}
 
 async function sendBookmark(bm: { command: string }) {
   let send = props.getSendFn()
@@ -102,6 +161,7 @@ function addBookmark() {
   newName.value = ''
   newCommand.value = ''
   newGroup.value = ''
+  addMode.value = false
   saveSettings()
 }
 
@@ -111,6 +171,51 @@ function removeBookmark(id: string) {
     settings.bookmarks.splice(idx, 1)
     saveSettings()
   }
+}
+
+function onDragStart(e: DragEvent, id: string) {
+  dragId.value = id
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+  }
+}
+
+function onDragOver(e: DragEvent, id: string) {
+  if (!dragId.value || dragId.value === id) return
+  dropTarget.value = id
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  dropPos.value = e.clientY < rect.top + rect.height / 2 ? 'top' : 'bottom'
+}
+
+function onDragLeave(id: string) {
+  if (dropTarget.value === id) {
+    dropTarget.value = null
+    dropPos.value = null
+  }
+}
+
+function onDrop(targetId: string) {
+  if (!dragId.value || dragId.value === targetId) return
+  const fromIdx = settings.bookmarks.findIndex((b) => b.id === dragId.value)
+  const toIdx = settings.bookmarks.findIndex((b) => b.id === targetId)
+  if (fromIdx === -1 || toIdx === -1) return
+
+  const [item] = settings.bookmarks.splice(fromIdx, 1)
+  let insertIdx: number
+  if (fromIdx < toIdx) {
+    insertIdx = dropPos.value === 'bottom' ? toIdx : toIdx - 1
+  } else {
+    insertIdx = dropPos.value === 'bottom' ? toIdx + 1 : toIdx
+  }
+  settings.bookmarks.splice(insertIdx, 0, item)
+  saveSettings()
+  onDragEnd()
+}
+
+function onDragEnd() {
+  dragId.value = null
+  dropTarget.value = null
+  dropPos.value = null
 }
 
 defineExpose({ open, close })
@@ -152,16 +257,29 @@ defineExpose({ open, close })
   font-weight: 600;
   color: var(--fg-bright);
 }
+.bookmarks-header-actions {
+  display: flex;
+  gap: 4px;
+}
+.bookmarks-add-toggle,
 .bookmarks-close {
   width: 28px;
   height: 28px;
+  border: none;
+  background: none;
   border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--fg-muted);
+  cursor: pointer;
 }
+.bookmarks-add-toggle:hover,
 .bookmarks-close:hover { background: rgba(255,255,255,0.1); }
+.bookmarks-add-toggle.active {
+  background: var(--accent, #8A8A8A);
+  color: #fff;
+}
 
 .bookmarks-body {
   flex: 1;
@@ -205,9 +323,33 @@ defineExpose({ open, close })
   border-radius: 6px;
   cursor: pointer;
   margin-bottom: 4px;
+  border: 1px solid transparent;
+  transition: border-color 0.1s;
 }
 .bookmark-item:hover {
   background: rgba(255,255,255,0.05);
+}
+.bookmark-item.dragging {
+  opacity: 0.4;
+}
+.bookmark-item.drag-over-top {
+  border-top-color: var(--accent, #007acc);
+}
+.bookmark-item.drag-over-bottom {
+  border-bottom-color: var(--accent, #007acc);
+}
+
+.bookmark-grip {
+  color: var(--fg-muted, #666);
+  cursor: grab;
+  flex-shrink: 0;
+  opacity: 0.5;
+}
+.bookmark-grip:hover {
+  opacity: 1;
+}
+.bookmark-item:active .bookmark-grip {
+  cursor: grabbing;
 }
 .bookmark-info {
   flex: 1;
@@ -233,13 +375,15 @@ defineExpose({ open, close })
 .bookmark-del {
   width: 22px;
   height: 22px;
+  border: none;
+  background: none;
   border-radius: 50%;
-  font-size: 11px;
   color: var(--fg-muted);
   display: flex;
   align-items: center;
   justify-content: center;
   opacity: 0;
+  cursor: pointer;
 }
 .bookmark-item:hover .bookmark-del { opacity: 1; }
 .bookmark-del:hover { background: rgba(255,100,100,0.2); color: #ff6b6b; }
@@ -247,9 +391,9 @@ defineExpose({ open, close })
 .bookmark-add-form {
   display: flex;
   gap: 6px;
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border, #333);
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border, #333);
 }
 .bookmark-input {
   flex: 1;
@@ -260,17 +404,27 @@ defineExpose({ open, close })
   padding: 6px 8px;
   font-size: 12px;
   min-width: 0;
+  outline: none;
+}
+.bookmark-input:focus {
+  border-color: var(--accent, #007acc);
 }
 .bookmark-input.wide { flex: 2; }
 .bookmark-input.short { flex: 0.7; }
 .bookmark-add-btn {
   width: 32px;
+  height: 30px;
+  border: none;
   border-radius: 4px;
-  background: var(--accent);
+  background: var(--accent, #007acc);
   color: #fff;
-  font-size: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
+  cursor: pointer;
+}
+.bookmark-add-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 </style>

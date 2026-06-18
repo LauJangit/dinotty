@@ -95,7 +95,7 @@
       :pane-id="activePaneId ?? ''"
       :get-send-fn="getSendFn"
       @update:visible="(v: boolean) => kbVisible = v"
-      @bookmarks="openQuickPicks()"
+      @bookmarks="bookmarksRef?.open()"
     />
 
     <KbToggleButton
@@ -163,7 +163,7 @@ const { settings: appSettings, loadSettings } = useSettings()
 const { t } = useI18n()
 const { getBinding, formatBinding } = useKeybindings()
 const notif = useNotification()
-const { loadedPlugins, loadAll, getPluginContext, pluginList, allCommands, allQuickPicks } = usePluginLoader()
+const { loadedPlugins, loadAll, getPluginContext, pluginList, allCommands } = usePluginLoader()
 
 const isLandscape = ref(window.innerWidth > window.innerHeight)
 
@@ -765,41 +765,13 @@ const paletteCommands = computed<Command[]>(() => {
   return base
 })
 
-async function openQuickPicks() {
-  const picks = allQuickPicks.value
-  if (picks.length === 0) {
-    bookmarksRef.value?.open()
-    return
-  }
-
-  const commands: Command[] = []
-  for (const pick of picks) {
-    try {
-      const items = await pick.options.items()
-      for (const item of items) {
-        commands.push({
-          icon: item.icon || '★',
-          title: item.label,
-          subtitle: item.detail,
-          action: item.action,
-        })
-      }
-    } catch { /* skip broken quick pick */ }
-  }
-  if (commands.length > 0) {
-    paletteRef.value?.openWithItems(commands)
-  } else {
-    bookmarksRef.value?.open()
-  }
-}
-
 function onGlobalKeydown(e: KeyboardEvent) {
   const cmd = e.metaKey || e.ctrlKey
   if (!cmd) return
 
   const keyActions: Record<string, () => void> = {
     togglePalette: () => paletteRef.value?.toggle(),
-    openBookmarks: () => openQuickPicks(),
+    openBookmarks: () => bookmarksRef.value?.open(),
     newTab: () => newTab(),
     closeTab: async () => {
       if (!activePaneId.value) return
