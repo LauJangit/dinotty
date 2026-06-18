@@ -929,7 +929,7 @@ dependencies = [
 
 [[package]]
 name = "dinotty-desktop"
-version = "0.10.6"
+version = "0.10.7"
 dependencies = [
  "axum 0.7.9",
  "dinotty-server",
@@ -954,7 +954,7 @@ dependencies = [
 
 [[package]]
 name = "dinotty-server"
-version = "0.10.6"
+version = "0.10.7"
 dependencies = [
  "axum 0.7.9",
  "axum-extra",
