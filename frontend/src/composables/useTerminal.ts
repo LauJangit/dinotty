@@ -285,6 +285,18 @@ export class TerminalInstance {
     }
   }
 
+  getSelection(): string {
+    return this.xterm?.getSelection() ?? ''
+  }
+
+  selectAll() {
+    this.xterm?.selectAll()
+  }
+
+  pasteText(text: string) {
+    this.sendData(text)
+  }
+
   destroy() {
     if (this._destroyed) return
     this._destroyed = true
@@ -499,7 +511,7 @@ export class TerminalInstance {
     const heightChanged = rows !== this._lastRows
     this._lastCols = cols
     this._lastRows = rows
-    if (heightChanged && !this._isMouseModeEnabled()) {
+    if (heightChanged && !this.isMouseModeEnabled()) {
       this.xterm.scrollToBottom()
     }
     const resizeMsg: ClientMsg = { type: 'resize', cols, rows }
@@ -700,7 +712,7 @@ export class TerminalInstance {
   private _sendWheelEvent(target: HTMLElement, deltaY: number, clientX: number, clientY: number) {
     if (!this.xterm || deltaY === 0) return
 
-    if (this._isMouseModeEnabled()) {
+    if (this.isMouseModeEnabled()) {
       // App has mouse tracking active (e.g. Codex, Claude Code TUI):
       // let xterm convert the wheel event into escape sequences for the app.
       // Do NOT call scrollLines() — that shifts xterm's viewport into the main-screen
@@ -725,7 +737,7 @@ export class TerminalInstance {
     }
   }
 
-  private _isMouseModeEnabled(): boolean {
+  isMouseModeEnabled(): boolean {
     // Detects DECSET mouse tracking modes (1000/1002/1003/…) via xterm.js internal API.
     // Both paths access _core which is private — if xterm.js is upgraded and the structure
     // changes, we warn once so the breakage is visible rather than silently falling back.
