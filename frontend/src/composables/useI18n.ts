@@ -283,7 +283,7 @@ const messages: Record<Locale, Record<string, string>> = {
       'Show a dialog before closing a tab that may run an AI agent',
     'settings.behavior': 'Behavior',
     'confirm.closeTabTitle': 'Close session?',
-    'confirm.closeTabMessage': 'Closing this session will terminate a possibly running AI agent. Proceed to',
+    'confirm.closeTabMessage': 'Closing this session will terminate a possibly running AI agent. Close',
     'confirm.closeTabConfirm': 'Close',
     'confirm.closeTabCancel': 'Cancel',
     'settings.about.checkForUpdates': 'Check for updates',

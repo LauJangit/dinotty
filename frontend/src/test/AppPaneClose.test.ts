@@ -272,4 +272,36 @@ describe('App.vue - onClosePane routes through confirmation gate', () => {
 
     wrapper.unmount()
   })
+
+  it('bypass with setting off + closePane returns false → falls back to closeTab', async () => {
+    settings.confirm_before_close_tab = false
+    mocks.closePane.mockResolvedValue(false)
+
+    const wrapper = await mountWithTabs()
+    const splitContainer = wrapper.findComponent(SplitContainerStub)
+    await splitContainer.vm.$emit('close', 'pane-1')
+    await nextTick()
+
+    // closePane should be called directly (bypass)
+    expect(mocks.closePane).toHaveBeenCalledWith('pane-1')
+    // Since closePane returned false, closeTab should be the fallback
+    expect(mocks.apiCloseTab).toHaveBeenCalled()
+
+    wrapper.unmount()
+  })
+
+  it('bypass with setting off + closePane returns true → does NOT call closeTab', async () => {
+    settings.confirm_before_close_tab = false
+    mocks.closePane.mockResolvedValue(true)
+
+    const wrapper = await mountWithTabs()
+    const splitContainer = wrapper.findComponent(SplitContainerStub)
+    await splitContainer.vm.$emit('close', 'pane-1')
+    await nextTick()
+
+    expect(mocks.closePane).toHaveBeenCalledWith('pane-1')
+    expect(mocks.apiCloseTab).not.toHaveBeenCalled()
+
+    wrapper.unmount()
+  })
 })

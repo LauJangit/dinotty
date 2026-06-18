@@ -115,7 +115,7 @@ describe('useI18n - confirm-before-close-tab strings', () => {
       [
         'en',
         'confirm.closeTabMessage',
-        'Closing this session will terminate a possibly running AI agent. Proceed to',
+        'Closing this session will terminate a possibly running AI agent. Close',
       ],
       ['en', 'confirm.closeTabConfirm', 'Close'],
       ['en', 'confirm.closeTabCancel', 'Cancel'],

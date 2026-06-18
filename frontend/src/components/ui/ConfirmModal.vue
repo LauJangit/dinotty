@@ -8,7 +8,6 @@
         </div>
         <div class="confirm-body">
           <p class="confirm-message">{{ message }}</p>
-          <p v-if="target" class="confirm-target">{{ target }}</p>
         </div>
         <div class="confirm-footer">
           <button class="confirm-btn cancel" @click="onCancel">{{ cancelText }}</button>
@@ -26,7 +25,6 @@ const props = defineProps<{
   visible: boolean
   title: string
   message: string
-  target?: string
   confirmText: string
   cancelText: string
 }>()
@@ -114,17 +112,6 @@ onUnmounted(() => window.removeEventListener('keydown', onKey, true))
   font-size: 13px;
   color: var(--fg);
   line-height: 1.5;
-}
-
-.confirm-target {
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--accent);
-  word-break: break-all;
-  font-family: var(--font-mono);
-  background: var(--bg-input);
-  padding: 6px 8px;
-  border-radius: 4px;
 }
 
 .confirm-footer {

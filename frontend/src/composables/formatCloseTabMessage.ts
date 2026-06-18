@@ -1,14 +1,10 @@
-// Composable extracted for testability (Task 5, openspec change `confirm-before-close-tab`).
-// `t()` does not support {var} interpolation, so we inline the title into the message.
-// Spec: openspec/changes/confirm-before-close-tab/design.md §E9 fallback.
-
-export type Locale = 'en' | 'zh'
+import type { Locale } from './useI18n'
 
 /**
  * Build the modal message for "close this tab" confirmation.
  * - When `title` is empty, returns the base message unmodified.
- * - English locale wraps the title in double quotes:  `... "title"?`
- * - Chinese locale wraps the title in CJK brackets:     `...「title」？`
+ * - English locale wraps the title in single quotes:  `... 'title'?`
+ * - Chinese locale wraps the title in CJK brackets:   `...「title」？`
  */
 export function formatCloseTabMessage(
   base: string,
@@ -17,6 +13,6 @@ export function formatCloseTabMessage(
 ): string {
   if (!title) return base
   return locale === 'en'
-    ? `${base} "${title}"?`
+    ? `${base} '${title}'?`
     : `${base}「${title}」？`
 }

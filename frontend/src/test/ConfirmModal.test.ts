@@ -10,7 +10,6 @@ describe('ConfirmModal Esc 键支持', () => {
         visible: true,
         title: '关闭标签页',
         message: '是否关闭此标签页?',
-        target: 'tab-1',
         confirmText: '关闭',
         cancelText: '取消',
       },
