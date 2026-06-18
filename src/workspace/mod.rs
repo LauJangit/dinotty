@@ -208,10 +208,10 @@ pub async fn workspace_list(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<WorkspaceListQuery>,
 ) -> impl IntoResponse {
-    let root = if q.root.as_deref() == Some("/") {
-        PathBuf::from("/")
-    } else {
-        try_res!(get_root(&manager, &q.pane_id))
+    let root = match q.root.as_deref() {
+        Some("/") => PathBuf::from("/"),
+        Some("~") => dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")),
+        _ => try_res!(get_root(&manager, &q.pane_id)),
     };
     let target = try_res!(normalize_join(&root, &q.path));
     if !target.exists() {

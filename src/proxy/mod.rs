@@ -53,6 +53,7 @@ static HTTP_CLIENT_STREAMING: LazyLock<Client> = LazyLock::new(|| {
 pub static HTTP_CLIENT_FOLLOW_REDIRECTS: LazyLock<Client> = LazyLock::new(|| {
     Client::builder()
         .redirect(reqwest::redirect::Policy::limited(10))
+        .no_proxy()
         .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .pool_idle_timeout(Duration::from_secs(90))
         .pool_max_idle_per_host(10)
