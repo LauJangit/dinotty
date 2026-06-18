@@ -20,7 +20,9 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{
+import { onMounted, onUnmounted } from 'vue'
+
+const props = defineProps<{
   visible: boolean
   title: string
   message: string
@@ -41,6 +43,16 @@ function onConfirm() {
 function onCancel() {
   emit('cancel')
 }
+
+function onKey(e: KeyboardEvent) {
+  if (e.key === 'Escape' && props.visible) {
+    e.preventDefault()
+    onCancel()
+  }
+}
+
+onMounted(() => window.addEventListener('keydown', onKey, true))
+onUnmounted(() => window.removeEventListener('keydown', onKey, true))
 </script>
 
 <style scoped>
