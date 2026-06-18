@@ -11,15 +11,6 @@
     </section>
 
     <section class="settings-section">
-      <h3>{{ t('settings.theme') }}</h3>
-      <div class="settings-row">
-        <select v-model="settings.theme.preset" class="shortcut-input" style="flex:1" @change="selectTheme">
-          <option v-for="th in themes" :key="th.name" :value="th.name">{{ themeLabel(th.name) }}</option>
-        </select>
-      </div>
-    </section>
-
-    <section class="settings-section">
       <h3>{{ t('settings.panelPosition') }}</h3>
       <div class="settings-row">
         <select v-model="settings.panel_position" class="shortcut-input" style="flex:1" @change="saveSettings()">
@@ -146,17 +137,11 @@ import QRCode from 'qrcode'
 import { Eye, EyeOff, Copy, Check, Pencil, RefreshCw, Save, X } from 'lucide-vue-next'
 import { useSettings } from '../../composables/useSettings'
 import { useI18n } from '../../composables/useI18n'
-import { themes } from '../../themes'
 import { copyToClipboard } from '../../utils/clipboard'
 import { apiUrl, authFetch, getAuthToken, setAuthToken, getApiBase, fetchServerToken } from '../../composables/apiBase'
 
-const { settings, saveSettings, applyCurrentTheme } = useSettings()
-const { t, themeLabel } = useI18n()
-
-function selectTheme() {
-  applyCurrentTheme()
-  saveSettings()
-}
+const { settings, saveSettings } = useSettings()
+const { t } = useI18n()
 
 const accessUrl = ref('')
 const copied = ref(false)
