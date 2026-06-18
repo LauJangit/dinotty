@@ -81,11 +81,12 @@ import { useSettings } from '../../composables/useSettings'
 import { useI18n } from '../../composables/useI18n'
 import { themes, getThemeByName } from '../../themes'
 
-const { settings, applyCurrentTheme } = useSettings()
+const { settings, saveSettings, applyCurrentTheme } = useSettings()
 const { t, themeLabel } = useI18n()
 
 function selectTheme() {
   applyCurrentTheme()
+  saveSettings()
 }
 
 const ansiNames = ['Black', 'Red', 'Green', 'Yellow', 'Blue', 'Magenta', 'Cyan', 'White',
@@ -139,6 +140,7 @@ function setCustomColor(which: 'fg' | 'bg' | 'cursor', e: Event) {
   else if (which === 'bg') custom.background = val
   else custom.cursor = val
   applyCurrentTheme()
+  saveSettings()
 }
 
 function setAnsiColor(index: number, e: Event) {
@@ -147,10 +149,12 @@ function setAnsiColor(index: number, e: Event) {
   if (!custom.ansi) custom.ansi = []
   custom.ansi[index] = val
   applyCurrentTheme()
+  saveSettings()
 }
 
 function resetCustomColors() {
   settings.theme.custom = null
   applyCurrentTheme()
+  saveSettings()
 }
 </script>

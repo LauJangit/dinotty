@@ -4,7 +4,7 @@
       <div class="chart-header">
         <h3>{{ t('settings.monitor.cpuChart') }}</h3>
         <label class="toggle">
-          <input type="checkbox" v-model="settings.monitor.cpu" />
+          <input type="checkbox" v-model="settings.monitor.cpu" @change="saveSettings()" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
@@ -17,7 +17,7 @@
       <div class="chart-header">
         <h3>{{ t('settings.monitor.memChart') }}</h3>
         <label class="toggle">
-          <input type="checkbox" v-model="settings.monitor.memory" />
+          <input type="checkbox" v-model="settings.monitor.memory" @change="saveSettings()" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
@@ -30,7 +30,7 @@
       <div class="chart-header">
         <h3>{{ t('settings.monitor.diskLabel') }}</h3>
         <label class="toggle">
-          <input type="checkbox" v-model="settings.monitor.disk" />
+          <input type="checkbox" v-model="settings.monitor.disk" @change="saveSettings()" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
@@ -47,7 +47,7 @@
       <div class="chart-header">
         <h3>{{ t('settings.monitor.netChart') }}</h3>
         <label class="toggle">
-          <input type="checkbox" v-model="settings.monitor.network" />
+          <input type="checkbox" v-model="settings.monitor.network" @change="saveSettings()" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
@@ -77,7 +77,7 @@ import { cpuHistory, memHistory, netRxHistory, netTxHistory } from '../../compos
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip)
 
-const { settings } = useSettings()
+const { settings, saveSettings } = useSettings()
 const { t } = useI18n()
 const data = monitorData
 

@@ -109,7 +109,7 @@ import { ref, computed, nextTick, onBeforeUnmount } from 'vue'
 import { useSettings, notifyTextChange } from '../../composables/useSettings'
 import { useI18n } from '../../composables/useI18n'
 
-const { settings } = useSettings()
+const { settings, saveSettings } = useSettings()
 const { t } = useI18n()
 
 const fontFamilies = [
@@ -189,6 +189,7 @@ function onTextSettingChange() {
   if (textChangeTimer) clearTimeout(textChangeTimer)
   textChangeTimer = setTimeout(() => {
     notifyTextChange()
+    saveSettings()
     textChangeTimer = null
   }, 100)
 }

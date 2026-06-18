@@ -68,8 +68,8 @@ export class TerminalInstance {
   onShellInfo: ((shell: string) => void) | null = null
   onConnect: (() => void) | null = null
   onDisconnect: (() => void) | null = null
-  onFileClick: ((path: string) => void) | null = null
-  onPreviewLink: ((url: string) => void) | null = null
+  onFileClick: ((path: string, x?: number, y?: number) => void) | null = null
+  onPreviewLink: ((url: string, x?: number, y?: number) => void) | null = null
   onRawOutput: ((data: string) => void) | null = null
   onInput: ((data: string) => void) | null = null
 
@@ -190,7 +190,7 @@ export class TerminalInstance {
           links.push({
             range: { start: { x: startX + 1, y: bufferLineNumber }, end: { x: startX + path.length + 1, y: bufferLineNumber } },
             text: path,
-            activate: () => { this.onFileClick?.(path) },
+            activate: (event: MouseEvent) => { this.onFileClick?.(path, event.clientX, event.clientY) },
           })
         }
         callback(links.length > 0 ? links : undefined)
@@ -213,9 +213,9 @@ export class TerminalInstance {
           links.push({
             range: { start: { x: startX + 1, y: bufferLineNumber }, end: { x: startX + raw.length + 1, y: bufferLineNumber } },
             text: uri,
-            activate: () => {
+            activate: (event: MouseEvent) => {
               if (this.onPreviewLink) {
-                this.onPreviewLink(uri)
+                this.onPreviewLink(uri, event.clientX, event.clientY)
               } else {
                 window.open(uri, '_blank')
               }

@@ -15,7 +15,10 @@ export interface SettingsData {
     } | null
   }
   background: {
+    mode: string
     color: string | null
+    opacity: number
+    has_image: boolean
   }
   text: TextConfig
   bookmarks: CommandBookmark[]
@@ -127,7 +130,7 @@ export const DEFAULT_ACTION_KEYBOARD: ActionKeyboardConfig = {
 
 export const settings = reactive<SettingsData>({
   theme: { preset: 'dark', custom: null },
-  background: { color: null },
+  background: { mode: 'solid', color: null, opacity: 1.0, has_image: false },
   text: {
     font_size: 14,
     font_family: '',
@@ -225,7 +228,9 @@ async function loadSettings() {
         localStorage.setItem('dinotty_action_keyboard', JSON.stringify(settings.action_keyboard))
       }
     }
-  } catch {}
+  } catch (e) {
+    console.error('[settings] load failed:', e)
+  }
 }
 
 async function saveSettings() {
@@ -237,12 +242,17 @@ async function saveSettings() {
       localStorage.removeItem('dinotty_action_keyboard')
     }
     await getApiBase()
-    await authFetch(apiUrl('/api/settings'), {
+    const res = await authFetch(apiUrl('/api/settings'), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings),
     })
-  } catch {}
+    if (!res.ok) {
+      console.error('[settings] save failed:', res.status, await res.text())
+    }
+  } catch (e) {
+    console.error('[settings] save failed:', e)
+  }
 }
 
 const themeChangeListeners = new Set<(xtermTheme: ReturnType<typeof getXtermTheme>) => void>()

@@ -10,33 +10,25 @@
     <div ref="wrapperRef" class="terminal-pane"></div>
     <SearchBar v-if="searchVisible && terminal" :terminal="terminal" @close="searchVisible = false" />
   </div>
-  <ConfirmModal
-    :visible="confirmVisible"
-    :title="confirmTitle"
-    :message="confirmMessage"
-    :target="confirmTarget"
-    :confirm-text="confirmBtnText"
-    :cancel-text="t('terminal.cancel')"
-    @confirm="onConfirm"
-    @cancel="confirmVisible = false"
-  />
   <TerminalContextMenu
     :visible="menuVisible"
     :x="menuX"
     :y="menuY"
     :selected-text="menuSelectedText"
+    :link-type="linkType"
+    :link-target="linkTarget"
     @close="closeMenu"
     @copy="onMenuCopy"
     @paste="onMenuPaste"
     @select-all="onMenuSelectAll"
+    @open-file="onMenuOpenFile"
+    @open-link="onMenuOpenLink"
   />
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { TerminalInstance } from '../../composables/useTerminal'
-import { useI18n } from '../../composables/useI18n'
-import ConfirmModal from '../ui/ConfirmModal.vue'
 import SearchBar from './SearchBar.vue'
 import TerminalContextMenu from './TerminalContextMenu.vue'
 
@@ -55,7 +47,6 @@ const emit = defineEmits<{
   input: [data: string]
 }>()
 
-const { t } = useI18n()
 const wrapperRef = ref<HTMLElement>()
 let terminal: TerminalInstance | null = null
 const searchVisible = ref(false)
@@ -72,14 +63,9 @@ let longPressStartX = 0
 let longPressStartY = 0
 let longPressFired = false
 
-const confirmVisible = ref(false)
-const confirmTitle = ref('')
-const confirmMessage = ref('')
-const confirmTarget = ref('')
-const confirmBtnText = ref('')
-let confirmType: 'file' | 'link' = 'file'
-let pendingPath = ''
-let pendingUrl = ''
+// Link context menu state
+const linkType = ref<'file' | 'link'>()
+const linkTarget = ref<string>()
 
 function getTerminal() {
   return terminal
@@ -117,6 +103,8 @@ function onContextMenu(e: MouseEvent) {
 
 function closeMenu() {
   menuVisible.value = false
+  linkType.value = undefined
+  linkTarget.value = undefined
 }
 
 function onMenuCopy() {
@@ -129,6 +117,14 @@ async function onMenuPaste(text: string) {
 
 function onMenuSelectAll() {
   terminal?.selectAll()
+}
+
+function onMenuOpenFile(path: string) {
+  emit('fileClick', path)
+}
+
+function onMenuOpenLink(url: string) {
+  emit('previewLink', url)
 }
 
 // Mobile long-press to open context menu
@@ -178,15 +174,6 @@ function onTouchCancel() {
   longPressFired = false
 }
 
-function onConfirm() {
-  confirmVisible.value = false
-  if (confirmType === 'file') {
-    emit('fileClick', pendingPath)
-  } else {
-    emit('previewLink', pendingUrl)
-  }
-}
-
 onMounted(() => {
   terminal = new TerminalInstance(props.paneId)
   terminal.onTitleChange = (tv) => emit('titleChange', tv)
@@ -194,25 +181,27 @@ onMounted(() => {
   terminal.onConnect = () => emit('connect')
   terminal.onDisconnect = () => emit('disconnect')
   terminal.onInput = (data) => emit('input', data)
-  terminal.onFileClick = (path) => {
+  terminal.onFileClick = (path, x, y) => {
     emit('linkActivate')
-    confirmType = 'file'
-    pendingPath = path
-    confirmTitle.value = t('terminal.confirmOpenFileTitle')
-    confirmMessage.value = t('terminal.confirmOpenFileMessage')
-    confirmTarget.value = path
-    confirmBtnText.value = t('terminal.confirmOpenFile')
-    confirmVisible.value = true
+    linkType.value = 'file'
+    linkTarget.value = path
+    if (x != null && y != null) {
+      menuX.value = x
+      menuY.value = y
+    }
+    menuSelectedText.value = ''
+    menuVisible.value = true
   }
-  terminal.onPreviewLink = (url) => {
+  terminal.onPreviewLink = (url, x, y) => {
     emit('linkActivate')
-    confirmType = 'link'
-    pendingUrl = url
-    confirmTitle.value = t('terminal.confirmVisitUrlTitle')
-    confirmMessage.value = t('terminal.confirmVisitUrlMessage')
-    confirmTarget.value = url
-    confirmBtnText.value = t('terminal.confirmVisitUrl')
-    confirmVisible.value = true
+    linkType.value = 'link'
+    linkTarget.value = url
+    if (x != null && y != null) {
+      menuX.value = x
+      menuY.value = y
+    }
+    menuSelectedText.value = ''
+    menuVisible.value = true
   }
 
   requestAnimationFrame(() => {

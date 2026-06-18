@@ -4,7 +4,7 @@
       <div class="settings-row">
         <label>{{ t('notification.enabled') }}</label>
         <label class="toggle">
-          <input type="checkbox" v-model="cfg.enabled" />
+          <input type="checkbox" v-model="cfg.enabled" @change="saveSettings()" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
@@ -15,18 +15,18 @@
       <div class="settings-row">
         <label>Terminal Bell (\a)</label>
         <label class="toggle">
-          <input type="checkbox" v-model="cfg.bell.enabled" />
+          <input type="checkbox" v-model="cfg.bell.enabled" @change="saveSettings()" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
       <div class="settings-row sub">
         <label>{{ t('notification.debounce') }}</label>
-        <input type="number" class="num-input" v-model.number="cfg.bell.debounce_ms" min="0" max="5000" step="50" /> ms
+        <input type="number" class="num-input" v-model.number="cfg.bell.debounce_ms" min="0" max="5000" step="50" @change="saveSettings()" /> ms
       </div>
       <div class="settings-row">
         <label>OSC {{ t('notification.oscNotify') }}</label>
         <label class="toggle">
-          <input type="checkbox" v-model="cfg.osc_notify" />
+          <input type="checkbox" v-model="cfg.osc_notify" @change="saveSettings()" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
@@ -37,28 +37,28 @@
       <div class="settings-row">
         <label>{{ t('notification.sound') }}</label>
         <label class="toggle">
-          <input type="checkbox" v-model="cfg.channels.sound" />
+          <input type="checkbox" v-model="cfg.channels.sound" @change="saveSettings()" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
       <div class="settings-row">
         <label>{{ t('notification.vibration') }}</label>
         <label class="toggle">
-          <input type="checkbox" v-model="cfg.channels.vibration" />
+          <input type="checkbox" v-model="cfg.channels.vibration" @change="saveSettings()" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
       <div class="settings-row">
         <label>{{ t('notification.panel') }}</label>
         <label class="toggle">
-          <input type="checkbox" v-model="cfg.channels.panel" />
+          <input type="checkbox" v-model="cfg.channels.panel" @change="saveSettings()" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
       <div class="settings-row">
         <label>{{ t('notification.tabIndicator') }}</label>
         <label class="toggle">
-          <input type="checkbox" v-model="cfg.channels.tab_indicator" />
+          <input type="checkbox" v-model="cfg.channels.tab_indicator" @change="saveSettings()" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
@@ -68,7 +68,7 @@
       <h3 class="section-title">{{ t('notification.sounds') }}</h3>
       <div v-for="key in soundTypes" :key="key" class="settings-row sound-row">
         <label class="sound-label">{{ t(`notification.type.${key}`) }}</label>
-        <select class="sound-select" v-model="cfg.sounds[key].value">
+        <select class="sound-select" v-model="cfg.sounds[key].value" @change="saveSettings()">
           <option v-for="name in builtinNames" :key="name" :value="name">{{ name }}</option>
         </select>
         <input type="range" class="vol-slider" min="0" max="100" :value="Math.round(cfg.sounds[key].volume * 100)" @input="(e: Event) => cfg.sounds[key].volume = (e.target as HTMLInputElement).valueAsNumber / 100" />
@@ -81,14 +81,14 @@
       <p class="hook-hint">{{ t('notification.hookEnvHint') }}</p>
       <div v-for="(hook, idx) in cfg.hooks" :key="idx" class="hook-row">
         <label class="toggle toggle-sm">
-          <input type="checkbox" v-model="hook.enabled" />
+          <input type="checkbox" v-model="hook.enabled" @change="saveSettings()" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
-        <select class="hook-type-select" v-model="hook.notification_type">
+        <select class="hook-type-select" v-model="hook.notification_type" @change="saveSettings()">
           <option :value="null">{{ t('notification.hookAll') }}</option>
           <option v-for="nt in notifTypes" :key="nt" :value="nt">{{ t(`notification.type.${nt}`) }}</option>
         </select>
-        <input type="text" class="hook-cmd-input" v-model="hook.command" :placeholder="t('notification.hookCommand')" />
+        <input type="text" class="hook-cmd-input" v-model="hook.command" :placeholder="t('notification.hookCommand')" @change="saveSettings()" />
         <button class="hook-del-btn" @click="cfg.hooks.splice(idx, 1)">&times;</button>
       </div>
       <button class="hook-add-btn" @click="cfg.hooks.push({ enabled: true, notification_type: null, command: '' })">
@@ -152,7 +152,7 @@ import { useI18n } from '../../composables/useI18n'
 import { playSound, getBuiltinSoundNames, type NotificationType } from '../../composables/useNotification'
 import { getApiBase, authFetch } from '../../composables/apiBase'
 
-const { settings } = useSettings()
+const { settings, saveSettings } = useSettings()
 const { t } = useI18n()
 
 const cfg = computed(() => settings.notification)

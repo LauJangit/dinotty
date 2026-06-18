@@ -9,7 +9,16 @@
         @contextmenu.prevent
         @pointerdown.stop
       >
-        <button class="tcm-item" role="menuitem" @click="onCopy" :disabled="!hasSelection">
+        <button v-if="linkType === 'file'" class="tcm-item" role="menuitem" @click="onOpenFile">
+          <FolderOpen :size="12" class="tcm-icon" />
+          <span class="tcm-label">{{ t('terminal.ctxOpenFile') }}</span>
+        </button>
+        <button v-if="linkType === 'link'" class="tcm-item" role="menuitem" @click="onOpenLink">
+          <ExternalLink :size="12" class="tcm-icon" />
+          <span class="tcm-label">{{ t('terminal.ctxOpenLink') }}</span>
+        </button>
+        <div v-if="linkType" class="tcm-sep" />
+        <button class="tcm-item" role="menuitem" @click="onCopy" :disabled="!canCopy">
           <Copy :size="12" class="tcm-icon" />
           <span class="tcm-label">{{ t('terminal.ctxCopy') }}</span>
           <span class="tcm-hint">{{ isMac ? '⌘C' : 'Ctrl+C' }}</span>
@@ -77,7 +86,7 @@
 
 <script setup lang="ts">
 import { ref, computed, nextTick } from 'vue'
-import { Copy, ClipboardPaste, Bookmark, TextSelect } from 'lucide-vue-next'
+import { Copy, ClipboardPaste, Bookmark, TextSelect, FolderOpen, ExternalLink } from 'lucide-vue-next'
 import { useSettings } from '../../composables/useSettings'
 import { useI18n } from '../../composables/useI18n'
 import { copyToClipboard } from '../../utils/clipboard'
@@ -88,6 +97,8 @@ const props = defineProps<{
   x: number
   y: number
   selectedText: string
+  linkType?: 'file' | 'link'
+  linkTarget?: string
 }>()
 
 const emit = defineEmits<{
@@ -95,6 +106,8 @@ const emit = defineEmits<{
   copy: []
   paste: [text: string]
   selectAll: []
+  openFile: [path: string]
+  openLink: [url: string]
 }>()
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
@@ -109,15 +122,19 @@ const nameInputRef = ref<HTMLInputElement>()
 const commandInputRef = ref<HTMLTextAreaElement>()
 
 const hasSelection = computed(() => props.selectedText.length > 0)
+const canCopy = computed(() => hasSelection.value || !!props.linkTarget)
 
 const menuStyle = computed(() => {
   const MENU_WIDTH = 200
-  const MENU_HEIGHT = 180
+  const BASE_HEIGHT = 180
+  const LINK_ITEM_HEIGHT = 36
+  const SEP_HEIGHT = 9
+  const menuHeight = BASE_HEIGHT + (props.linkType ? LINK_ITEM_HEIGHT + SEP_HEIGHT : 0)
   const PAD = 8
   let x = props.x
   let y = props.y
   if (x + MENU_WIDTH > window.innerWidth - PAD) x = window.innerWidth - MENU_WIDTH - PAD
-  if (y + MENU_HEIGHT > window.innerHeight - PAD) y = window.innerHeight - MENU_HEIGHT - PAD
+  if (y + menuHeight > window.innerHeight - PAD) y = window.innerHeight - menuHeight - PAD
   if (x < PAD) x = PAD
   if (y < PAD) y = PAD
   return { left: `${x}px`, top: `${y}px` }
@@ -128,8 +145,9 @@ function close() {
 }
 
 function onCopy() {
-  if (!hasSelection.value) return
-  copyToClipboard(props.selectedText)
+  const text = props.selectedText || props.linkTarget
+  if (!text) return
+  copyToClipboard(text)
   emit('copy')
   close()
 }
@@ -173,6 +191,16 @@ function saveBookmark() {
 
 function onSelectAll() {
   emit('selectAll')
+  close()
+}
+
+function onOpenFile() {
+  if (props.linkTarget) emit('openFile', props.linkTarget)
+  close()
+}
+
+function onOpenLink() {
+  if (props.linkTarget) emit('openLink', props.linkTarget)
   close()
 }
 </script>
