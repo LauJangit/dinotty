@@ -9,8 +9,9 @@ use axum_extra::extract::Multipart;
 use dashmap::DashMap;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::process::Command;
-use tokio::sync::Mutex as TokioMutex;
+use tokio::sync::{Mutex as TokioMutex, RwLock};
 
 use crate::session::SessionManager;
 
@@ -18,9 +19,76 @@ use super::helpers::*;
 use super::manager::PluginManagerState;
 use super::types::*;
 
+// ─── Marketplace Registry Cache ─────────────────────────────────────────────
+
+const REGISTRY_CACHE_TTL: Duration = Duration::from_secs(300); // 5 minutes
+
+struct RegistryCache {
+    data: RwLock<Option<(Instant, String)>>,
+}
+
+static REGISTRY_CACHE: std::sync::LazyLock<RegistryCache> = std::sync::LazyLock::new(|| {
+    RegistryCache {
+        data: RwLock::new(None),
+    }
+});
+
+/// Fetch the registry JSON, using a 5-minute in-memory cache to avoid
+/// repeated cold-start HTTP round-trips to GitHub on every page load.
+async fn fetch_cached_registry() -> Result<String, Response> {
+    // Fast path: return cached value if still fresh
+    {
+        let guard = REGISTRY_CACHE.data.read().await;
+        if let Some((fetched_at, ref body)) = *guard {
+            if fetched_at.elapsed() < REGISTRY_CACHE_TTL {
+                return Ok(body.clone());
+            }
+        }
+    }
+
+    // Slow path: fetch from GitHub and update cache
+    let registry_url =
+        std::env::var("DINOTTY_REGISTRY_URL").unwrap_or_else(|_| DEFAULT_REGISTRY_URL.into());
+
+    let client = &crate::proxy::HTTP_CLIENT_FOLLOW_REDIRECTS;
+    let resp = client
+        .get(&registry_url)
+        .send()
+        .await
+        .map_err(|e| {
+            plugin_err(
+                StatusCode::BAD_GATEWAY,
+                &format!("failed to fetch registry: {e}"),
+            )
+        })?;
+
+    let body = resp.text().await.map_err(|e| {
+        plugin_err(
+            StatusCode::BAD_GATEWAY,
+            &format!("failed to read registry: {e}"),
+        )
+    })?;
+
+    // Validate JSON before caching
+    let _: RegistryIndex = serde_json::from_str(&body).map_err(|e| {
+        plugin_err(
+            StatusCode::BAD_GATEWAY,
+            &format!("invalid registry JSON: {e}"),
+        )
+    })?;
+
+    // Update cache
+    {
+        let mut guard = REGISTRY_CACHE.data.write().await;
+        *guard = Some((Instant::now(), body.clone()));
+    }
+
+    Ok(body)
+}
+
 // ─── Basic CRUD ─────────────────────────────────────────────────────────────
 
-pub async fn list_plugins(State(pm): State<PluginManagerState>) -> Json<Vec<PluginManifest>> {
+pub async fn list_plugins(State(pm): State<PluginManagerState>) -> Json<Vec<PluginInfo>> {
     Json(pm.list())
 }
 
@@ -399,10 +467,31 @@ pub async fn dev_link_plugin(
             install_date: None,
             state: PluginStateValue::Active,
             error: None,
+            is_dev_link: true,
         },
     );
 
     Json(manifest).into_response()
+}
+
+pub async fn install_from_dir(
+    State(pm): State<PluginManagerState>,
+    Json(body): Json<InstallDirRequest>,
+) -> Response {
+    let src = match std::fs::canonicalize(&body.path) {
+        Ok(p) => p,
+        Err(e) => {
+            return plugin_err(StatusCode::BAD_REQUEST, &format!("invalid path: {e}"))
+        }
+    };
+    if !src.is_dir() {
+        return plugin_err(StatusCode::BAD_REQUEST, "path is not a directory");
+    }
+
+    match pm.install_from_dir(&src, body.dev_link).await {
+        Ok(manifest) => Json(manifest).into_response(),
+        Err(e) => plugin_err(StatusCode::INTERNAL_SERVER_ERROR, &e),
+    }
 }
 
 // ─── Marketplace ────────────────────────────────────────────────────────────
@@ -411,28 +500,9 @@ const DEFAULT_REGISTRY_URL: &str =
     "https://raw.githubusercontent.com/xichan96/dinotty-plugins/main/registry.json";
 
 pub async fn get_market_registry(State(pm): State<PluginManagerState>) -> Response {
-    let registry_url =
-        std::env::var("DINOTTY_REGISTRY_URL").unwrap_or_else(|_| DEFAULT_REGISTRY_URL.into());
-
-    let client = &crate::proxy::HTTP_CLIENT_FOLLOW_REDIRECTS;
-    let resp = match client.get(&registry_url).send().await {
-        Ok(r) => r,
-        Err(e) => {
-            return plugin_err(
-                StatusCode::BAD_GATEWAY,
-                &format!("failed to fetch registry: {e}"),
-            )
-        }
-    };
-
-    let body = match resp.text().await {
+    let body = match fetch_cached_registry().await {
         Ok(b) => b,
-        Err(e) => {
-            return plugin_err(
-                StatusCode::BAD_GATEWAY,
-                &format!("failed to read registry: {e}"),
-            )
-        }
+        Err(resp) => return resp,
     };
 
     let registry: RegistryIndex = match serde_json::from_str(&body) {
@@ -478,28 +548,9 @@ pub async fn get_market_registry(State(pm): State<PluginManagerState>) -> Respon
 }
 
 pub async fn get_market_readme(Path(id): Path<String>) -> Response {
-    let registry_url =
-        std::env::var("DINOTTY_REGISTRY_URL").unwrap_or_else(|_| DEFAULT_REGISTRY_URL.into());
-
-    let client = &crate::proxy::HTTP_CLIENT_FOLLOW_REDIRECTS;
-    let resp = match client.get(&registry_url).send().await {
-        Ok(r) => r,
-        Err(e) => {
-            return plugin_err(
-                StatusCode::BAD_GATEWAY,
-                &format!("failed to fetch registry: {e}"),
-            )
-        }
-    };
-
-    let body = match resp.text().await {
+    let body = match fetch_cached_registry().await {
         Ok(b) => b,
-        Err(e) => {
-            return plugin_err(
-                StatusCode::BAD_GATEWAY,
-                &format!("failed to read registry: {e}"),
-            )
-        }
+        Err(resp) => return resp,
     };
 
     let registry: RegistryIndex = match serde_json::from_str(&body) {
@@ -511,6 +562,8 @@ pub async fn get_market_readme(Path(id): Path<String>) -> Response {
             )
         }
     };
+
+    let client = &crate::proxy::HTTP_CLIENT_FOLLOW_REDIRECTS;
 
     let entry = match registry.plugins.iter().find(|p| p.id == id) {
         Some(e) => e,
@@ -655,6 +708,7 @@ pub async fn install_from_git(
                 install_date: old_info.and_then(|o| o.install_date),
                 state: PluginStateValue::Active,
                 error: None,
+                is_dev_link: false,
             },
         );
         Json(manifest).into_response()
@@ -680,6 +734,7 @@ pub async fn install_from_git(
                 ),
                 state: PluginStateValue::Active,
                 error: None,
+                is_dev_link: false,
             },
         );
         Json(manifest).into_response()

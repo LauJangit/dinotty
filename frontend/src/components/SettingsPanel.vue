@@ -18,8 +18,7 @@
 
       <div class="settings-body">
         <GeneralTab v-show="activeTab === 'general'" />
-        <ThemeTab v-show="activeTab === 'theme'" />
-        <TextTab v-show="activeTab === 'text'" />
+        <AppearanceTab v-show="activeTab === 'appearance'" />
         <KeyboardTab v-show="activeTab === 'keyboard'" />
         <MonitorTab v-show="activeTab === 'monitor'" />
         <NotificationTab v-show="activeTab === 'notification'" />
@@ -35,10 +34,9 @@
 import { ref, computed, watch } from 'vue'
 import { useSettings, notifyTextChange } from '../composables/useSettings'
 import { useI18n } from '../composables/useI18n'
-import { Settings as SettingsIcon, Palette, Type, Keyboard, Activity, Bell, Puzzle, Info, X } from 'lucide-vue-next'
+import { Settings as SettingsIcon, Palette, Keyboard, Activity, Bell, Puzzle, Info, X } from 'lucide-vue-next'
 import GeneralTab from './settings/GeneralTab.vue'
-import ThemeTab from './settings/ThemeTab.vue'
-import TextTab from './settings/TextTab.vue'
+import AppearanceTab from './settings/AppearanceTab.vue'
 import KeyboardTab from './settings/KeyboardTab.vue'
 import MonitorTab from './settings/MonitorTab.vue'
 import NotificationTab from './settings/NotificationTab.vue'
@@ -51,7 +49,7 @@ defineEmits<{ close: [] }>()
 const { settings, saveSettings, applyCurrentTheme } = useSettings()
 const { t } = useI18n()
 
-const activeTab = ref<'general' | 'theme' | 'text' | 'keyboard' | 'monitor' | 'notification' | 'plugins' | 'about'>('general')
+const activeTab = ref<'general' | 'appearance' | 'keyboard' | 'monitor' | 'notification' | 'plugins' | 'about'>('general')
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 function scheduleSave() {
@@ -70,8 +68,7 @@ watch(settings, scheduleSave, { deep: true })
 
 const tabs = computed(() => [
   { id: 'general' as const, label: t('settings.tab.general'), icon: SettingsIcon },
-  { id: 'theme' as const, label: t('settings.tab.theme'), icon: Palette },
-  { id: 'text' as const, label: t('settings.tab.text'), icon: Type },
+  { id: 'appearance' as const, label: t('settings.tab.appearance'), icon: Palette },
   { id: 'keyboard' as const, label: t('settings.tab.keyboard'), icon: Keyboard },
   { id: 'plugins' as const, label: t('settings.tab.plugins'), icon: Puzzle },
   { id: 'monitor' as const, label: t('settings.tab.monitor'), icon: Activity },

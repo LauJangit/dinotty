@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { authFetch, apiUrl } from './apiBase'
+import { authFetch, apiUrl, getApiBase } from './apiBase'
 
 export interface MarketPlugin {
   id: string
@@ -36,23 +36,24 @@ export function useMarketplace() {
     loading.value = true
     error.value = ''
     try {
+      await getApiBase()
       const url = apiUrl('/api/plugins/market')
-      let res: Response
-      try {
-        res = await authFetch(url)
-      } catch {
-        // Network-level failure (connection refused, DNS, etc.) — retry once
-        await new Promise(r => setTimeout(r, 1500))
-        res = await authFetch(url)
-      }
-      if (!res.ok) {
-        // Auto-retry once on transient server errors (cold start / gateway issues)
-        if (res.status >= 500) {
-          await new Promise(r => setTimeout(r, 1500))
+      let res: Response | null = null
+      let lastErr = ''
+      const delays = [0, 1000, 2000, 4000]
+      for (let i = 0; i < delays.length; i++) {
+        if (delays[i] > 0) await new Promise(r => setTimeout(r, delays[i]))
+        try {
           res = await authFetch(url)
+          if (res.ok) break
+          lastErr = `HTTP ${res.status}`
+          if (res.status < 500) break // don't retry client errors
+        } catch (e: any) {
+          lastErr = e.message || 'network error'
         }
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        res = null
       }
+      if (!res || !res.ok) throw new Error(lastErr || 'fetch failed')
       plugins.value = await res.json()
     } catch (e: any) {
       error.value = e.message || 'fetch failed'
@@ -63,6 +64,7 @@ export function useMarketplace() {
 
   async function fetchReadme(id: string): Promise<string | null> {
     try {
+      await getApiBase()
       const res = await authFetch(apiUrl(`/api/plugins/market/${encodeURIComponent(id)}/readme`))
       if (!res.ok) return null
       return await res.text()
@@ -74,6 +76,7 @@ export function useMarketplace() {
   async function installFromMarket(plugin: MarketPlugin): Promise<{ ok: boolean; error?: string }> {
     markInstalling(plugin.id)
     try {
+      await getApiBase()
       const res = await authFetch(apiUrl('/api/plugins/install-git'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

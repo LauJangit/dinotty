@@ -826,7 +826,7 @@ const paletteCommands = computed<Command[]>(() => {
     },
     {
       icon: '★',
-      title: 'Saved Commands',
+      title: 'Bookmarks',
       subtitle: 'Open bookmarked commands',
       kbd: formatBinding(getBinding('openBookmarks')),
       action: () => bookmarksRef.value?.open(),

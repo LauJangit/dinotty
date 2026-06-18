@@ -3,7 +3,7 @@
     <section class="settings-section">
       <h3>{{ t('settings.language') }}</h3>
       <div class="settings-row">
-        <select v-model="settings.locale" class="shortcut-input" style="flex:1">
+        <select v-model="settings.locale" class="shortcut-input" style="flex:1" @change="saveSettings()">
           <option value="zh">{{ t('settings.lang.zh') }}</option>
           <option value="en">{{ t('settings.lang.en') }}</option>
         </select>
@@ -11,18 +11,9 @@
     </section>
 
     <section class="settings-section">
-      <h3>{{ t('settings.theme') }}</h3>
-      <div class="settings-row">
-        <select v-model="settings.theme.preset" class="shortcut-input" style="flex:1" @change="selectTheme">
-          <option v-for="th in themes" :key="th.name" :value="th.name">{{ themeLabel(th.name) }}</option>
-        </select>
-      </div>
-    </section>
-
-    <section class="settings-section">
       <h3>{{ t('settings.panelPosition') }}</h3>
       <div class="settings-row">
-        <select v-model="settings.panel_position" class="shortcut-input" style="flex:1">
+        <select v-model="settings.panel_position" class="shortcut-input" style="flex:1" @change="saveSettings()">
           <option value="auto">{{ t('settings.panelPos.auto') }}</option>
           <option value="left">{{ t('settings.panelPos.left') }}</option>
           <option value="right">{{ t('settings.panelPos.right') }}</option>
@@ -100,7 +91,7 @@
       <div class="settings-row">
         <label>{{ t('settings.monitor.enabled') }}</label>
         <label class="toggle">
-          <input type="checkbox" v-model="settings.monitor.enabled" />
+          <input type="checkbox" v-model="settings.monitor.enabled" @change="saveSettings()" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
@@ -111,7 +102,7 @@
       <div class="settings-row">
         <label>{{ t('settings.virtualKeyboard.show') }}</label>
         <label class="toggle">
-          <input type="checkbox" v-model="settings.show_virtual_keyboard" />
+          <input type="checkbox" v-model="settings.show_virtual_keyboard" @change="saveSettings()" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
@@ -126,6 +117,7 @@
           <input
             type="checkbox"
             v-model="settings.confirm_before_close_tab"
+            @change="saveSettings()"
             data-setting="confirm-before-close-tab"
           />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
@@ -145,16 +137,11 @@ import QRCode from 'qrcode'
 import { Eye, EyeOff, Copy, Check, Pencil, RefreshCw, Save, X } from 'lucide-vue-next'
 import { useSettings } from '../../composables/useSettings'
 import { useI18n } from '../../composables/useI18n'
-import { themes } from '../../themes'
 import { copyToClipboard } from '../../utils/clipboard'
 import { apiUrl, authFetch, getAuthToken, setAuthToken, getApiBase, fetchServerToken } from '../../composables/apiBase'
 
-const { settings, applyCurrentTheme } = useSettings()
-const { t, themeLabel } = useI18n()
-
-function selectTheme() {
-  applyCurrentTheme()
-}
+const { settings, saveSettings } = useSettings()
+const { t } = useI18n()
 
 const accessUrl = ref('')
 const copied = ref(false)

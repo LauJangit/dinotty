@@ -7,7 +7,7 @@ import { formatCloseTabMessage } from '../composables/formatCloseTabMessage'
 // Chinese uses 「title」 — different quotation styles per locale.
 
 describe('formatCloseTabMessage', () => {
-  const BASE = 'Closing this session will terminate a possibly running AI agent. Close'
+  const BASE = 'Closing this session will terminate all running processes. Close'
 
   it('returns base message unchanged when title is empty (en)', () => {
     expect(formatCloseTabMessage(BASE, '', 'en')).toBe(BASE)

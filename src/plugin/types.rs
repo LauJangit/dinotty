@@ -39,6 +39,8 @@ pub struct PluginInfo {
     pub install_date: Option<u64>,
     pub state: PluginStateValue,
     pub error: Option<String>,
+    #[serde(rename = "isDevLink", default)]
+    pub is_dev_link: bool,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -68,6 +70,13 @@ pub struct ExecResult {
 #[derive(Deserialize)]
 pub struct DevLinkRequest {
     pub path: String,
+}
+
+#[derive(Deserialize)]
+pub struct InstallDirRequest {
+    pub path: String,
+    #[serde(default)]
+    pub dev_link: bool,
 }
 
 #[derive(Deserialize)]

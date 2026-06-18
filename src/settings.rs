@@ -48,6 +48,15 @@ pub struct Settings {
     pub auth_token: String,
     #[serde(default = "default_ip_whitelist")]
     pub ip_whitelist: Vec<String>,
+    #[serde(default)]
+    pub keybindings: std::collections::HashMap<String, KeyBinding>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct KeyBinding {
+    pub key: String,
+    #[serde(default)]
+    pub shift: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -382,6 +391,7 @@ impl Default for Settings {
             open_api: OpenApiConfig::default(),
             auth_token: String::new(),
             ip_whitelist: default_ip_whitelist(),
+            keybindings: std::collections::HashMap::new(),
         }
     }
 }

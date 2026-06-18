@@ -41,10 +41,13 @@ import { ref, watch } from 'vue'
 import { TreeRows, absJoinWorkspaceRoot } from '../workspace/TreeRows'
 import type { DirEntry } from '../workspace/TreeRows'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   visible: boolean
   paneId: string
-}>()
+  root?: string
+}>(), {
+  root: '/'
+})
 
 const emit = defineEmits<{
   'update:visible': [val: boolean]
@@ -59,7 +62,7 @@ const selectedName = ref<string>('')
 
 async function fetchList(rel: string) {
   const { authFetch, apiUrl } = await import('../../composables/apiBase')
-  const q = new URLSearchParams({ pane_id: props.paneId, path: rel, root: '/' })
+  const q = new URLSearchParams({ pane_id: props.paneId, path: rel, root: props.root })
   try {
     const res = await authFetch(apiUrl(`/api/workspace/list?${q}`))
     if (res.ok) {

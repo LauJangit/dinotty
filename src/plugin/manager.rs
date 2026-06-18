@@ -73,6 +73,7 @@ impl PluginManager {
                         .and_then(|m| m.modified().ok())
                         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                         .map(|d| d.as_secs());
+                    let is_dev_link = entry.path().is_symlink();
                     self.registry.insert(
                         manifest.id.clone(),
                         PluginInfo {
@@ -80,6 +81,7 @@ impl PluginManager {
                             install_date,
                             state: PluginStateValue::Active,
                             error: None,
+                            is_dev_link,
                         },
                     );
                 }
@@ -87,8 +89,8 @@ impl PluginManager {
         }
     }
 
-    pub fn list(&self) -> Vec<PluginManifest> {
-        self.registry.iter().map(|r| r.manifest.clone()).collect()
+    pub fn list(&self) -> Vec<PluginInfo> {
+        self.registry.iter().map(|r| r.value().clone()).collect()
     }
 
     pub fn watch_changes(self: &Arc<Self>, manager: Arc<SessionManager>) {
@@ -211,6 +213,62 @@ impl PluginManager {
                 ),
                 state: PluginStateValue::Active,
                 error: None,
+                is_dev_link: false,
+            },
+        );
+
+        Ok(manifest)
+    }
+
+    pub async fn install_from_dir(&self, src: &std::path::Path, dev_link: bool) -> Result<PluginManifest, String> {
+        let manifest_path = src.join("plugin.json");
+        let content = std::fs::read_to_string(&manifest_path)
+            .map_err(|_| "plugin.json not found in directory".to_string())?;
+        let manifest: PluginManifest =
+            serde_json::from_str(&content).map_err(|e| format!("invalid plugin.json: {e}"))?;
+
+        validate_manifest(&manifest)?;
+
+        let dest = self.plugin_dir.join(&manifest.id);
+        if dest.exists() {
+            return Err(format!(
+                "plugin '{}' already installed, use update instead",
+                manifest.id
+            ));
+        }
+
+        std::fs::create_dir_all(&self.plugin_dir).map_err(|e| e.to_string())?;
+
+        if dev_link {
+            // Create a symlink from src -> plugin_dir/id
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(src, &dest).map_err(|e| format!("symlink failed: {e}"))?;
+            #[cfg(not(unix))]
+            {
+                let _ = (src, &dest);
+                return Err("dev-link is only supported on Unix".into());
+            }
+        } else {
+            copy_dir_all(src, &dest)?;
+        }
+
+        if let Some(ref bin) = manifest.bin {
+            set_executable(&dest.join(&bin.entry))?;
+        }
+
+        self.registry.insert(
+            manifest.id.clone(),
+            PluginInfo {
+                manifest: manifest.clone(),
+                install_date: Some(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
+                ),
+                state: PluginStateValue::Active,
+                error: None,
+                is_dev_link: dev_link,
             },
         );
 
@@ -266,6 +324,7 @@ impl PluginManager {
                 install_date: old_info.install_date,
                 state: PluginStateValue::Active,
                 error: None,
+                is_dev_link: false,
             },
         );
 
