@@ -77,6 +77,8 @@ fn pty_spawn(
                 *g = Some(Arc::clone(&exit_cb));
             }
         }
+        // Clear old output forwarders to prevent duplicate output on reconnection
+        session.clear_clients();
         emit_join_sync(&app, &pane_id, &session);
         spawn_tauri_output_forwarder(app.clone(), pane_id.clone(), Arc::clone(&session));
         return Ok(session.shell_type.clone());
@@ -134,7 +136,7 @@ fn pty_resize(
 
 #[tauri::command]
 fn pty_kill(pane_id: String, state: State<'_, Arc<SessionManager>>) -> Result<(), String> {
-    state.sessions.remove(&pane_id);
+    state.kill_and_remove(&pane_id);
     state.broadcast_sync(&SyncMsg::TabClosed {
         pane_id: pane_id.clone(),
     });
