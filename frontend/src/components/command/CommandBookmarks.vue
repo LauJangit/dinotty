@@ -3,7 +3,15 @@
     <div v-if="visible" class="bookmarks-backdrop" @click.self="close" @keydown.escape="close">
       <div class="bookmarks-panel">
         <div class="bookmarks-header">
-          <h2>{{ t('bookmarks.title') }}</h2>
+          <div class="bookmarks-search">
+            <Search :size="14" />
+            <input
+              ref="searchInputRef"
+              v-model="searchQuery"
+              :placeholder="t('bookmarks.search')"
+              class="bookmarks-search-input"
+            />
+          </div>
           <div class="bookmarks-header-actions">
             <button class="bookmarks-add-toggle" @click="toggleAddMode" :class="{ active: addMode }">
               <Plus :size="14" />
@@ -82,7 +90,7 @@
 
 <script setup lang="ts">
 import { ref, computed, nextTick } from 'vue'
-import { Plus, X, Check, GripVertical } from 'lucide-vue-next'
+import { Plus, X, Check, GripVertical, Search } from 'lucide-vue-next'
 import { useSettings } from '../../composables/useSettings'
 import { randomId } from '../../utils/id'
 import { useI18n } from '../../composables/useI18n'
@@ -100,6 +108,8 @@ const newCommand = ref('')
 const newGroup = ref('')
 const nameInputRef = ref<HTMLInputElement>()
 const commandInputRef = ref<HTMLInputElement>()
+const searchInputRef = ref<HTMLInputElement>()
+const searchQuery = ref('')
 
 // Drag state
 const dragId = ref<string | null>(null)
@@ -118,13 +128,24 @@ const groups = computed(() => {
 })
 
 const filteredBookmarks = computed(() => {
-  if (activeGroup.value === 'All') return settings.bookmarks
-  return settings.bookmarks.filter((b) => b.group === activeGroup.value)
+  let list = settings.bookmarks
+  if (activeGroup.value !== 'All') {
+    list = list.filter((b) => b.group === activeGroup.value)
+  }
+  const q = searchQuery.value.trim().toLowerCase()
+  if (q) {
+    list = list.filter((b) =>
+      b.name.toLowerCase().includes(q) || b.command.toLowerCase().includes(q)
+    )
+  }
+  return list
 })
 
 function open() {
   visible.value = true
   addMode.value = false
+  searchQuery.value = ''
+  nextTick(() => searchInputRef.value?.focus())
 }
 function close() {
   visible.value = false
@@ -253,10 +274,24 @@ defineExpose({ open, close })
   padding: 12px 16px;
   border-bottom: 1px solid var(--border, #333);
 }
-.bookmarks-header h2 {
-  font-size: 15px;
-  font-weight: 600;
+.bookmarks-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  color: var(--fg-muted);
+}
+.bookmarks-search-input {
+  flex: 1;
+  background: none;
+  border: none;
   color: var(--fg-bright);
+  font-size: 14px;
+  outline: none;
+  min-width: 0;
+}
+.bookmarks-search-input::placeholder {
+  color: var(--fg-muted);
 }
 .bookmarks-header-actions {
   display: flex;
