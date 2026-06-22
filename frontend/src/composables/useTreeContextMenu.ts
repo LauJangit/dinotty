@@ -28,6 +28,8 @@ export function useTreeContextMenu(opts: {
   deleteSelected: (skipConfirm: boolean, t: (key: string) => string, resetState: () => void) => Promise<boolean>
   onSelectFile: (rel: string) => Promise<void>
   onSelectDir: (rel: string) => void
+  triggerUpload: () => void
+  downloadFile: (rel: string) => Promise<void>
   t: (key: string) => string
 }) {
   const contextMenu = ref<{ x: number; y: number; rel: string; isDir: boolean } | null>(null)
@@ -44,7 +46,7 @@ export function useTreeContextMenu(opts: {
     if (opts.narrow.value) return { left: '0', right: '0', bottom: '0' }
     const pad = 8
     const mw = 220
-    const mh = 140
+    const mh = 300
     let left = m.x
     let top = m.y
     if (typeof window !== 'undefined') {
@@ -139,6 +141,21 @@ export function useTreeContextMenu(opts: {
     }
   }
 
+  function ctxUpload() {
+    closeContextMenu()
+    opts.triggerUpload()
+  }
+
+  async function ctxDownload() {
+    if (!contextMenu.value) return
+    const { rel, isDir } = contextMenu.value
+    closeContextMenu()
+    if (isDir) return
+    const targetRel = rel || opts.selectedRel.value
+    if (!targetRel) return
+    await opts.downloadFile(targetRel)
+  }
+
   function ctxCopyPath() {
     if (!contextMenu.value) return
     const { rel } = contextMenu.value
@@ -214,6 +231,8 @@ export function useTreeContextMenu(opts: {
     ctxNewFolder,
     ctxRename,
     ctxDelete,
+    ctxUpload,
+    ctxDownload,
     ctxCopyPath,
     ctxInsertToTerminal,
     onMoveEntry,

@@ -37,6 +37,22 @@ A **multi-device** terminal server purpose-built for **coding agents**. Run Clau
   <img src="docs/images/7.png" alt="Tablet landscape desktop-class layout" width="500" />
 </p>
 
+## Desktop Demo
+
+The desktop client delivers a professional experience comparable to iTerm2:
+
+**Split Screen** — Draggable multi-pane split with free layout adjustment:
+
+<video src="https://github.com/xichan96/dinotty/releases/download/demo-media/split-screen.mov" autoplay muted loop playsinline width="600"></video>
+
+**Plugin System** — Hot-reloadable JS plugins with built-in CC Switch, JSON Formatter, and more:
+
+<video src="https://github.com/xichan96/dinotty/releases/download/demo-media/plugin-system.mov" autoplay muted loop playsinline width="600"></video>
+
+**Web Preview** — Preview local dev servers on your phone, built-in reverse proxy, no need to switch browsers:
+
+<video src="https://github.com/xichan96/dinotty/releases/download/demo-media/web-preview.mov" autoplay muted loop playsinline width="600"></video>
+
 ## Why Dinotty?
 
 Terminal-based coding agents (Claude Code, opencode, Codex, OpenClaw, etc.) are powerful, but they're locked inside a single terminal window. Dinotty lets you:
@@ -63,6 +79,8 @@ Terminal-based coding agents (Claude Code, opencode, Codex, OpenClaw, etc.) are 
 - **Server-side virtual terminal** — full VTE parser, server knows exact screen state, enables session recovery & screen snapshots
 - **Session persistence** — PTY processes survive disconnection, auto-reconnect with exponential backoff, refresh page to restore
 - **Split pane & multi-tab** — draggable split, multi-tab management with server-led pane lifecycle
+- **Broadcast mode** — input in one pane, execute in all panes simultaneously, free
+- **Command bookmarks** — right-click terminal text to bookmark, group management, one-click execution
 - **Server list** — manage multiple remote servers, quick switch connections
 - **Responsive layout** — portrait stacks vertically, landscape side-by-side; touch-optimized buttons & pane resizing
 - **Customizable shortcut keyboard** — add Ctrl/Esc/function keys for mobile, supports arbitrary escape sequences
@@ -71,7 +89,7 @@ Terminal-based coding agents (Claude Code, opencode, Codex, OpenClaw, etc.) are 
 - **Web preview** — built-in reverse proxy to preview local dev servers in iframe
 - **Notification system** — terminal bell/OSC detection, WebSocket push, configurable sound alerts
 - **System monitor** — real-time CPU/memory/network charts
-- **Plugin system** — JS plugins + CLI bridge, hot-reload; ships with CC Switch, JSON Formatter, etc.
+- **Plugin system** — JS plugins + CLI bridge, hot-reload; ships with CC Switch, JSON Formatter, Claude Code conversation manager, etc.
 - **Open API** — HTTP endpoint for external device control (Stream Deck, Shortcuts, automation scripts)
 - **Command palette** — quick-access command launcher
 - **Desktop app** — optional Tauri-based native client
@@ -87,6 +105,8 @@ Terminal-based coding agents (Claude Code, opencode, Codex, OpenClaw, etc.) are 
 | Git change indicators | ✅ | ❌ | ❌ | ❌ |
 | Built-in web preview (reverse proxy) | ✅ | ❌ | ❌ | ❌ |
 | Customizable shortcut keyboard | ✅ | ❌ | ❌ | ❌ |
+| Broadcast mode | ✅ | ❌ | ❌ | ❌ |
+| Command bookmarks | ✅ | ❌ | ❌ | ❌ |
 | Plugin system | ✅ | ❌ | ❌ | ❌ |
 | Token auth | ✅ | ✅ | ❌ | ✅ |
 
@@ -102,11 +122,15 @@ Other web terminals are thin WebSocket-to-PTY pipes. Dinotty runs a **full virtu
 | Native app | Tauri (optional) | iOS + Android | ❌ | iOS + Android | ❌ (PWA) | All platforms | ❌ |
 | General terminal | ✅ Any command | ❌ AI agents only | ❌ AI agents only | ❌ AI agents only | ❌ AI agents only | ✅ SSH | ✅ |
 | Coding agent support | ✅ File browser/preview/notify | ✅ Built-in | ✅ Built-in | ✅ Voice/approve | ✅ Voice/workspace | ❌ | ❌ |
+| Split screen | ✅ Native drag | ❌ | ❌ | ❌ | ❌ | ❌ | ⚠️ tmux commands |
+| Broadcast mode | ✅ Free | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Command bookmarks | ✅ Free | ❌ | ❌ | ❌ | ❌ | 💰 Paid | ❌ |
 | Plugin system | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Multi-device sync | ✅ Browser-based | ✅ Cross-device session sync | ✅ Cloud sessions | ✅ | ✅ | ✅ Vault | ❌ Requires SSH |
 | Relay service | Planned | ✅ Anthropic hosted | ✅ OpenAI hosted | ✅ | ✅ | SaaS | ❌ |
 | Deployment | Self-hosted | SaaS | SaaS | Relay service | Self-hosted/relay | SaaS | Self-hosted |
 | Code runs on | Your own server | Local / Anthropic cloud | OpenAI cloud | Local | Local | Remote SSH | Remote server |
+| Price | 🆓 Free & open source | 💰 Pro subscription | 💰 Plus subscription | Relay service | Self-hosted/relay | 💰 $10/mo | 🆓 but painful |
 
 Claude Code and Codex each offer built-in remote solutions, but are limited to their own agent ecosystem. Happy and hapi are third-party remote control layers that wrap CLI tools for phone-based approval and voice interaction. Dinotty is a general-purpose web terminal server where agents run natively on the server, with a full working environment including file browser, web preview, and plugin system, delivering a professional experience on both desktop and mobile.
 
@@ -137,6 +161,8 @@ cd frontend && npx vue-tsc --noEmit
 | Backend | Rust, Axum 0.7, Tokio, portable-pty, vte |
 | Frontend | Vue 3, TypeScript, Vite, xterm.js 5 |
 | Desktop | Tauri |
+
+**Written in Rust · Single binary · Zero dependencies** — Runs a full VT state machine on the server, not a pipe-forwarding proxy, so sessions survive disconnection.
 
 ## Project Structure
 
