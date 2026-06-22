@@ -43,15 +43,15 @@
 
 **分屏** — 可拖拽的多面板分屏，自由调整布局：
 
-<video src="https://github.com/xichan96/dinotty/releases/download/demo-media/split-screen.mov" autoplay muted loop playsinline width="600"></video>
+<video src="https://github.com/xichan96/dinotty/releases/download/demo-media/split-screen.mp4" autoplay muted loop playsinline width="600"></video>
 
 **插件系统** — JS 插件热重载，内置 CC Switch、JSON Formatter 等：
 
-<video src="https://github.com/xichan96/dinotty/releases/download/demo-media/plugin-system.mov" autoplay muted loop playsinline width="600"></video>
+<video src="https://github.com/xichan96/dinotty/releases/download/demo-media/plugin-system.mp4" autoplay muted loop playsinline width="600"></video>
 
 **网页预览** — 手机上也能预览本地开发服务器，内建反向代理，不用切浏览器：
 
-<video src="https://github.com/xichan96/dinotty/releases/download/demo-media/web-preview.mov" autoplay muted loop playsinline width="600"></video>
+<video src="https://github.com/xichan96/dinotty/releases/download/demo-media/web-preview.mp4" autoplay muted loop playsinline width="600"></video>
 
 ## 为什么选择 Dinotty？
 
