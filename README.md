@@ -37,6 +37,22 @@
   <img src="docs/images/7.png" alt="平板横屏桌面级布局" width="500" />
 </p>
 
+## 桌面端演示
+
+桌面端同样专业好用，媲美 iTerm2 的终端体验：
+
+**分屏** — 可拖拽的多面板分屏，自由调整布局：
+
+<video src="https://github.com/xichan96/dinotty/releases/download/demo-media/split-screen.mov" autoplay muted loop playsinline width="600"></video>
+
+**插件系统** — JS 插件热重载，内置 CC Switch、JSON Formatter 等：
+
+<video src="https://github.com/xichan96/dinotty/releases/download/demo-media/plugin-system.mov" autoplay muted loop playsinline width="600"></video>
+
+**网页预览** — 手机上也能预览本地开发服务器，内建反向代理，不用切浏览器：
+
+<video src="https://github.com/xichan96/dinotty/releases/download/demo-media/web-preview.mov" autoplay muted loop playsinline width="600"></video>
+
 ## 为什么选择 Dinotty？
 
 终端 Coding Agent（Claude Code、opencode、Codex、OpenClaw 等）功能强大，但它们被束缚在单一终端窗口里。Dinotty 让你：
@@ -63,6 +79,8 @@
 - **服务端虚拟终端** — 完整 VTE 解析，服务端掌握精确屏幕状态，支持会话恢复与屏幕快照
 - **会话持久化** — PTY 进程在断网后存活，自动重连 + 指数退避，刷新页面即可恢复
 - **分屏与多 Tab** — 可拖拽分屏、多 Tab 管理，服务端主导的 Pane 生命周期
+- **广播模式** — 一个 pane 输入，多个 pane 同步执行，免费
+- **命令收藏** — 右键终端文本直接收藏，分组管理，一键执行
 - **服务器列表** — 管理多台远程服务器，快速切换连接
 - **响应式布局** — 竖屏上下排列，横屏左右并排；触控优化的按钮与面板缩放
 - **可自定义快捷键盘** — 为手机补齐 Ctrl/Esc/功能键，支持任意转义序列
@@ -71,7 +89,7 @@
 - **网页预览** — 内建反向代理，在 iframe 中预览本地开发服务器
 - **通知系统** — 终端 bell/OSC 检测，WebSocket 推送，可配置声音提醒
 - **系统监控** — 实时 CPU/内存/网络图表
-- **插件系统** — JS 插件 + CLI 桥接，热重载，内置 CC Switch、JSON Formatter 等
+- **插件系统** — JS 插件 + CLI 桥接，热重载，内置 CC Switch、JSON Formatter、Claude Code 对话管理等
 - **Open API** — HTTP 端点，支持 Stream Deck、快捷指令等外部设备控制
 - **命令面板** — 快速访问命令启动器
 - **桌面应用** — 可选 Tauri 原生客户端
@@ -87,6 +105,8 @@
 | Git 变更指示 | ✅ | ❌ | ❌ | ❌ |
 | 内建网页预览（反向代理） | ✅ | ❌ | ❌ | ❌ |
 | 可自定义快捷键盘 | ✅ | ❌ | ❌ | ❌ |
+| 广播模式 | ✅ | ❌ | ❌ | ❌ |
+| 命令收藏 | ✅ | ❌ | ❌ | ❌ |
 | 插件系统 | ✅ | ❌ | ❌ | ❌ |
 | Token 认证 | ✅ | ✅ | ❌ | ✅ |
 
@@ -102,11 +122,15 @@
 | 原生 App | Tauri（可选） | iOS + Android | ❌ | iOS + Android | ❌（PWA） | 全平台 | ❌ |
 | 通用终端 | ✅ 任意命令 | ❌ 仅 AI Agent | ❌ 仅 AI Agent | ❌ 仅 AI Agent | ❌ 仅 AI Agent | ✅ SSH | ✅ |
 | Coding Agent 适配 | ✅ 文件浏览/预览/通知 | ✅ 内建 | ✅ 内建 | ✅ 语音/审批 | ✅ 语音/工作区 | ❌ | ❌ |
+| 分屏 | ✅ 原生拖拽 | ❌ | ❌ | ❌ | ❌ | ❌ | ⚠️ tmux 命令 |
+| 广播模式 | ✅ 免费 | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| 命令收藏 | ✅ 免费 | ❌ | ❌ | ❌ | ❌ | 💰 付费 | ❌ |
 | 插件系统 | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | 多端同步 | ✅ 浏览器即同步 | ✅ 跨设备会话同步 | ✅ 云端会话 | ✅ | ✅ | ✅ Vault | ❌ 需 SSH |
 | 中继服务 | 计划中 | ✅ Anthropic 托管 | ✅ OpenAI 托管 | ✅ | ✅ | SaaS | ❌ |
 | 部署方式 | 自托管 | SaaS | SaaS | 中继服务 | 自托管/中继 | SaaS | 自托管 |
 | 代码运行位置 | 自有服务器 | 本地 / Anthropic 云 | OpenAI 云 | 本地 | 本地 | 远程 SSH | 远程服务器 |
+| 价格 | 🆓 免费开源 | 💰 需 Pro 订阅 | 💰 需 Plus | 中继服务 | 自托管/中继 | 💰 $10/月 | 🆓 但折腾 |
 
 Claude Code 和 Codex 各自提供了内建的远程方案，但仅限于自身 Agent 生态。Happy/hapi 是第三方远程控制层，包装 CLI 实现手机审批和语音交互。Dinotty 是通用 Web 终端服务器，Agent 在服务端原生运行，同时提供文件浏览、网页预览、插件系统等完整工作环境，桌面端和移动端均有专业体验。
 
@@ -137,6 +161,8 @@ cd frontend && npx vue-tsc --noEmit
 | 后端 | Rust, Axum 0.7, Tokio, portable-pty, vte |
 | 前端 | Vue 3, TypeScript, Vite, xterm.js 5 |
 | 桌面端 | Tauri |
+
+**Rust 编写 · 单二进制 · 零依赖部署** — 服务端跑完整 VT 状态机，不是管道转发，断线会话不丢失。
 
 ## 项目结构
 
