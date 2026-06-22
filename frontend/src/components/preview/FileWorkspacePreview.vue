@@ -136,8 +136,6 @@
             <button type="button" @click="ctxMenu.addMenuOpen.value = false; startNewFolder()">{{ t('filePreview.ctxNewFolder') }}</button>
           </div>
         </div>
-        <button type="button" @click="ops.triggerUpload()" title="Upload">↑</button>
-        <button type="button" :disabled="!ops.canDownload.value" @click="ops.downloadSelected" title="Download">↓</button>
         <button type="button" @click="close" title="Close">✕</button>
       </div>
       <input ref="ops.fileInputRef" type="file" multiple class="sr-only" @change="ops.onFilePick" />
@@ -292,6 +290,23 @@
           type="button"
           class="tree-ctx-item"
           role="menuitem"
+          @click="ctxMenu.ctxUpload"
+        >
+          <span class="tree-ctx-label">{{ t('filePreview.ctxUpload') }}</span>
+        </button>
+        <button
+          v-if="!ctxMenu.contextMenu.value?.isDir"
+          type="button"
+          class="tree-ctx-item"
+          role="menuitem"
+          @click="ctxMenu.ctxDownload"
+        >
+          <span class="tree-ctx-label">{{ t('filePreview.ctxDownload') }}</span>
+        </button>
+        <button
+          type="button"
+          class="tree-ctx-item"
+          role="menuitem"
           @click="ctxToggleBookmark"
         >
           <span class="tree-ctx-label">{{ ctxIsBookmarked ? t('fileBookmark.removeFrom') : t('fileBookmark.addTo') }}</span>
@@ -423,6 +438,8 @@ const ctxMenu = useTreeContextMenu({
   deleteSelected: ops.deleteSelected,
   onSelectFile,
   onSelectDir,
+  triggerUpload: ops.triggerUpload,
+  downloadFile: ops.downloadFile,
   t,
 })
 
@@ -913,8 +930,6 @@ onBeforeUnmount(() => {
 defineExpose({
   openFromTerminal,
   reloadAll,
-  triggerUpload: ops.triggerUpload,
-  downloadSelected: ops.downloadSelected,
   deleteSelected: ops.deleteSelected,
   startNewFile,
   startNewFolder,
