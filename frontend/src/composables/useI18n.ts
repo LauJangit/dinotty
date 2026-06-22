@@ -289,6 +289,49 @@ const messages: Record<Locale, Record<string, string>> = {
     'confirm.closeTabMessage': 'Closing this session will terminate all running processes. Close',
     'confirm.closeTabConfirm': 'Close',
     'confirm.closeTabCancel': 'Cancel',
+
+    'fileBookmark.title': 'Bookmarks',
+    'fileBookmark.empty': 'No bookmarks yet',
+    'fileBookmark.emptyHint': 'Right-click a file to add',
+    'fileBookmark.addTo': 'Add to Bookmarks',
+    'fileBookmark.removeFrom': 'Remove from Bookmarks',
+    'fileBookmark.rename': 'Rename',
+    'fileBookmark.missing': 'File not found',
+    'fileBookmark.groupCreate': 'New Group',
+    'webBookmark.addTo': 'Add to Bookmarks',
+    'webBookmark.removeFrom': 'Remove from Bookmarks',
+    'webBookmark.rename': 'Rename',
+    'webBookmark.section': 'Bookmarks',
+    'recent.title': 'Recent',
+    'recent.clear': 'Clear',
+    'recent.clearConfirm': 'Clear all recent items?',
+    'recent.justNow': 'Just now',
+    'recent.minutesAgo': '{n}m ago',
+    'recent.hoursAgo': '{n}h ago',
+    'recent.yesterday': 'Yesterday',
+    'recent.addToBookmark': 'Add to Bookmarks',
+    'recent.removeFromHistory': 'Remove from History',
+    'recent.open': 'Open',
+    'recent.cancel': 'Cancel',
+    'recent.confirmOk': 'Clear',
+    'recent.urlSection': 'Recent',
+    'recent.clearUrls': 'Clear URL history',
+    'palette.search': 'Search commands…',
+    'palette.empty': 'No matching commands',
+    'palette.newTab': 'New Tab',
+    'palette.newTabDesc': 'Open a new terminal tab',
+    'palette.closeTab': 'Close Tab',
+    'palette.closeTabDesc': 'Close the current tab',
+    'palette.splitHorizontal': 'Split Horizontal',
+    'palette.splitHorizontalDesc': 'Split pane left/right',
+    'palette.splitVertical': 'Split Vertical',
+    'palette.splitVerticalDesc': 'Split pane top/bottom',
+    'palette.bookmarks': 'Bookmarks',
+    'palette.bookmarksDesc': 'Open bookmarked commands',
+    'palette.openPreview': 'Open Preview',
+    'palette.openPreviewDesc': 'URL or path in the address bar',
+    'palette.openPlugin': 'Open {name}',
+    'palette.openPluginDesc': 'Open plugin tab',
   },
   zh: {
     'app.settings': '设置',
@@ -574,6 +617,49 @@ const messages: Record<Locale, Record<string, string>> = {
     'confirm.closeTabMessage': '关闭此会话将终止所有正在运行的进程。仍要关闭',
     'confirm.closeTabConfirm': '关闭',
     'confirm.closeTabCancel': '取消',
+
+    'fileBookmark.title': '书签',
+    'fileBookmark.empty': '暂无书签',
+    'fileBookmark.emptyHint': '右键点击文件添加',
+    'fileBookmark.addTo': '收藏',
+    'fileBookmark.removeFrom': '取消收藏',
+    'fileBookmark.rename': '重命名',
+    'fileBookmark.missing': '文件不存在',
+    'fileBookmark.groupCreate': '新建分组',
+    'webBookmark.addTo': '收藏',
+    'webBookmark.removeFrom': '取消收藏',
+    'webBookmark.rename': '重命名',
+    'webBookmark.section': '书签',
+    'recent.title': '最近访问',
+    'recent.clear': '清空',
+    'recent.clearConfirm': '确定清空最近访问记录？',
+    'recent.justNow': '刚刚',
+    'recent.minutesAgo': '{n}分钟前',
+    'recent.hoursAgo': '{n}小时前',
+    'recent.yesterday': '昨天',
+    'recent.addToBookmark': '收藏',
+    'recent.removeFromHistory': '从历史中移除',
+    'recent.open': '打开',
+    'recent.cancel': '取消',
+    'recent.confirmOk': '清空',
+    'recent.urlSection': '最近访问',
+    'recent.clearUrls': '清空网页记录',
+    'palette.search': '搜索命令…',
+    'palette.empty': '没有匹配的命令',
+    'palette.newTab': '新建标签页',
+    'palette.newTabDesc': '打开新的终端标签页',
+    'palette.closeTab': '关闭标签页',
+    'palette.closeTabDesc': '关闭当前标签页',
+    'palette.splitHorizontal': '左右分屏',
+    'palette.splitHorizontalDesc': '左右分割窗格',
+    'palette.splitVertical': '上下分屏',
+    'palette.splitVerticalDesc': '上下分割窗格',
+    'palette.bookmarks': '命令收藏',
+    'palette.bookmarksDesc': '打开收藏的命令',
+    'palette.openPreview': '打开预览',
+    'palette.openPreviewDesc': '地址栏中的网址或路径',
+    'palette.openPlugin': '打开{name}',
+    'palette.openPluginDesc': '打开插件标签页',
   },
 }
 
@@ -584,9 +670,15 @@ function normalizeLocale(raw: string | undefined): Locale {
 export function useI18n() {
   const locale = computed(() => normalizeLocale(settings.locale))
 
-  function t(key: string): string {
+  function t(key: string, params?: Record<string, string | number>): string {
     const table = messages[locale.value]
-    return table[key] ?? key
+    let msg = table[key] ?? key
+    if (params) {
+      for (const [k, v] of Object.entries(params)) {
+        msg = msg.replace(`{${k}}`, String(v))
+      }
+    }
+    return msg
   }
 
   function themeLabel(name: string): string {

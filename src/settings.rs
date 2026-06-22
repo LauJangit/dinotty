@@ -27,6 +27,14 @@ pub struct Settings {
     #[serde(default)]
     pub bookmarks: Vec<CommandBookmark>,
     #[serde(default)]
+    pub workspace_bookmarks: Vec<WorkspaceBookmark>,
+    #[serde(default)]
+    pub web_bookmarks: Vec<WebBookmark>,
+    #[serde(default)]
+    pub recent_files: Vec<RecentEntry>,
+    #[serde(default)]
+    pub recent_urls: Vec<RecentEntry>,
+    #[serde(default)]
     pub action_keyboard: Option<ActionKeyboardConfig>,
     #[serde(default)]
     pub keyboard_sound: bool,
@@ -353,6 +361,32 @@ pub struct CommandBookmark {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct WorkspaceBookmark {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub is_dir: bool,
+    #[serde(default)]
+    pub group: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct WebBookmark {
+    pub id: String,
+    pub name: String,
+    pub url: String,
+    #[serde(default)]
+    pub group: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct RecentEntry {
+    pub path_or_url: String,
+    pub name: String,
+    pub visited_at: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ActionKey {
     pub label: String,
     pub send: String,
@@ -380,6 +414,10 @@ impl Default for Settings {
             background: BackgroundConfig::default(),
             text: TextConfig::default(),
             bookmarks: vec![],
+            workspace_bookmarks: vec![],
+            web_bookmarks: vec![],
+            recent_files: vec![],
+            recent_urls: vec![],
             action_keyboard: None,
             keyboard_sound: false,
             show_virtual_keyboard: false,
