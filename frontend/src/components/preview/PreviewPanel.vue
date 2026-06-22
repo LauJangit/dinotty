@@ -39,10 +39,6 @@
         </div>
         <button v-if="kind === 'web' && webUrl" type="button" @click="openInBrowser" :title="t('previewPanel.openInBrowser')"><ExternalLink :size="14" /></button>
         <button v-if="kind === 'web' && webUrl" type="button" :class="{ 'star-active': isWebBookmarked }" @click="onToggleWebBookmark" :title="isWebBookmarked ? t('webBookmark.removeFrom') : t('webBookmark.addTo')"><Star :size="14" :fill="isWebBookmarked ? 'currentColor' : 'none'" /></button>
-        <template v-if="kind === 'files'">
-          <button type="button" @click="onFilesUpload()" title="Upload"><Upload :size="14" /></button>
-          <button type="button" @click="onFilesDownload" title="Download"><Download :size="14" /></button>
-        </template>
         <button type="button" @click="close" title="Close"><X :size="14" /></button>
       </div>
       <div class="preview-body">
@@ -74,7 +70,7 @@ import FileWorkspacePreview from './FileWorkspacePreview.vue'
 import { isWebPreviewInput, normalizeWebUrl, urlToPreviewSrc } from '../../utils/previewRouting'
 import { getApiBase, getAuthToken } from '../../composables/apiBase'
 import { useI18n } from '../../composables/useI18n'
-import { ChevronLeft, ChevronRight, RotateCw, ArrowRight, ExternalLink, Upload, Download, X, Globe, FolderOpen, Star } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, RotateCw, ArrowRight, ExternalLink, X, Globe, FolderOpen, Star } from 'lucide-vue-next'
 import { usePaneResize } from '../../composables/usePaneResize'
 import { useWebBookmarks } from '../../composables/useWebBookmarks'
 import { useRecentUrls } from '../../composables/useRecentAccess'
@@ -241,6 +237,7 @@ async function restoreFilesPreview() {
 function switchToWeb() {
   if (props.kind === 'web') return
   emit('update:kind', 'web')
+  localAddress.value = props.webUrl || ''
   if (!props.webUrl) {
     nextTick(() => addressInputRef.value?.focus())
   }
@@ -250,6 +247,7 @@ function switchToFiles() {
   if (props.kind === 'files') return
   treeCollapsed.value = false
   emit('update:kind', 'files')
+  localAddress.value = props.address || ''
   void (async () => {
     await nextTick()
     await nextTick()
@@ -284,14 +282,6 @@ function go() {
 function refresh() {
   if (props.kind === 'web') navCounter.value++
   else filesRef.value?.reloadAll()
-}
-
-function onFilesUpload() {
-  filesRef.value?.triggerUpload()
-}
-
-function onFilesDownload() {
-  filesRef.value?.downloadSelected()
 }
 
 function close() {

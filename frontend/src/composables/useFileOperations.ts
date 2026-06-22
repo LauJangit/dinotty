@@ -128,19 +128,24 @@ export function useFileOperations(opts: {
     await uploadFiles(allFiles)
   }
 
-  async function downloadSelected() {
-    if (!opts.selectedRel.value || opts.selectedIsDir.value) return
+  async function downloadFile(rel: string) {
+    if (!rel) return
     await getApiBase()
-    const q = new URLSearchParams({ pane_id: opts.paneId(), path: opts.selectedRel.value })
+    const q = new URLSearchParams({ pane_id: opts.paneId(), path: rel })
     const res = await authFetch(apiUrl(`/api/workspace/raw?${q}`))
     if (!res.ok) return
     const blob = await res.blob()
-    const name = opts.selectedRel.value.split('/').pop() || 'file'
+    const name = rel.split('/').pop() || 'file'
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
     a.download = name
     a.click()
     URL.revokeObjectURL(a.href)
+  }
+
+  async function downloadSelected() {
+    if (!opts.selectedRel.value || opts.selectedIsDir.value) return
+    await downloadFile(opts.selectedRel.value)
   }
 
   async function deleteSelected(
@@ -195,6 +200,7 @@ export function useFileOperations(opts: {
     uploadFiles,
     onFilePick,
     onDrop,
+    downloadFile,
     downloadSelected,
     deleteSelected,
   }
