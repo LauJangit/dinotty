@@ -9,6 +9,7 @@
   <img src="https://img.shields.io/badge/language-Rust-orange" alt="Rust">
   <img src="https://img.shields.io/badge/frontend-Vue%203-brightgreen" alt="Vue 3">
   <a href="https://github.com/xichan96/dinotty/stargazers"><img src="https://img.shields.io/github/stars/xichan96/dinotty?style=social" alt="GitHub Stars"></a>
+  <a href="https://github.com/xichan96/dinotty/releases"><img src="https://img.shields.io/github/downloads/xichan96/dinotty/total" alt="GitHub Downloads"></a>
   <a href="https://github.com/xichan96/dinotty/issues"><img src="https://img.shields.io/github/issues/xichan96/dinotty" alt="GitHub Issues"></a>
 </p>
 
