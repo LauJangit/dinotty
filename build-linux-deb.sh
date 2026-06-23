@@ -14,8 +14,8 @@ echo "=== 2. 安装构建依赖 ==="
 ssh $SERVER "sudo apt-get update && sudo apt-get install -y build-essential pkg-config libssl-dev"
 
 echo "=== 3. 克隆代码 ==="
-ssh $SERVER "rm -rf $REMOTE_DIR && git clone https://github.com/anthropics/dinotty.git $REMOTE_DIR" 2>/dev/null || \
-ssh $SERVER "rm -rf $REMOTE_DIR && git clone git@github.com:anthropics/dinotty.git $REMOTE_DIR" 2>/dev/null || \
+ssh $SERVER "rm -rf $REMOTE_DIR && git clone https://github.com/xichan96/dinotty.git $REMOTE_DIR" 2>/dev/null || \
+ssh $SERVER "rm -rf $REMOTE_DIR && git clone git@github.com:xichan96/dinotty.git $REMOTE_DIR" 2>/dev/null || \
 {
     echo "需要手动上传代码或配置 git 访问"
     exit 1
