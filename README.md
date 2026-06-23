@@ -151,6 +151,29 @@ Claude Code 和 Codex 各自提供了内建的远程方案，但仅限于自身 
 
 > 也可以从源码构建，见下方「快速开始」。
 
+**macOS 注意事项**：由于应用未签名，macOS 可能会提示 **"Dinotty" is damaged and can't be opened**。安装后请在终端执行以下命令解除限制：
+
+```bash
+xattr -cr /Applications/Dinotty.app
+```
+
+**Linux 启动方式**：
+
+```bash
+# systemd
+systemctl start dinotty-server
+systemctl enable dinotty-server  # 开机自启
+
+# Docker 容器
+nohup dinotty-server &
+```
+
+默认监听端口 **8999**，启动后访问 `http://<your-ip>:8999`。可通过 `-p` 参数指定端口：
+
+```bash
+dinotty-server -p 3000
+```
+
 ## 快速开始
 
 ```bash

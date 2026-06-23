@@ -151,6 +151,29 @@ Download the installer for your platform from [GitHub Releases](https://github.c
 
 > You can also build from source, see "Quick Start" below.
 
+**macOS Note**: Since the app is unsigned, macOS may show **"Dinotty" is damaged and can't be opened**. Run the following command after installation to remove the restriction:
+
+```bash
+xattr -cr /Applications/Dinotty.app
+```
+
+**Linux startup**:
+
+```bash
+# systemd
+systemctl start dinotty-server
+systemctl enable dinotty-server  # auto-start on boot
+
+# Docker container
+nohup dinotty-server &
+```
+
+Default port is **8999**. After starting, visit `http://<your-ip>:8999`. Use `-p` to specify a custom port:
+
+```bash
+dinotty-server -p 3000
+```
+
 ## Quick Start
 
 ```bash
