@@ -157,6 +157,12 @@ Claude Code 和 Codex 各自提供了内建的远程方案，但仅限于自身 
 xattr -cr /Applications/Dinotty.app
 ```
 
+**Linux 一键下载安装**：
+
+```bash
+curl -LO https://github.com/xichan96/dinotty/releases/download/v0.11.2/dinotty-server_0.11.2-1_amd64.deb && sudo dpkg -i dinotty-server_0.11.2-1_amd64.deb
+```
+
 **Linux 启动方式**：
 
 ```bash
