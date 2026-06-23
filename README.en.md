@@ -43,21 +43,21 @@ The desktop client delivers a professional experience comparable to iTerm2:
 
 **Split Screen** — Draggable multi-pane split with free layout adjustment:
 
-<video src="https://github.com/xichan96/dinotty/releases/download/demo-media/split-screen.mp4" autoplay muted loop playsinline width="600">
-  <a href="https://github.com/xichan96/dinotty/releases/download/demo-media/split-screen.mp4">Watch split screen demo video</a>
-</video>
+<p align="center">
+  <img src="docs/images/split-screen.GIF" alt="Split screen demo" width="600" />
+</p>
 
 **Plugin System** — Hot-reloadable JS plugins with built-in CC Switch, JSON Formatter, and more:
 
-<video src="https://github.com/xichan96/dinotty/releases/download/demo-media/plugin-system.mp4" autoplay muted loop playsinline width="600">
-  <a href="https://github.com/xichan96/dinotty/releases/download/demo-media/plugin-system.mp4">Watch plugin system demo video</a>
-</video>
+<p align="center">
+  <img src="docs/images/plugin-system.GIF" alt="Plugin system demo" width="600" />
+</p>
 
 **Web Preview** — Preview local dev servers on your phone, built-in reverse proxy, no need to switch browsers:
 
-<video src="https://github.com/xichan96/dinotty/releases/download/demo-media/web-preview.mp4" autoplay muted loop playsinline width="600">
-  <a href="https://github.com/xichan96/dinotty/releases/download/demo-media/web-preview.mp4">Watch web preview demo video</a>
-</video>
+<p align="center">
+  <img src="docs/images/web-preview.GIF" alt="Web preview demo" width="600" />
+</p>
 
 ## Why Dinotty?
 
