@@ -74,6 +74,7 @@ export interface MonitorConfig {
   memory: boolean
   disk: boolean
   network: boolean
+  gpu: boolean
 }
 
 export interface TextConfig {
@@ -182,6 +183,7 @@ export const settings = reactive<SettingsData>({
     memory: true,
     disk: true,
     network: true,
+    gpu: true,
   },
   notification: {
     enabled: true,

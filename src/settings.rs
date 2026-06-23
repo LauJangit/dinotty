@@ -241,11 +241,13 @@ pub struct MonitorConfig {
     pub disk: bool,
     #[serde(default = "default_true")]
     pub network: bool,
+    #[serde(default = "default_true")]
+    pub gpu: bool,
 }
 
 impl Default for MonitorConfig {
     fn default() -> Self {
-        Self { enabled: true, cpu: true, memory: true, disk: true, network: true }
+        Self { enabled: true, cpu: true, memory: true, disk: true, network: true, gpu: true }
     }
 }
 
