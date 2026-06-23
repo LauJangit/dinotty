@@ -140,6 +140,17 @@
 
 Claude Code 和 Codex 各自提供了内建的远程方案，但仅限于自身 Agent 生态。Happy/hapi 是第三方远程控制层，包装 CLI 实现手机审批和语音交互。Dinotty 是通用 Web 终端服务器，Agent 在服务端原生运行，同时提供文件浏览、网页预览、插件系统等完整工作环境，桌面端和移动端均有专业体验。
 
+## 安装
+
+前往 [GitHub Releases](https://github.com/xichan96/dinotty/releases) 下载对应平台的安装包：
+
+| 平台 | 格式 | 说明 |
+|------|------|------|
+| **macOS** | `.dmg` | 双击打开，拖入 Applications 即可 |
+| **Linux** | `.deb` | `sudo dpkg -i dinotty_*.deb` |
+
+> 也可以从源码构建，见下方「快速开始」。
+
 ## 快速开始
 
 ```bash

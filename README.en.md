@@ -140,6 +140,17 @@ Other web terminals are thin WebSocket-to-PTY pipes. Dinotty runs a **full virtu
 
 Claude Code and Codex each offer built-in remote solutions, but are limited to their own agent ecosystem. Happy and hapi are third-party remote control layers that wrap CLI tools for phone-based approval and voice interaction. Dinotty is a general-purpose web terminal server where agents run natively on the server, with a full working environment including file browser, web preview, and plugin system, delivering a professional experience on both desktop and mobile.
 
+## Installation
+
+Download the installer for your platform from [GitHub Releases](https://github.com/xichan96/dinotty/releases):
+
+| Platform | Format | Notes |
+|----------|--------|-------|
+| **macOS** | `.dmg` | Open and drag to Applications |
+| **Linux** | `.deb` | `sudo dpkg -i dinotty_*.deb` |
+
+> You can also build from source, see "Quick Start" below.
+
 ## Quick Start
 
 ```bash
