@@ -1,6 +1,54 @@
 import { ref, computed, type Ref } from 'vue'
 import { getApiBase, apiUrl, authFetch, getAuthToken } from './apiBase'
+import { isTauri, tauriInvoke } from './useTransport'
 import type { DirEntry } from '../components/workspace/TreeRows'
+
+// --- Tauri native drag-drop support ---
+let tauriFileDropRegistered = false
+let _activeUploadFn: ((files: { file: File; path: string }[], targetDir?: string) => Promise<void>) | null = null
+let _workspaceDropHover = false
+let _hoveredDir: string | undefined = undefined
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result as string
+      resolve(result.slice(result.indexOf(',') + 1))
+    }
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
+function setupTauriFileDrop() {
+  if (tauriFileDropRegistered) return
+  tauriFileDropRegistered = true
+  const w = window as any
+  const listen = w.__TAURI__?.event?.listen
+  if (!listen) return
+
+  listen('file-drop-paths', async (event: any) => {
+    if (!_activeUploadFn || !_workspaceDropHover) return
+    const paths: string[] = event.payload || []
+    if (!paths.length) return
+    const files: { file: File; path: string }[] = []
+    for (const p of paths) {
+      try {
+        const b64: string = await tauriInvoke('tauri_read_file', { path: p }) as string
+        const binary = atob(b64)
+        const bytes = new Uint8Array(binary.length)
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+        const name = p.split('/').pop() || 'file'
+        const file = new File([bytes], name)
+        files.push({ file, path: name })
+      } catch (e) {
+        console.error('[upload] failed to read dropped file:', p, e)
+      }
+    }
+    if (files.length) await _activeUploadFn!(files, _hoveredDir)
+  })
+}
 
 interface Meta {
   kind: string
@@ -52,19 +100,39 @@ export function useFileOperations(opts: {
 
   function triggerUpload() { fileInputRef.value?.click() }
 
-  async function uploadFiles(files: { file: File; path: string }[]) {
+  async function uploadFiles(files: { file: File; path: string }[], targetDir?: string) {
     if (!files.length) return
     await getApiBase()
-    const dir = opts.selectedIsDir.value && opts.selectedRel.value ? opts.selectedRel.value : ''
-    const q = new URLSearchParams({ pane_id: opts.paneId(), dir })
-    const fd = new FormData()
-    for (const { file, path } of files) {
-      fd.append('path', path)
-      fd.append('file', file)
-    }
+    const dir = targetDir !== undefined
+      ? targetDir
+      : (opts.selectedIsDir.value && opts.selectedRel.value ? opts.selectedRel.value : '')
     try {
-      const res = await authFetch(apiUrl(`/api/workspace/upload?${q}`), { method: 'POST', body: fd })
-      if (!res.ok) console.error('[upload] server error:', res.status)
+      if (isTauri()) {
+        const token = getAuthToken()
+        const encoded = await Promise.all(
+          files.map(async ({ file, path }) => ({
+            name: file.name,
+            path,
+            data: await fileToBase64(file),
+          })),
+        )
+        const resp = (await tauriInvoke('tauri_upload', {
+          paneId: opts.paneId(),
+          dir,
+          files: encoded,
+          token: token || undefined,
+        })) as { status: number; body: string }
+        if (resp.status >= 400) console.error('[upload] server error:', resp.status)
+      } else {
+        const q = new URLSearchParams({ pane_id: opts.paneId(), dir })
+        const fd = new FormData()
+        for (const { file, path } of files) {
+          fd.append('path', path)
+          fd.append('file', file)
+        }
+        const res = await authFetch(apiUrl(`/api/workspace/upload?${q}`), { method: 'POST', body: fd })
+        if (!res.ok) console.error('[upload] server error:', res.status)
+      }
     } catch (e) {
       console.error('[upload] request failed:', e)
     }
@@ -187,6 +255,29 @@ export function useFileOperations(opts: {
     return true
   }
 
+  // --- Tauri native drag-drop wiring ---
+  if (isTauri()) setupTauriFileDrop()
+
+  function setActiveWorkspace() { _activeUploadFn = uploadFiles }
+  function clearActiveWorkspace() { if (_activeUploadFn === uploadFiles) _activeUploadFn = null }
+
+  function setHoveredDir(dir: string | undefined) { _hoveredDir = dir }
+  function clearHoveredDir() { _hoveredDir = undefined }
+
+  function onWorkspaceDragEnter() {
+    dragCounter.value++
+    _workspaceDropHover = true
+  }
+  function onWorkspaceDragLeave() {
+    dragCounter.value = Math.max(0, dragCounter.value - 1)
+    if (dragCounter.value === 0) _workspaceDropHover = false
+  }
+  function onWorkspaceDrop(ev: DragEvent) {
+    dragCounter.value = 0
+    _workspaceDropHover = false
+    onDrop(ev)
+  }
+
   return {
     fileInputRef,
     dragCounter,
@@ -200,8 +291,16 @@ export function useFileOperations(opts: {
     uploadFiles,
     onFilePick,
     onDrop,
+    traverseEntry,
     downloadFile,
     downloadSelected,
     deleteSelected,
+    setActiveWorkspace,
+    clearActiveWorkspace,
+    setHoveredDir,
+    clearHoveredDir,
+    onWorkspaceDragEnter,
+    onWorkspaceDragLeave,
+    onWorkspaceDrop,
   }
 }

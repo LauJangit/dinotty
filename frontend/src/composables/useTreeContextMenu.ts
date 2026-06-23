@@ -1,4 +1,4 @@
-import { ref, computed, type Ref } from 'vue'
+import { ref, computed, nextTick, type Ref } from 'vue'
 import { copyToClipboard } from '../utils/clipboard'
 import type { DirEntry } from '../components/workspace/TreeRows'
 
@@ -143,7 +143,7 @@ export function useTreeContextMenu(opts: {
 
   function ctxUpload() {
     closeContextMenu()
-    opts.triggerUpload()
+    nextTick(() => opts.triggerUpload())
   }
 
   async function ctxDownload() {

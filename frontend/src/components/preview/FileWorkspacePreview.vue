@@ -3,9 +3,9 @@
     <input ref="ops.fileInputRef" type="file" multiple class="sr-only" @change="ops.onFilePick" />
     <div ref="fileWorkspaceBodyRef" class="file-workspace-body" :class="{ embedded }"
       @dragover.prevent
-      @dragenter.prevent="ops.dragCounter.value++"
-      @dragleave="ops.dragCounter.value = Math.max(0, ops.dragCounter.value - 1)"
-      @drop.prevent="ops.dragCounter.value = 0; ops.onDrop($event)"
+      @dragenter.prevent="ops.onWorkspaceDragEnter()"
+      @dragleave="ops.onWorkspaceDragLeave()"
+      @drop.prevent="ops.onWorkspaceDrop($event)"
     >
       <div v-if="ops.dragging.value" class="file-workspace-drop-overlay">{{ t('filePreview.dropHint') }}</div>
       <div
@@ -38,6 +38,9 @@
             @long-press="ctxMenu.onTreeLongPress"
             @move-entry="ctxMenu.onMoveEntry"
             @swipe-action="onSwipeAction"
+            @upload-to-dir="onUploadToDir"
+            :on-dir-drag-enter="ops.setHoveredDir"
+            :on-dir-drag-leave="ops.clearHoveredDir"
           />
         </div>
       </div>
@@ -173,6 +176,9 @@
               @long-press="ctxMenu.onTreeLongPress"
               @move-entry="ctxMenu.onMoveEntry"
               @swipe-action="onSwipeAction"
+              @upload-to-dir="onUploadToDir"
+              :on-dir-drag-enter="ops.setHoveredDir"
+              :on-dir-drag-leave="ops.clearHoveredDir"
             />
           </div>
         </div>
@@ -346,6 +352,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from '../../composables/useI18n'
 import { getApiBase, apiUrl, authFetch } from '../../composables/apiBase'
+import { isTauri } from '../../composables/useTransport'
 import { copyToClipboard } from '../../utils/clipboard'
 import { usePaneResize } from '../../composables/usePaneResize'
 import { useFileNavigation, useSelectedPath } from '../../composables/useFileNavigation'
@@ -754,6 +761,21 @@ async function onInlineRenameCommit(newName: string) {
 
 function onInlineRenameCancel() { inlineRename.value = null }
 
+async function onUploadToDir(dir: string, ev: DragEvent) {
+  if (isTauri()) return // handled by file-drop-paths listener
+  const items = ev.dataTransfer?.items
+  if (!items) return
+  const allFiles: { file: File; path: string }[] = []
+  const promises: Promise<void>[] = []
+  for (let i = 0; i < items.length; i++) {
+    const entry = items[i].webkitGetAsEntry?.()
+    if (entry) promises.push(ops.traverseEntry(entry, '').then(files => { allFiles.push(...files) }))
+  }
+  try { await Promise.all(promises) } catch {}
+  if (!allFiles.length) return
+  await ops.uploadFiles(allFiles, dir)
+}
+
 function onSwipeAction(payload: { rel: string; action: string }) {
   const { rel, action } = payload
   const absPath = ops.absolutePath(rel)
@@ -917,6 +939,7 @@ onMounted(() => {
   window.addEventListener('resize', layout.onResize)
   window.addEventListener('keydown', onEditorSaveKeydown, true)
   window.addEventListener('scroll', onCloseContextScroll, true)
+  ops.setActiveWorkspace()
   void getApiBase()
 })
 
@@ -924,6 +947,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', layout.onResize)
   window.removeEventListener('keydown', onEditorSaveKeydown, true)
   window.removeEventListener('scroll', onCloseContextScroll, true)
+  ops.clearActiveWorkspace()
   fileWatch.disconnectTreeWatchSocket()
 })
 
