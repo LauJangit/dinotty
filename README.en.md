@@ -157,6 +157,12 @@ Download the installer for your platform from [GitHub Releases](https://github.c
 xattr -cr /Applications/Dinotty.app
 ```
 
+**Linux one-liner install**:
+
+```bash
+curl -LO https://github.com/xichan96/dinotty/releases/download/v0.11.2/dinotty-server_0.11.2-1_amd64.deb && sudo dpkg -i dinotty-server_0.11.2-1_amd64.deb
+```
+
 **Linux startup**:
 
 ```bash
