@@ -68,6 +68,9 @@ export class TerminalInstance {
   private _lastInputData = ''
   private _lastInputTime = 0
   touchMoved = false
+  inTouchSelection = false
+  selStartRow = 0
+  selStartCol = 0
   private _visibilityHandler: (() => void) | null = null
   private _dragDropCleanup: (() => void) | null = null
   private _initialResizeTimer: ReturnType<typeof setInterval> | null = null
@@ -714,6 +717,7 @@ export class TerminalInstance {
         mode = 'undecided'
       }
       const onTouchMove = (e: TouchEvent) => {
+        if (this.inTouchSelection) return
         const cx = e.touches[0].clientX
         const cy = e.touches[0].clientY
         const now = Date.now()

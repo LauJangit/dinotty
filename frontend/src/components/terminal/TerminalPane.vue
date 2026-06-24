@@ -135,7 +135,85 @@ function onMenuOpenLink(url: string) {
   emit('previewLink', url)
 }
 
-// Mobile long-press to open context menu
+// Cached cell dimensions for touch selection
+let cachedCellW = 0
+let cachedCellH = 0
+let cachedScreenRect: DOMRect | null = null
+
+function cacheCellDims() {
+  const xt = terminal?.xterm
+  if (!xt) return false
+  const core = (xt as any)._core
+  const dims = core?._renderService?.dimensions
+  if (!dims?.css?.cell?.width || !dims.css.cell.height) return false
+  cachedCellW = dims.css.cell.width
+  cachedCellH = dims.css.cell.height
+  const xtermEl = xt.element
+  if (!xtermEl) return false
+  const screen = xtermEl.querySelector('.xterm-screen') as HTMLElement
+  if (!screen) return false
+  cachedScreenRect = screen.getBoundingClientRect()
+  return true
+}
+
+function touchToBufferPos(clientX: number, clientY: number): { col: number; row: number } | null {
+  const xt = terminal?.xterm
+  if (!xt || !cachedScreenRect || !cachedCellW || !cachedCellH) return null
+  const col = Math.max(0, Math.floor((clientX - cachedScreenRect.left) / cachedCellW))
+  const row = Math.max(0, Math.floor((clientY - cachedScreenRect.top) / cachedCellH))
+  return { col: Math.min(col, xt.cols - 1), row: Math.min(row, xt.rows - 1) }
+}
+
+function findWordAt(bufferRow: number, col: number): { start: number; length: number } | null {
+  const xt = terminal?.xterm
+  if (!xt) return null
+  const line = xt.buffer.active.getLine(bufferRow)
+  if (!line) return null
+  const lineText = line.translateToString(true)
+  if (!lineText) return null
+  const wordRegex = /[\w.:/@-]+/g
+  let match: RegExpExecArray | null
+  while ((match = wordRegex.exec(lineText)) !== null) {
+    if (col >= match.index && col < match.index + match[0].length) {
+      return { start: match.index, length: match[0].length }
+    }
+  }
+  return null
+}
+
+function calcSelectionLength(startCol: number, startRow: number, endCol: number, endRow: number): number {
+  const xt = terminal?.xterm
+  if (!xt) return 0
+  const cols = xt.cols
+  if (startRow === endRow) {
+    return Math.max(1, endCol - startCol + 1)
+  }
+  // xterm.js wraps at `cols` columns — use cols for intermediate lines, not content length
+  let len = cols - startCol
+  for (let r = startRow + 1; r < endRow; r++) {
+    len += cols
+  }
+  len += Math.min(endCol + 1, cols)
+  return Math.max(1, len)
+}
+
+function updateSelectionTo(clientX: number, clientY: number) {
+  const xt = terminal?.xterm
+  if (!xt) return
+  const pos = touchToBufferPos(clientX, clientY)
+  if (!pos) return
+  const endRow = xt.buffer.active.viewportY + pos.row
+  const endCol = pos.col
+  const sr = terminal!.selStartRow
+  const sc = terminal!.selStartCol
+  if (endRow < sr || (endRow === sr && endCol < sc)) {
+    xt.select(endCol, endRow, calcSelectionLength(endCol, endRow, sc, sr))
+  } else {
+    xt.select(sc, sr, calcSelectionLength(sc, sr, endCol, endRow))
+  }
+}
+
+// Mobile long-press to start touch selection
 function onTouchStart(e: TouchEvent) {
   if (!terminal || terminal.isMouseModeEnabled()) return
   longPressFired = false
@@ -144,15 +222,34 @@ function onTouchStart(e: TouchEvent) {
   longPressStartY = touch.clientY
   longPressTimer = setTimeout(() => {
     longPressFired = true
-    const text = terminal!.getSelection()
-    menuSelectedText.value = text
-    menuX.value = longPressStartX
-    menuY.value = longPressStartY
-    menuVisible.value = true
+    if (!cacheCellDims()) return
+    const xt = terminal!.xterm
+    if (!xt) return
+    const pos = touchToBufferPos(longPressStartX, longPressStartY)
+    if (!pos) return
+    const bufferRow = xt.buffer.active.viewportY + pos.row
+    const word = findWordAt(bufferRow, pos.col)
+    if (word) {
+      xt.select(word.start, bufferRow, word.length)
+      terminal!.selStartRow = bufferRow
+      terminal!.selStartCol = word.start
+    } else {
+      xt.select(pos.col, bufferRow, 1)
+      terminal!.selStartRow = bufferRow
+      terminal!.selStartCol = pos.col
+    }
+    terminal!.inTouchSelection = true
+    menuSelectedText.value = xt.getSelection()
   }, 500)
 }
 
 function onTouchMove(e: TouchEvent) {
+  if (terminal?.inTouchSelection) {
+    const touch = e.touches[0]
+    updateSelectionTo(touch.clientX, touch.clientY)
+    menuSelectedText.value = terminal!.xterm?.getSelection() ?? ''
+    return
+  }
   if (longPressTimer && !longPressFired) {
     const touch = e.touches[0]
     if (
@@ -166,6 +263,15 @@ function onTouchMove(e: TouchEvent) {
 }
 
 function onTouchEnd(e: TouchEvent) {
+  if (terminal?.inTouchSelection) {
+    e.preventDefault()
+    terminal.inTouchSelection = false
+    menuSelectedText.value = terminal.xterm?.getSelection() ?? ''
+    menuX.value = longPressStartX
+    menuY.value = longPressStartY
+    menuVisible.value = true
+    return
+  }
   if (longPressFired) {
     e.preventDefault()
     e.stopPropagation()
@@ -183,6 +289,7 @@ function onTouchCancel() {
     longPressTimer = null
   }
   longPressFired = false
+  if (terminal) terminal.inTouchSelection = false
 }
 
 onMounted(() => {
