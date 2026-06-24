@@ -1,14 +1,13 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use bytes::Bytes;
 use lol_html::{element, HtmlRewriter, Settings};
 use std::sync::LazyLock;
 
-static CSS_URL_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
-    regex::Regex::new(r#"(?i)url\(\s*(['"]?)([^)'"]+)['"]?\s*\)"#).unwrap()
-});
+static CSS_URL_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r#"(?i)url\(\s*(['"]?)([^)'"]+)['"]?\s*\)"#).unwrap());
 
-static JS_IMPORT_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
-    regex::Regex::new(r#"((?:from|import)\s*\(?)(["'])/([^/"'])"#).unwrap()
-});
+static JS_IMPORT_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r#"((?:from|import)\s*\(?)(["'])/([^/"'])"#).unwrap());
 
 #[derive(Clone)]
 pub enum RewriteMode {
@@ -29,19 +28,21 @@ pub fn rewrite_url(raw: &str, base_url: &str, mode: &RewriteMode) -> Option<Stri
     {
         return None;
     }
-    let abs = if u.starts_with("http://") || u.starts_with("https://") || u.starts_with("HTTP://") || u.starts_with("HTTPS://") {
+    let abs = if u.starts_with("http://")
+        || u.starts_with("https://")
+        || u.starts_with("HTTP://")
+        || u.starts_with("HTTPS://")
+    {
         u.to_string()
     } else if u.starts_with("//") {
-        format!("https:{}", u)
+        format!("https:{u}")
     } else if let Ok(base) = reqwest::Url::parse(base_url) {
         base.join(u).ok()?.to_string()
     } else {
         return None;
     };
     match mode {
-        RewriteMode::External(_) => {
-            Some(format!("/api/proxy?url={}", urlencoding::encode(&abs)))
-        }
+        RewriteMode::External(_) => Some(format!("/api/proxy?url={}", urlencoding::encode(&abs))),
         RewriteMode::Internal { host, port } => {
             if let Ok(parsed) = reqwest::Url::parse(&abs) {
                 let h = parsed.host_str().unwrap_or("");
@@ -49,15 +50,15 @@ pub fn rewrite_url(raw: &str, base_url: &str, mode: &RewriteMode) -> Option<Stri
                     let p = parsed.port().unwrap_or(*port);
                     let target_host = if h == host { host.as_str() } else { "127.0.0.1" };
                     let prefix = if target_host == "127.0.0.1" {
-                        format!("/preview/{}", p)
+                        format!("/preview/{p}")
                     } else {
-                        format!("/preview/{}/{}", target_host, p)
+                        format!("/preview/{target_host}/{p}")
                     };
                     Some(format!(
                         "{}{}{}",
                         prefix,
                         parsed.path(),
-                        parsed.query().map(|q| format!("?{}", q)).unwrap_or_default()
+                        parsed.query().map(|q| format!("?{q}")).unwrap_or_default()
                     ))
                 } else {
                     None
@@ -75,7 +76,7 @@ pub fn rewrite_css_urls(css: &str, base_url: &str, mode: &RewriteMode) -> String
             let quote = &caps[1];
             let url = &caps[2];
             match rewrite_url(url, base_url, mode) {
-                Some(rewritten) => format!("url({}{}{})", quote, rewritten, quote),
+                Some(rewritten) => format!("url({quote}{rewritten}{quote})"),
                 None => caps[0].to_string(),
             }
         })
@@ -86,9 +87,9 @@ pub fn rewrite_js_imports(js: &str, mode: &RewriteMode) -> String {
     let prefix = match mode {
         RewriteMode::Internal { host, port } => {
             if host == "127.0.0.1" {
-                format!("/preview/{}", port)
+                format!("/preview/{port}")
             } else {
-                format!("/preview/{}/{}", host, port)
+                format!("/preview/{host}/{port}")
             }
         }
         RewriteMode::External(_) => return js.to_string(),
@@ -125,7 +126,7 @@ pub fn rewrite_html_urls(html: &str, base_url: &str, mode: &RewriteMode) -> Stri
                     let descriptor = if parts.len() > 1 { parts[1] } else { "" };
                     match rewrite_url(url, &base_url, &mode_clone) {
                         Some(rewritten) if descriptor.is_empty() => rewritten,
-                        Some(rewritten) => format!("{} {}", rewritten, descriptor),
+                        Some(rewritten) => format!("{rewritten} {descriptor}"),
                         None => entry.trim().to_string(),
                     }
                 })
@@ -153,14 +154,13 @@ pub fn rewrite_html_urls(html: &str, base_url: &str, mode: &RewriteMode) -> Stri
         let http_equiv = el.get_attribute("http-equiv").unwrap_or_default();
         if http_equiv.eq_ignore_ascii_case("refresh") {
             if let Some(content) = el.get_attribute("content") {
-                static META_URL_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
-                    regex::Regex::new(r"(?i)(.*?url\s*=\s*)(.+)").unwrap()
-                });
+                static META_URL_RE: LazyLock<regex::Regex> =
+                    LazyLock::new(|| regex::Regex::new(r"(?i)(.*?url\s*=\s*)(.+)").unwrap());
                 if let Some(caps) = META_URL_RE.captures(&content) {
                     let prefix = &caps[1];
                     let url = &caps[2];
                     if let Some(rewritten) = rewrite_url(url.trim(), &base_url3, &mode_clone3) {
-                        el.set_attribute("content", &format!("{}{}", prefix, rewritten)).ok();
+                        el.set_attribute("content", &format!("{prefix}{rewritten}")).ok();
                     }
                 }
             }
@@ -195,9 +195,8 @@ pub fn rewrite_html_urls(html: &str, base_url: &str, mode: &RewriteMode) -> Stri
 }
 
 fn rewrite_style_blocks(html: &str, base_url: &str, mode: &RewriteMode) -> String {
-    static STYLE_BLOCK_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
-        regex::Regex::new(r"(?is)<style[^>]*>(.*?)</style>").unwrap()
-    });
+    static STYLE_BLOCK_RE: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"(?is)<style[^>]*>(.*?)</style>").unwrap());
     STYLE_BLOCK_RE
         .replace_all(html, |caps: &regex::Captures| {
             let full = &caps[0];
@@ -208,7 +207,11 @@ fn rewrite_style_blocks(html: &str, base_url: &str, mode: &RewriteMode) -> Strin
         .into_owned()
 }
 
-pub fn rewrite_form_urlencoded_body(body: &[u8], base_url: &str, mode: &RewriteMode) -> Option<Bytes> {
+pub fn rewrite_form_urlencoded_body(
+    body: &[u8],
+    base_url: &str,
+    mode: &RewriteMode,
+) -> Option<Bytes> {
     let text = std::str::from_utf8(body).ok()?;
     let mut changed = false;
     let pairs: Vec<String> = text
@@ -233,7 +236,7 @@ pub fn rewrite_form_urlencoded_body(body: &[u8], base_url: &str, mode: &RewriteM
     }
 }
 
-pub fn rewrite_set_cookie(cookie: &str, mode: &Option<RewriteMode>) -> String {
+pub fn rewrite_set_cookie(cookie: &str, mode: Option<&RewriteMode>) -> String {
     static DOMAIN_RE: LazyLock<regex::Regex> =
         LazyLock::new(|| regex::Regex::new(r"(?i);\s*domain=[^;]*").unwrap());
     static PATH_RE: LazyLock<regex::Regex> =
@@ -250,9 +253,9 @@ pub fn rewrite_set_cookie(cookie: &str, mode: &Option<RewriteMode>) -> String {
     let path_prefix = match mode {
         Some(RewriteMode::Internal { host, port }) => {
             if host == "127.0.0.1" {
-                format!("/preview/{}", port)
+                format!("/preview/{port}")
             } else {
-                format!("/preview/{}/{}", host, port)
+                format!("/preview/{host}/{port}")
             }
         }
         Some(RewriteMode::External(_)) => "/api/proxy".to_string(),
@@ -260,13 +263,11 @@ pub fn rewrite_set_cookie(cookie: &str, mode: &Option<RewriteMode>) -> String {
     };
 
     if let Some(caps) = PATH_RE.captures(&result) {
-        let orig_path = caps.get(1).map(|m| m.as_str()).unwrap_or("/");
-        let new_path = format!("{}{}", path_prefix, orig_path);
-        result = PATH_RE
-            .replace(&result, format!("; Path={}", new_path))
-            .into_owned();
+        let orig_path = caps.get(1).map_or("/", |m| m.as_str());
+        let new_path = format!("{path_prefix}{orig_path}");
+        result = PATH_RE.replace(&result, format!("; Path={new_path}")).into_owned();
     } else {
-        result = format!("{}; Path={}/", result, path_prefix);
+        result = format!("{result}; Path={path_prefix}/");
     }
 
     result

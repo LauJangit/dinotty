@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 use crate::vt_screen::VirtualScreen;
 use dashmap::DashMap;
 use portable_pty::{Child, MasterPty};
@@ -8,8 +9,8 @@ use std::{
     sync::{Arc, Mutex},
     time::Instant,
 };
-use tracing::info;
 use tokio::sync::mpsc;
+use tracing::info;
 
 pub enum SessionStatus {
     Connected,
@@ -32,6 +33,7 @@ pub struct Session {
     pub size: Mutex<(u16, u16)>,
     #[allow(dead_code)]
     pub shell_type: String,
+    #[allow(clippy::type_complexity)]
     pub tauri_on_exit: Mutex<Option<Arc<dyn Fn(String) + Send + Sync>>>,
     pub cwd_state: Mutex<CwdState>,
 }
@@ -40,19 +42,24 @@ impl Session {
     /// Explicitly kill the child process. Safe to call multiple times (idempotent).
     /// After this, the PTY reader task's `reader.read()` will return Err/Ok(0),
     /// causing it to exit and drop its `Arc<Session>`, which triggers `Drop`.
+    ///
+    /// # Panics
+    /// May panic if the internal mutex is poisoned.
     pub fn kill_child(&self) {
-        let mut child = self.child.lock().unwrap();
+        let mut child = self.child.lock().expect("child mutex poisoned");
         let pid = child.process_id();
         let _ = child.kill();
         let _ = child.wait();
         info!("Session child killed: pid={:?}", pid);
     }
 
+    /// # Panics
+    /// May panic if the internal mutex is poisoned.
     pub fn on_pty_output(&self, data: &[u8]) {
         let Some(home) = dirs::home_dir() else {
             return;
         };
-        let mut state = self.cwd_state.lock().unwrap();
+        let mut state = self.cwd_state.lock().expect("mutex poisoned");
         let CwdState { ref mut cwd, ref mut sniff_buf } = *state;
         sniff_cwd_from_title_osc(sniff_buf, data, &home, cwd);
     }
@@ -60,33 +67,45 @@ impl Session {
     /// Replace the input channel, closing the old one (if any) so the previous
     /// PTY write task exits. Returns the new receiver for the caller to spawn
     /// a write task on.
+    ///
+    /// # Panics
+    /// May panic if the internal mutex is poisoned.
     pub fn replace_input_channel(&self) -> mpsc::UnboundedReceiver<String> {
         let (tx, rx) = mpsc::unbounded_channel();
-        let old = self.input_tx.lock().unwrap().replace(tx);
+        let old = self.input_tx.lock().expect("mutex poisoned").replace(tx);
         drop(old); // close old sender → old write task's recv() returns None
         rx
     }
 
+    /// # Panics
+    /// May panic if the internal mutex is poisoned.
     pub fn add_client(&self) -> mpsc::UnboundedReceiver<String> {
         let (tx, rx) = mpsc::unbounded_channel();
-        self.clients.lock().unwrap().push(tx);
+        self.clients.lock().expect("mutex poisoned").push(tx);
         rx
     }
 
     /// Remove all existing clients so old forwarder tasks exit cleanly.
     /// Must be called before `add_client` on reconnection to prevent
     /// duplicate output delivery.
+    ///
+    /// # Panics
+    /// May panic if the internal mutex is poisoned.
     pub fn clear_clients(&self) {
-        self.clients.lock().unwrap().clear();
+        self.clients.lock().expect("mutex poisoned").clear();
     }
 
+    /// # Panics
+    /// May panic if the internal mutex is poisoned.
     pub fn broadcast(&self, msg: &str) {
-        let mut clients = self.clients.lock().unwrap();
+        let mut clients = self.clients.lock().expect("mutex poisoned");
         clients.retain(|tx| tx.send(msg.to_string()).is_ok());
     }
 
+    /// # Panics
+    /// May panic if the internal mutex is poisoned.
     pub fn has_clients(&self) -> bool {
-        let mut clients = self.clients.lock().unwrap();
+        let mut clients = self.clients.lock().expect("mutex poisoned");
         clients.retain(|tx| !tx.is_closed());
         !clients.is_empty()
     }
@@ -94,7 +113,7 @@ impl Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
-        let mut child = self.child.lock().unwrap();
+        let mut child = self.child.lock().expect("mutex poisoned");
         let pid = child.process_id();
         let _ = child.kill();
         let _ = child.wait();
@@ -111,10 +130,7 @@ fn sniff_cwd_from_title_osc(buf: &mut Vec<u8>, chunk: &[u8], home: &Path, cwd: &
         buf.drain(..drop);
     }
     let needle = b"\x1b]0;";
-    loop {
-        let Some(i) = find_subslice(buf, needle) else {
-            break;
-        };
+    while let Some(i) = find_subslice(buf, needle) {
         let payload_start = i + needle.len();
         let bel_pos = buf[payload_start..].iter().position(|&b| b == 0x07);
         let st_pos = buf[payload_start..].windows(2).position(|w| w == b"\x1b\\");
@@ -137,18 +153,23 @@ fn sniff_cwd_from_title_osc(buf: &mut Vec<u8>, chunk: &[u8], home: &Path, cwd: &
 }
 
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|window| window == needle)
+    haystack.windows(needle.len()).position(|window| window == needle)
 }
 
+#[must_use]
 pub fn collect_leaf_pane_ids(layout: &serde_json::Value) -> Vec<String> {
     let mut ids = Vec::new();
     collect_leaf_ids_recursive(layout, &mut ids);
     ids
 }
 
-pub fn remove_pane_from_layout(node: &serde_json::Value, pane_id: &str) -> Option<serde_json::Value> {
+/// # Panics
+/// May panic if the JSON tree structure is unexpectedly malformed.
+#[must_use]
+pub fn remove_pane_from_layout(
+    node: &serde_json::Value,
+    pane_id: &str,
+) -> Option<serde_json::Value> {
     let node_type = node.get("type")?.as_str()?;
     match node_type {
         "leaf" => {
@@ -160,10 +181,8 @@ pub fn remove_pane_from_layout(node: &serde_json::Value, pane_id: &str) -> Optio
         }
         "split" => {
             let children = node.get("children")?.as_array()?;
-            let new_children: Vec<serde_json::Value> = children
-                .iter()
-                .filter_map(|c| remove_pane_from_layout(c, pane_id))
-                .collect();
+            let new_children: Vec<serde_json::Value> =
+                children.iter().filter_map(|c| remove_pane_from_layout(c, pane_id)).collect();
             match new_children.len() {
                 0 => None,
                 _ if new_children.len() == children.len() => {
@@ -175,15 +194,17 @@ pub fn remove_pane_from_layout(node: &serde_json::Value, pane_id: &str) -> Optio
                 }
                 1 => {
                     // Single-child split is degenerate — collapse by returning the child directly
-                    Some(new_children.into_iter().next().unwrap())
+                    Some(new_children.into_iter().next().expect("checked len == 1"))
                 }
                 _ => {
                     let mut result = node.clone();
                     result["children"] = serde_json::Value::Array(new_children);
                     // Rebalance ratios evenly
-                    let n = result["children"].as_array().unwrap().len();
+                    let n = result["children"].as_array().expect("just assigned as array").len();
+                    #[allow(clippy::cast_precision_loss)]
+                    let ratio = 1.0 / n as f64;
                     result["ratios"] = serde_json::Value::Array(
-                        (0..n).map(|_| serde_json::Value::from(1.0 / n as f64)).collect()
+                        (0..n).map(|_| serde_json::Value::from(ratio)).collect(),
                     );
                     Some(result)
                 }
@@ -211,6 +232,7 @@ fn collect_leaf_ids_recursive(node: &serde_json::Value, ids: &mut Vec<String>) {
 
 /// Insert a new pane into the layout tree by splitting the target pane.
 /// Returns the updated layout, or None if the target pane was not found.
+#[must_use]
 pub fn insert_pane_into_layout(
     layout: &serde_json::Value,
     target_pane_id: &str,
@@ -248,7 +270,9 @@ pub fn insert_pane_into_layout(
             let mut new_children = Vec::new();
             let mut found = false;
             for child in children {
-                if let Some(updated) = insert_pane_into_layout(child, target_pane_id, direction, new_pane_id) {
+                if let Some(updated) =
+                    insert_pane_into_layout(child, target_pane_id, direction, new_pane_id)
+                {
                     if !found && updated != *child {
                         found = true;
                     }
@@ -338,7 +362,14 @@ pub struct TabInfo {
     pub active_pane_id: Option<String>,
 }
 
+impl Default for SessionManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SessionManager {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             sessions: DashMap::new(),
@@ -350,8 +381,11 @@ impl SessionManager {
     }
 
     /// Insert a tab layout and record its order position.
+    ///
+    /// # Panics
+    /// May panic if the internal mutex is poisoned.
     pub fn insert_tab(&self, tab_id: String, value: serde_json::Value) {
-        let mut order = self.tab_order.lock().unwrap();
+        let mut order = self.tab_order.lock().expect("mutex poisoned");
         if !order.contains(&tab_id) {
             order.push(tab_id.clone());
         }
@@ -360,22 +394,30 @@ impl SessionManager {
     }
 
     /// Remove a tab layout and its order entry.
+    ///
+    /// # Panics
+    /// Panics if the internal mutex is poisoned.
     pub fn remove_tab(&self, tab_id: &str) {
         self.tab_layouts.remove(tab_id);
-        let mut order = self.tab_order.lock().unwrap();
+        let mut order = self.tab_order.lock().expect("mutex poisoned");
         order.retain(|id| id != tab_id);
     }
 
+    /// # Panics
+    /// Panics if the internal mutex is poisoned.
     pub fn broadcast_sync(&self, msg: &SyncMsg) {
-        let json = serde_json::to_string(msg).unwrap();
-        let mut clients = self.sync_clients.lock().unwrap();
+        let json = serde_json::to_string(msg).expect("serialization is infallible");
+        let mut clients = self.sync_clients.lock().expect("mutex poisoned");
         clients.retain(|c| c.tx.send(json.clone()).is_ok());
     }
 
     /// Broadcast to all sync clients except the one with the given ID.
+    ///
+    /// # Panics
+    /// Panics if the internal mutex is poisoned.
     pub fn broadcast_sync_others(&self, msg: &SyncMsg, exclude_id: &str) {
-        let json = serde_json::to_string(msg).unwrap();
-        let mut clients = self.sync_clients.lock().unwrap();
+        let json = serde_json::to_string(msg).expect("serialization is infallible");
+        let mut clients = self.sync_clients.lock().expect("mutex poisoned");
         clients.retain(|c| {
             if c.id == exclude_id {
                 true // keep in list but don't send
@@ -385,10 +427,12 @@ impl SessionManager {
         });
     }
 
+    /// # Panics
+    /// Panics if the internal mutex is poisoned.
     pub fn add_sync_client(&self) -> (String, mpsc::UnboundedReceiver<String>) {
         let id = uuid::Uuid::new_v4().to_string();
         let (tx, rx) = mpsc::unbounded_channel();
-        self.sync_clients.lock().unwrap().push(SyncClient { id: id.clone(), tx });
+        self.sync_clients.lock().expect("mutex poisoned").push(SyncClient { id: id.clone(), tx });
         (id, rx)
     }
 
@@ -396,34 +440,37 @@ impl SessionManager {
         self.broadcast_sync(&SyncMsg::PluginChanged { plugin_id, change });
     }
 
-    /// Remove a session from the DashMap and explicitly kill its child process.
+    /// Remove a session from the `DashMap` and explicitly kill its child process.
     /// Returns true if the session existed.
     ///
     /// This is necessary because the PTY reader task holds an `Arc<Session>`,
-    /// preventing `Drop` from firing when we only remove from the DashMap.
+    /// preventing `Drop` from firing when we only remove from the `DashMap`.
     /// By killing the child first, the reader's `read()` returns Err/Ok(0),
     /// causing it to exit and release its `Arc`.
+    ///
+    /// # Panics
+    /// Panics if the internal mutex is poisoned.
     pub fn kill_and_remove(&self, pane_id: &str) -> bool {
         if let Some((_, session)) = self.sessions.remove(pane_id) {
             session.kill_child();
             // Drop the input channel sender so the writer task's recv() returns
             // None and the task exits, releasing its Arc<Session>.
-            session.input_tx.lock().unwrap().take();
+            session.input_tx.lock().expect("mutex poisoned").take();
             true
         } else {
             false
         }
     }
 
-    /// Remove a pane_id from all parent tab layouts. If removing it causes
+    /// Remove a `pane_id` from all parent tab layouts. If removing it causes
     /// a split to have only one child, the split collapses into that child.
     /// Returns the list of tab IDs whose layouts became empty (i.e. the pane
-    /// was the last leaf) so the caller can broadcast TabClosed for them.
+    /// was the last leaf) so the caller can broadcast `TabClosed` for them.
     pub fn purge_pane_from_layouts(&self, pane_id: &str) -> Vec<String> {
         let mut updates: Vec<(String, serde_json::Value)> = Vec::new();
         let mut emptied_tabs: Vec<String> = Vec::new();
 
-        for entry in self.tab_layouts.iter() {
+        for entry in &self.tab_layouts {
             let tab_pane_id = entry.key();
             if tab_pane_id == pane_id {
                 continue;
@@ -438,7 +485,8 @@ impl SessionManager {
                 Some(new_layout) if new_layout != *layout => {
                     let active = val.get("active_pane_id").and_then(|v| v.as_str());
                     let new_leaf_ids = collect_leaf_pane_ids(&new_layout);
-                    let active_pane_id = active.filter(|id| new_leaf_ids.iter().any(|lid| lid == *id));
+                    let active_pane_id =
+                        active.filter(|id| new_leaf_ids.iter().any(|lid| lid == *id));
                     let mut new_val = serde_json::json!({ "layout": new_layout });
                     if let Some(a) = active_pane_id {
                         new_val["active_pane_id"] = serde_json::Value::String(a.to_string());
@@ -458,71 +506,85 @@ impl SessionManager {
         emptied_tabs
     }
 
+    /// # Panics
+    /// Panics if the internal mutex is poisoned.
     pub fn tab_list(&self) -> (Vec<TabInfo>, Option<String>) {
         // Prune stale tab layouts whose leaf pane_ids no longer have sessions.
         // Without this, tab_layouts entries accumulate forever (phantom tabs).
         let stale: Vec<String> = {
-            self.tab_layouts.iter().filter_map(|e| {
-                let v = e.value();
-                let layout = v.get("layout")?;
-                let leaf_ids = collect_leaf_pane_ids(layout);
-                if leaf_ids.is_empty() || !leaf_ids.iter().any(|id| self.sessions.contains_key(id)) {
-                    Some(e.key().clone())
-                } else {
-                    None
-                }
-            }).collect()
+            self.tab_layouts
+                .iter()
+                .filter_map(|e| {
+                    let v = e.value();
+                    let layout = v.get("layout")?;
+                    let leaf_ids = collect_leaf_pane_ids(layout);
+                    if leaf_ids.is_empty()
+                        || !leaf_ids.iter().any(|id| self.sessions.contains_key(id))
+                    {
+                        Some(e.key().clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
         };
         for key in &stale {
             self.tab_layouts.remove(key);
         }
         if !stale.is_empty() {
-            let mut order = self.tab_order.lock().unwrap();
+            let mut order = self.tab_order.lock().expect("mutex poisoned");
             order.retain(|id| !stale.contains(id));
         }
 
-        let order = self.tab_order.lock().unwrap();
+        let order = self.tab_order.lock().expect("mutex poisoned");
         let order_index = |tab_id: &str| -> usize {
             order.iter().position(|id| id == tab_id).unwrap_or(usize::MAX)
         };
 
-        let mut tabs: Vec<TabInfo> = self.tab_layouts.iter().filter_map(|e| {
-            let tab_id = e.key().clone();
-            let v = e.value();
-            let layout = v.get("layout").cloned();
-            let pane_id = layout.as_ref()
-                .and_then(|l| first_leaf_id(l))
-                .unwrap_or_else(|| tab_id.clone());
-            let active_pane_id = v.get("active_pane_id").and_then(|v| v.as_str()).map(String::from);
-            Some(TabInfo { tab_id, pane_id, layout, active_pane_id })
-        }).collect();
+        let mut tabs: Vec<TabInfo> = self
+            .tab_layouts
+            .iter()
+            .map(|e| {
+                let tab_id = e.key().clone();
+                let v = e.value();
+                let layout = v.get("layout").cloned();
+                let pane_id =
+                    layout.as_ref().and_then(first_leaf_id).unwrap_or_else(|| tab_id.clone());
+                let active_pane_id =
+                    v.get("active_pane_id").and_then(|v| v.as_str()).map(String::from);
+                TabInfo { tab_id, pane_id, layout, active_pane_id }
+            })
+            .collect();
 
         tabs.sort_by_key(|t| order_index(&t.tab_id));
         drop(order);
 
         // Include sessions that don't belong to any existing tab (neither as tab id nor as a leaf)
-        let leaf_ids: std::collections::HashSet<String> = tabs.iter()
-            .filter_map(|t| t.layout.as_ref())
-            .flat_map(|layout| collect_leaf_pane_ids(layout))
-            .collect();
-        for entry in self.sessions.iter() {
+        let leaf_ids: std::collections::HashSet<String> =
+            tabs.iter().filter_map(|t| t.layout.as_ref()).flat_map(collect_leaf_pane_ids).collect();
+        for entry in &self.sessions {
             let pane_id = entry.key().clone();
             if !tabs.iter().any(|t| t.pane_id == pane_id) && !leaf_ids.contains(&pane_id) {
-                tabs.push(TabInfo { tab_id: pane_id.clone(), pane_id, layout: None, active_pane_id: None });
+                tabs.push(TabInfo {
+                    tab_id: pane_id.clone(),
+                    pane_id,
+                    layout: None,
+                    active_pane_id: None,
+                });
             }
         }
 
-        let active = self.active_pane_id.lock().unwrap().clone();
+        let active = self.active_pane_id.lock().expect("mutex poisoned").clone();
         (tabs, active)
     }
 
     /// When a PTY exits, find the parent tab and either remove it (single-pane)
-    /// or update the layout (multi-pane). Returns the tab-level pane_id for
-    /// single-pane tabs so the caller can broadcast TabClosed.
+    /// or update the layout (multi-pane). Returns the tab-level `pane_id` for
+    /// single-pane tabs so the caller can broadcast `TabClosed`.
     pub fn on_pty_exited(&self, leaf_pane_id: &str) -> Option<String> {
         // Find the tab layout that contains this leaf
         let mut found_tab_id: Option<String> = None;
-        for entry in self.tab_layouts.iter() {
+        for entry in &self.tab_layouts {
             let tab_id = entry.key();
             let val = entry.value();
             if let Some(layout) = val.get("layout") {
@@ -553,15 +615,18 @@ impl SessionManager {
             let active = tab_val.value().get("active_pane_id").and_then(|v| v.as_str());
             let active_pane_id = active
                 .filter(|id| new_leaf_ids.iter().any(|lid| lid == *id))
-                .or_else(|| new_leaf_ids.first().map(|s| s.as_str()))
+                .or_else(|| new_leaf_ids.first().map(std::string::String::as_str))
                 .unwrap_or("")
                 .to_string();
             drop(tab_val);
 
-            self.insert_tab(tab_id.clone(), serde_json::json!({
-                "layout": new_layout.clone(),
-                "active_pane_id": active_pane_id,
-            }));
+            self.insert_tab(
+                tab_id.clone(),
+                serde_json::json!({
+                    "layout": new_layout.clone(),
+                    "active_pane_id": active_pane_id,
+                }),
+            );
             self.broadcast_sync(&SyncMsg::LayoutUpdated {
                 pane_id: tab_id,
                 layout: new_layout,
@@ -571,31 +636,37 @@ impl SessionManager {
         }
     }
 
+    /// # Panics
+    /// Panics if the internal mutex is poisoned.
     pub fn start_cleanup_task(self: &Arc<Self>) {
         let manager = Arc::clone(self);
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
             loop {
                 interval.tick().await;
-                let timeout = std::time::Duration::from_secs(300);
+                let timeout = std::time::Duration::from_mins(5);
                 // Two-pass: collect stale IDs first, then kill_and_remove.
                 // Can't use retain() because we need to kill child processes.
-                let stale: Vec<String> = manager.sessions.iter().filter_map(|entry| {
-                    let status = entry.value().status.lock().unwrap();
-                    match *status {
-                        SessionStatus::Detached { since } if since.elapsed() >= timeout => {
-                            Some(entry.key().clone())
+                let stale: Vec<String> = manager
+                    .sessions
+                    .iter()
+                    .filter_map(|entry| {
+                        let status = entry.value().status.lock().expect("mutex poisoned");
+                        match *status {
+                            SessionStatus::Detached { since } if since.elapsed() >= timeout => {
+                                Some(entry.key().clone())
+                            }
+                            _ => None,
                         }
-                        _ => None,
-                    }
-                }).collect();
+                    })
+                    .collect();
                 for pane_id in stale {
                     // Re-check status before killing — the session may have been
                     // reconnected between the collect pass and now.
-                    let should_kill = manager.sessions.get(&pane_id).map(|entry| {
-                        let status = entry.value().status.lock().unwrap();
+                    let should_kill = manager.sessions.get(&pane_id).is_some_and(|entry| {
+                        let status = entry.value().status.lock().expect("mutex poisoned");
                         matches!(*status, SessionStatus::Detached { since } if since.elapsed() >= timeout)
-                    }).unwrap_or(false);
+                    });
 
                     if should_kill {
                         info!("Cleanup: removing detached session: pane={}", pane_id);
@@ -606,3 +677,6 @@ impl SessionManager {
         });
     }
 }
+
+#[cfg(test)]
+mod tests;

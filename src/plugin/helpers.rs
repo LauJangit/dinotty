@@ -1,4 +1,8 @@
-use axum::{http::StatusCode, response::{IntoResponse, Response}, Json};
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
 
 use super::types::PluginManifest;
 
@@ -6,11 +10,7 @@ pub fn validate_manifest(manifest: &PluginManifest) -> Result<(), String> {
     if manifest.id.is_empty() {
         return Err("id is required".into());
     }
-    if !manifest
-        .id
-        .chars()
-        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-    {
+    if !manifest.id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
         return Err("id must match [a-z0-9-]".into());
     }
     if manifest.name.is_empty() {
@@ -26,9 +26,7 @@ pub fn set_executable(path: &std::path::Path) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(path)
-            .map_err(|e| e.to_string())?
-            .permissions();
+        let mut perms = std::fs::metadata(path).map_err(|e| e.to_string())?.permissions();
         perms.set_mode(0o755);
         std::fs::set_permissions(path, perms).map_err(|e| e.to_string())
     }
@@ -49,10 +47,7 @@ pub fn extract_tar_gz(data: &[u8], dest: &std::path::Path) -> Result<(), String>
     for entry in archive.entries().map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path().map_err(|e| e.to_string())?;
-        if path
-            .components()
-            .any(|c| c == std::path::Component::ParentDir)
-        {
+        if path.components().any(|c| c == std::path::Component::ParentDir) {
             return Err("archive contains path traversal (..)".into());
         }
     }
@@ -91,26 +86,19 @@ pub fn extract_zip(data: &[u8], dest: &std::path::Path) -> Result<(), String> {
         zip::ZipArchive::new(Cursor::new(data)).map_err(|e| format!("invalid zip: {e}"))?;
 
     for i in 0..archive.len() {
-        let file = archive
-            .by_index(i)
-            .map_err(|e| format!("zip read error: {e}"))?;
+        let file = archive.by_index(i).map_err(|e| format!("zip read error: {e}"))?;
         let outpath = match file.enclosed_name() {
             Some(p) => dest.join(p),
             None => continue,
         };
-        if outpath
-            .components()
-            .any(|c| c == std::path::Component::ParentDir)
-        {
+        if outpath.components().any(|c| c == std::path::Component::ParentDir) {
             return Err("archive contains path traversal (..)".into());
         }
     }
 
     let mut archive2 =
         zip::ZipArchive::new(Cursor::new(data)).map_err(|e| format!("invalid zip: {e}"))?;
-    archive2
-        .extract(dest)
-        .map_err(|e| format!("zip extract error: {e}"))
+    archive2.extract(dest).map_err(|e| format!("zip extract error: {e}"))
 }
 
 pub fn find_plugin_root(
@@ -119,8 +107,8 @@ pub fn find_plugin_root(
 ) -> Result<std::path::PathBuf, String> {
     let top_level = std::fs::read_dir(base)
         .map_err(|e| e.to_string())?
-        .filter_map(|e| e.ok())
-        .find(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .filter_map(std::result::Result::ok)
+        .find(|e| e.file_type().is_ok_and(|t| t.is_dir()))
         .map(|e| e.path());
 
     let root = match (&top_level, subdir) {
@@ -139,10 +127,7 @@ pub fn find_plugin_root(
 
 pub fn version_gt(a: &str, b: &str) -> bool {
     let parse = |s: &str| -> Vec<u32> {
-        s.trim_start_matches('v')
-            .split('.')
-            .filter_map(|p| p.parse().ok())
-            .collect()
+        s.trim_start_matches('v').split('.').filter_map(|p| p.parse().ok()).collect()
     };
     parse(a) > parse(b)
 }

@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -26,9 +27,8 @@ pub struct UpdateLayoutRequest {
 
 // ─── GET /api/tabs ─────────────────────────────────────────────────
 
-pub async fn list_tabs(
-    State(manager): State<Arc<SessionManager>>,
-) -> impl IntoResponse {
+#[allow(clippy::unused_async)]
+pub async fn list_tabs(State(manager): State<Arc<SessionManager>>) -> impl IntoResponse {
     let (tabs, active_pane_id) = manager.tab_list();
     Json(serde_json::json!({
         "tabs": tabs,
@@ -38,25 +38,19 @@ pub async fn list_tabs(
 
 // ─── POST /api/tabs ────────────────────────────────────────────────
 
-pub async fn create_tab(
-    State(manager): State<Arc<SessionManager>>,
-) -> impl IntoResponse {
+/// # Panics
+/// Panics if the internal mutex is poisoned.
+#[allow(clippy::unused_async)]
+pub async fn create_tab(State(manager): State<Arc<SessionManager>>) -> impl IntoResponse {
     let tab_id = uuid::Uuid::new_v4().to_string();
     let pane_id = uuid::Uuid::new_v4().to_string();
 
     // Create PTY session
-    let (_session, _shell_type) = match pty::create_session(
-        Arc::clone(&manager),
-        pane_id.clone(),
-        None,
-    ) {
+    let (_session, _shell_type) = match pty::create_session(&manager, &pane_id, None) {
         Ok(x) => x,
         Err(e) => {
             tracing::error!("Failed to create PTY: {}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e })),
-            )
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e })))
                 .into_response();
         }
     };
@@ -80,7 +74,7 @@ pub async fn create_tab(
     );
 
     // Set as active tab
-    *manager.active_pane_id.lock().unwrap() = Some(pane_id.clone());
+    *manager.active_pane_id.lock().expect("mutex poisoned") = Some(pane_id.clone());
 
     // Broadcast to all sync clients
     manager.broadcast_sync(&SyncMsg::TabCreated {
@@ -99,6 +93,7 @@ pub async fn create_tab(
 
 // ─── DELETE /api/tabs/{tab_id} ─────────────────────────────────────
 
+#[allow(clippy::unused_async)]
 pub async fn close_tab(
     State(manager): State<Arc<SessionManager>>,
     Path(tab_id): Path<String>,
@@ -127,6 +122,7 @@ pub async fn close_tab(
 
 // ─── POST /api/tabs/{tab_id}/pane ──────────────────────────────────
 
+#[allow(clippy::unused_async)]
 pub async fn split_pane(
     State(manager): State<Arc<SessionManager>>,
     Path(tab_id): Path<String>,
@@ -136,10 +132,7 @@ pub async fn split_pane(
     let tab_val = match manager.tab_layouts.get(&tab_id) {
         Some(v) => v.value().clone(),
         None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({ "error": "tab not found" })),
-            )
+            return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "tab not found" })))
                 .into_response();
         }
     };
@@ -177,39 +170,26 @@ pub async fn split_pane(
     let new_pane_id = uuid::Uuid::new_v4().to_string();
 
     // Create PTY for new pane
-    let (_session, _shell_type) = match pty::create_session(
-        Arc::clone(&manager),
-        new_pane_id.clone(),
-        None,
-    ) {
+    let (_session, _shell_type) = match pty::create_session(&manager, &new_pane_id, None) {
         Ok(x) => x,
         Err(e) => {
             tracing::error!("Failed to create PTY for split: {}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e })),
-            )
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e })))
                 .into_response();
         }
     };
 
     // Update layout tree
-    let new_layout = match session::insert_pane_into_layout(
-        &layout,
-        &req.pane_id,
-        &req.direction,
-        &new_pane_id,
-    ) {
-        Some(l) => l,
-        None => {
-            // Clean up PTY if layout update fails
-            manager.kill_and_remove(&new_pane_id);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": "failed to update layout" })),
-            )
-                .into_response();
-        }
+    let Some(new_layout) =
+        session::insert_pane_into_layout(&layout, &req.pane_id, &req.direction, &new_pane_id)
+    else {
+        // Clean up PTY if layout update fails
+        manager.kill_and_remove(&new_pane_id);
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": "failed to update layout" })),
+        )
+            .into_response();
     };
 
     // Store updated layout
@@ -238,6 +218,7 @@ pub async fn split_pane(
 
 // ─── DELETE /api/tabs/{tab_id}/pane/{pane_id} ──────────────────────
 
+#[allow(clippy::unused_async)]
 pub async fn close_pane(
     State(manager): State<Arc<SessionManager>>,
     Path((tab_id, pane_id)): Path<(String, String)>,
@@ -246,10 +227,7 @@ pub async fn close_pane(
     let tab_val = match manager.tab_layouts.get(&tab_id) {
         Some(v) => v.value().clone(),
         None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({ "error": "tab not found" })),
-            )
+            return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "tab not found" })))
                 .into_response();
         }
     };
@@ -298,7 +276,7 @@ pub async fn close_pane(
             .and_then(|v| v.as_str());
         let active_pane_id = active
             .filter(|id| new_leaf_ids.iter().any(|lid| lid == *id))
-            .or_else(|| new_leaf_ids.first().map(|s| s.as_str()))
+            .or_else(|| new_leaf_ids.first().map(std::string::String::as_str))
             .unwrap_or("")
             .to_string();
 
@@ -324,6 +302,9 @@ pub async fn close_pane(
 
 // ─── PUT /api/tabs/{tab_id}/pane/{pane_id}/activate ────────────────
 
+/// # Panics
+/// Panics if the internal mutex is poisoned.
+#[allow(clippy::unused_async)]
 pub async fn activate_pane(
     State(manager): State<Arc<SessionManager>>,
     Path((tab_id, pane_id)): Path<(String, String)>,
@@ -332,10 +313,7 @@ pub async fn activate_pane(
     let tab_val = match manager.tab_layouts.get(&tab_id) {
         Some(v) => v.value().clone(),
         None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({ "error": "tab not found" })),
-            )
+            return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "tab not found" })))
                 .into_response();
         }
     };
@@ -361,7 +339,7 @@ pub async fn activate_pane(
     );
 
     // Update global active pane
-    *manager.active_pane_id.lock().unwrap() = Some(pane_id.clone());
+    *manager.active_pane_id.lock().expect("mutex poisoned") = Some(pane_id.clone());
 
     // Broadcast to all sync clients
     manager.broadcast_sync(&SyncMsg::TabActivated { pane_id });
@@ -371,6 +349,7 @@ pub async fn activate_pane(
 
 // ─── PUT /api/tabs/{tab_id}/layout ─────────────────────────────────
 
+#[allow(clippy::unused_async)]
 pub async fn update_layout(
     State(manager): State<Arc<SessionManager>>,
     Path(tab_id): Path<String>,
@@ -378,10 +357,7 @@ pub async fn update_layout(
 ) -> impl IntoResponse {
     // Verify tab exists
     if !manager.tab_layouts.contains_key(&tab_id) {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": "tab not found" })),
-        )
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "tab not found" })))
             .into_response();
     }
 

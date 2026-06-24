@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::io::Write;
 use std::sync::Arc;
 
@@ -15,17 +16,21 @@ use crate::settings::Settings;
 
 type SettingsState = Arc<RwLock<Settings>>;
 
-async fn check_open_api(settings: &SettingsState) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+async fn check_open_api(
+    settings: &SettingsState,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
     let s = settings.read().await;
-    if !s.open_api.enabled {
-        Err((StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "open_api is disabled" }))))
-    } else {
+    if s.open_api.enabled {
         Ok(())
+    } else {
+        Err((StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "open_api is disabled" }))))
     }
 }
 
 // ─── GET /api/sessions ───
 
+/// # Panics
+/// Panics if the internal mutex is poisoned.
 pub async fn list_sessions(
     State((manager, settings)): State<(Arc<SessionManager>, SettingsState)>,
 ) -> impl IntoResponse {
@@ -34,20 +39,20 @@ pub async fn list_sessions(
     }
 
     let mut sessions = Vec::new();
-    for entry in manager.sessions.iter() {
+    for entry in &manager.sessions {
         let pane_id = entry.key().clone();
         let session = entry.value();
 
-        let (cols, rows) = *session.size.lock().unwrap();
-        let status = match &*session.status.lock().unwrap() {
+        let (cols, rows) = *session.size.lock().expect("mutex poisoned");
+        let status = match &*session.status.lock().expect("mutex poisoned") {
             crate::session::SessionStatus::Connected => "connected",
             crate::session::SessionStatus::Detached { .. } => "detached",
         };
-        let cwd = session.cwd_state.lock().unwrap().cwd.display().to_string();
+        let cwd = session.cwd_state.lock().expect("mutex poisoned").cwd.display().to_string();
 
         // Find which tab this pane belongs to
         let mut tab_id = None;
-        for tab_entry in manager.tab_layouts.iter() {
+        for tab_entry in &manager.tab_layouts {
             let layout = tab_entry.value();
             if find_pane_in_layout(layout, &pane_id) {
                 tab_id = Some(tab_entry.key().clone());
@@ -65,7 +70,7 @@ pub async fn list_sessions(
         }));
     }
 
-    let active_pane_id = manager.active_pane_id.lock().unwrap().clone();
+    let active_pane_id = manager.active_pane_id.lock().expect("mutex poisoned").clone();
     Json(serde_json::json!({
         "sessions": sessions,
         "active_pane_id": active_pane_id,
@@ -85,6 +90,8 @@ fn default_format() -> String {
     "plain".to_string()
 }
 
+/// # Panics
+/// Panics if the internal mutex is poisoned.
 pub async fn get_screen(
     State((manager, settings)): State<(Arc<SessionManager>, SettingsState)>,
     Path(pane_id): Path<String>,
@@ -94,19 +101,15 @@ pub async fn get_screen(
         return e.into_response();
     }
 
-    let session = match manager.sessions.get(&pane_id) {
-        Some(s) => s,
-        None => return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "pane not found" }))).into_response(),
+    let Some(session) = manager.sessions.get(&pane_id) else {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "pane not found" })))
+            .into_response();
     };
 
-    let screen = session.screen.lock().unwrap();
+    let screen = session.screen.lock().expect("mutex poisoned");
     let (cols, rows) = (screen.cols(), screen.rows());
 
-    let content = if q.format == "ansi" {
-        screen.snapshot()
-    } else {
-        screen.snapshot_plain()
-    };
+    let content = if q.format == "ansi" { screen.snapshot() } else { screen.snapshot_plain() };
 
     Json(serde_json::json!({
         "pane_id": pane_id,
@@ -125,6 +128,8 @@ pub struct ScrollbackQuery {
     format: String,
 }
 
+/// # Panics
+/// Panics if the internal mutex is poisoned.
 pub async fn get_scrollback(
     State((manager, settings)): State<(Arc<SessionManager>, SettingsState)>,
     Path(pane_id): Path<String>,
@@ -134,12 +139,12 @@ pub async fn get_scrollback(
         return e.into_response();
     }
 
-    let session = match manager.sessions.get(&pane_id) {
-        Some(s) => s,
-        None => return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "pane not found" }))).into_response(),
+    let Some(session) = manager.sessions.get(&pane_id) else {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "pane not found" })))
+            .into_response();
     };
 
-    let screen = session.screen.lock().unwrap();
+    let screen = session.screen.lock().expect("mutex poisoned");
     let total = screen.scrollback_len();
 
     if q.format == "ansi" {
@@ -169,6 +174,8 @@ pub struct InputRequest {
     data: String,
 }
 
+/// # Panics
+/// Panics if the internal mutex is poisoned.
 pub async fn session_input(
     State((manager, settings)): State<(Arc<SessionManager>, SettingsState)>,
     Path(pane_id): Path<String>,
@@ -178,14 +185,18 @@ pub async fn session_input(
         return e.into_response();
     }
 
-    let session = match manager.sessions.get(&pane_id) {
-        Some(s) => s,
-        None => return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "pane not found" }))).into_response(),
+    let Some(session) = manager.sessions.get(&pane_id) else {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "pane not found" })))
+            .into_response();
     };
 
-    let mut w = session.writer.lock().unwrap();
+    let mut w = session.writer.lock().expect("mutex poisoned");
     if w.write_all(req.data.as_bytes()).is_err() {
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "write failed" }))).into_response();
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": "write failed" })),
+        )
+            .into_response();
     }
 
     Json(serde_json::json!({ "ok": true })).into_response()
@@ -199,6 +210,8 @@ pub struct ResizeRequest {
     rows: u16,
 }
 
+/// # Panics
+/// Panics if the internal mutex is poisoned.
 pub async fn session_resize(
     State((manager, settings)): State<(Arc<SessionManager>, SettingsState)>,
     Path(pane_id): Path<String>,
@@ -208,33 +221,37 @@ pub async fn session_resize(
         return e.into_response();
     }
 
-    let session = match manager.sessions.get(&pane_id) {
-        Some(s) => s,
-        None => return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "pane not found" }))).into_response(),
+    let Some(session) = manager.sessions.get(&pane_id) else {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "pane not found" })))
+            .into_response();
     };
 
     if req.cols == 0 || req.rows == 0 {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "cols and rows must be > 0" }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "cols and rows must be > 0" })),
+        )
+            .into_response();
     }
 
-    let size = req.cols as u16;
-    let rows = req.rows as u16;
+    let size = req.cols;
+    let rows = req.rows;
 
     // Update size
     {
-        let mut s = session.size.lock().unwrap();
+        let mut s = session.size.lock().expect("mutex poisoned");
         *s = (size, rows);
     }
 
     // Resize screen buffer
     {
-        let mut screen = session.screen.lock().unwrap();
+        let mut screen = session.screen.lock().expect("mutex poisoned");
         screen.resize(size as usize, rows as usize);
     }
 
     // Resize PTY
     {
-        let master = session.master.lock().unwrap();
+        let master = session.master.lock().expect("mutex poisoned");
         let _ = master.resize(portable_pty::PtySize {
             cols: size,
             rows,
@@ -256,7 +273,8 @@ pub async fn session_stream(
     if settings.read().await.open_api.enabled {
         ws.on_upgrade(move |socket| crate::ws::handle_open_api_ws(socket, manager, pane_id))
     } else {
-        let resp = (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "open_api is disabled" })));
+        let resp =
+            (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "open_api is disabled" })));
         resp.into_response()
     }
 }

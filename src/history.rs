@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 use axum::{
     extract::{
         ws::{Message, WebSocket},
@@ -26,7 +27,7 @@ struct HistoryInner {
     deleted: RwLock<HashSet<String>>,
     shell_type: String,
     history_path: PathBuf,
-    _watcher: std::sync::Mutex<Option<PollWatcher>>,
+    watcher: std::sync::Mutex<Option<PollWatcher>>,
     broadcast_tx: broadcast::Sender<String>,
 }
 
@@ -53,7 +54,14 @@ struct WsSuggestionMsg {
     items: Vec<SuggestionItem>,
 }
 
+impl Default for HistoryState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HistoryState {
+    #[must_use]
     pub fn new() -> Self {
         let shell_type = crate::pty::get_shell_type(&crate::pty::get_shell());
         let history_path = get_history_path(&shell_type);
@@ -65,7 +73,7 @@ impl HistoryState {
                 deleted: RwLock::new(HashSet::new()),
                 shell_type,
                 history_path,
-                _watcher: std::sync::Mutex::new(None),
+                watcher: std::sync::Mutex::new(None),
                 broadcast_tx,
             }),
         };
@@ -125,7 +133,7 @@ impl HistoryState {
             return;
         }
 
-        *self.inner._watcher.lock().unwrap() = Some(watcher);
+        *self.inner.watcher.lock().expect("mutex poisoned") = Some(watcher);
 
         tokio::spawn(async move {
             while rx.recv().await.is_some() {
@@ -154,10 +162,7 @@ impl HistoryState {
 
     async fn broadcast_top(&self) {
         let items = self.query(None, 20).await;
-        let msg = WsSuggestionMsg {
-            r#type: "suggestions".to_string(),
-            items,
-        };
+        let msg = WsSuggestionMsg { r#type: "suggestions".to_string(), items };
         if let Ok(json) = serde_json::to_string(&msg) {
             let _ = self.inner.broadcast_tx.send(json);
         }
@@ -169,20 +174,14 @@ impl HistoryState {
             Some(p) if !p.is_empty() => entries
                 .iter()
                 .filter(|(cmd, _)| cmd.starts_with(p))
-                .map(|(cmd, &freq)| SuggestionItem {
-                    command: cmd.clone(),
-                    frequency: freq,
-                })
+                .map(|(cmd, &freq)| SuggestionItem { command: cmd.clone(), frequency: freq })
                 .collect(),
             _ => entries
                 .iter()
-                .map(|(cmd, &freq)| SuggestionItem {
-                    command: cmd.clone(),
-                    frequency: freq,
-                })
+                .map(|(cmd, &freq)| SuggestionItem { command: cmd.clone(), frequency: freq })
                 .collect(),
         };
-        results.sort_by(|a, b| b.frequency.cmp(&a.frequency));
+        results.sort_by_key(|b| std::cmp::Reverse(b.frequency));
         results.truncate(limit);
         results
     }
@@ -229,30 +228,29 @@ fn parse_history(shell_type: &str, content: &str) -> HashMap<String, usize> {
             let mut continuation = String::new();
             for line in content.lines() {
                 if !continuation.is_empty() {
-                    if line.ends_with('\\') {
+                    if let Some(stripped) = line.strip_suffix('\\') {
                         continuation.push('\n');
-                        continuation.push_str(&line[..line.len() - 1]);
-                        continue;
-                    } else {
-                        continuation.push('\n');
-                        continuation.push_str(line);
-                        let cmd = continuation.trim().to_string();
-                        if !cmd.is_empty() {
-                            *entries.entry(cmd).or_insert(0) += 1;
-                        }
-                        continuation.clear();
+                        continuation.push_str(stripped);
                         continue;
                     }
+                    continuation.push('\n');
+                    continuation.push_str(line);
+                    let cmd = continuation.trim().to_string();
+                    if !cmd.is_empty() {
+                        *entries.entry(cmd).or_insert(0) += 1;
+                    }
+                    continuation.clear();
+                    continue;
                 }
 
                 let raw = if line.starts_with(": ") {
-                    line.find(';').map(|i| &line[i + 1..]).unwrap_or("")
+                    line.find(';').map_or("", |i| &line[i + 1..])
                 } else {
                     line
                 };
 
-                if raw.ends_with('\\') {
-                    continuation = raw[..raw.len() - 1].to_string();
+                if let Some(stripped) = raw.strip_suffix('\\') {
+                    continuation = stripped.to_string();
                     continue;
                 }
 
@@ -297,6 +295,7 @@ pub async fn delete_history(
     StatusCode::NO_CONTENT
 }
 
+#[allow(clippy::unused_async)]
 pub async fn ws_history_handler(
     ws: WebSocketUpgrade,
     State(state): State<HistoryState>,
@@ -309,12 +308,9 @@ async fn handle_history_ws(mut socket: WebSocket, state: HistoryState) {
 
     // Send current top suggestions immediately
     let items = state.query(None, 20).await;
-    let msg = WsSuggestionMsg {
-        r#type: "suggestions".to_string(),
-        items,
-    };
+    let msg = WsSuggestionMsg { r#type: "suggestions".to_string(), items };
     if let Ok(json) = serde_json::to_string(&msg) {
-        if socket.send(Message::Text(json.into())).await.is_err() {
+        if socket.send(Message::Text(json)).await.is_err() {
             return;
         }
     }
@@ -324,11 +320,11 @@ async fn handle_history_ws(mut socket: WebSocket, state: HistoryState) {
             result = rx.recv() => {
                 match result {
                     Ok(json) => {
-                        if socket.send(Message::Text(json.into())).await.is_err() {
+                        if socket.send(Message::Text(json)).await.is_err() {
                             break;
                         }
                     }
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Lagged(_)) => {},
                     Err(_) => break,
                 }
             }

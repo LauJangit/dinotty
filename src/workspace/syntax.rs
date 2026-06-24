@@ -1,7 +1,4 @@
-use axum::{
-    response::IntoResponse,
-    Json,
-};
+use axum::{response::IntoResponse, Json};
 use serde::{Deserialize, Serialize};
 
 const MAX_SYNTAX_CHECK_SIZE: usize = 512 * 1024;
@@ -70,11 +67,8 @@ fn parse_python_diagnostics(stderr: &str, content: &str) -> Vec<SyntaxDiagnostic
             if msg.is_empty() {
                 msg = "syntax error".to_string();
             }
-            let last_col = content
-                .lines()
-                .nth(line_num.saturating_sub(1))
-                .map(|l| l.len().max(1))
-                .unwrap_or(1);
+            let last_col =
+                content.lines().nth(line_num.saturating_sub(1)).map_or(1, |l| l.len().max(1));
             diags.push(SyntaxDiagnostic {
                 severity: "error",
                 message: msg,
@@ -91,7 +85,7 @@ fn parse_python_diagnostics(stderr: &str, content: &str) -> Vec<SyntaxDiagnostic
 fn check_python_syntax(content: &str) -> Vec<SyntaxDiagnostic> {
     use std::io::Write;
     use std::process::{Command, Stdio};
-    let mut child = match Command::new("python3")
+    let Ok(mut child) = Command::new("python3")
         .arg("-m")
         .arg("py_compile")
         .arg("-")
@@ -99,18 +93,14 @@ fn check_python_syntax(content: &str) -> Vec<SyntaxDiagnostic> {
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-    {
-        Ok(c) => c,
-        Err(_) => return vec![],
+    else {
+        return vec![];
     };
     if let Some(ref mut stdin) = child.stdin {
         let _ = stdin.write_all(content.as_bytes());
     }
     drop(child.stdin.take());
-    let output = match child.wait_with_output() {
-        Ok(o) => o,
-        Err(_) => return vec![],
-    };
+    let Ok(output) = child.wait_with_output() else { return vec![] };
     if output.status.success() {
         return vec![];
     }
@@ -138,8 +128,7 @@ fn parse_go_diagnostics(stderr: &str, content: &str) -> Vec<SyntaxDiagnostic> {
         let end_col = content
             .lines()
             .nth(line_num.saturating_sub(1))
-            .map(|l| l.len().max(col_num).max(col_num + 1))
-            .unwrap_or(col_num + 1);
+            .map_or(col_num + 1, |l| l.len().max(col_num).max(col_num + 1));
         diags.push(SyntaxDiagnostic {
             severity: "error",
             message: msg,
@@ -154,27 +143,20 @@ fn parse_go_diagnostics(stderr: &str, content: &str) -> Vec<SyntaxDiagnostic> {
 
 fn check_go_syntax(content: &str) -> Vec<SyntaxDiagnostic> {
     use std::process::{Command, Stdio};
-    let tmp = match tempfile::Builder::new()
-        .suffix(".go")
-        .tempfile()
-    {
-        Ok(f) => f,
-        Err(_) => return vec![],
-    };
+    let Ok(tmp) = tempfile::Builder::new().suffix(".go").tempfile() else { return vec![] };
     if std::fs::write(tmp.path(), content.as_bytes()).is_err() {
         return vec![];
     }
-    let output = match Command::new("go")
+    let Ok(output) = Command::new("go")
         .args(["tool", "compile", "-e", "-p", "main"])
         .arg(tmp.path())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-        .and_then(|c| c.wait_with_output())
-    {
-        Ok(o) => o,
-        Err(_) => return vec![],
+        .and_then(std::process::Child::wait_with_output)
+    else {
+        return vec![];
     };
     if output.status.success() {
         return vec![];
@@ -183,9 +165,7 @@ fn check_go_syntax(content: &str) -> Vec<SyntaxDiagnostic> {
     parse_go_diagnostics(&stderr, content)
 }
 
-pub async fn workspace_syntax_check(
-    Json(body): Json<SyntaxCheckBody>,
-) -> impl IntoResponse {
+pub async fn workspace_syntax_check(Json(body): Json<SyntaxCheckBody>) -> impl IntoResponse {
     if body.content.len() > MAX_SYNTAX_CHECK_SIZE {
         return Json(SyntaxCheckResponse { diagnostics: vec![] }).into_response();
     }
@@ -194,13 +174,11 @@ pub async fn workspace_syntax_check(
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_lowercase();
-    let diagnostics = tokio::task::spawn_blocking(move || {
-        match ext.as_str() {
-            "rs" => check_rust_syntax(&body.content),
-            "py" => check_python_syntax(&body.content),
-            "go" => check_go_syntax(&body.content),
-            _ => vec![],
-        }
+    let diagnostics = tokio::task::spawn_blocking(move || match ext.as_str() {
+        "rs" => check_rust_syntax(&body.content),
+        "py" => check_python_syntax(&body.content),
+        "go" => check_go_syntax(&body.content),
+        _ => vec![],
     })
     .await
     .unwrap_or_default();

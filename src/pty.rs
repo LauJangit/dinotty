@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 use crate::session::{Session, SessionManager, SessionStatus, SyncMsg};
 use crate::vt_screen::VirtualScreen;
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
@@ -6,19 +7,22 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::info;
 
+/// Create a new PTY session and register it with the session manager.
+///
+/// # Errors
+/// Returns `Err` if the PTY cannot be opened, the shell cannot be spawned,
+/// or the reader/writer cannot be obtained.
+///
+/// # Panics
+/// Panics if the internal mutex is poisoned in the PTY reader task.
 pub fn create_session(
-    manager: Arc<SessionManager>,
-    pane_id: String,
+    manager: &Arc<SessionManager>,
+    pane_id: &str,
     tauri_on_exit: Option<Arc<dyn Fn(String) + Send + Sync>>,
 ) -> Result<(Arc<Session>, String), String> {
     let pty_system = NativePtySystem::default();
     let pair = pty_system
-        .openpty(PtySize {
-            rows: 24,
-            cols: 80,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
+        .openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 })
         .map_err(|e| e.to_string())?;
 
     let shell = get_shell();
@@ -48,20 +52,13 @@ pub fn create_session(
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))
     };
 
-    let child = pair.slave
-        .spawn_command(cmd)
-        .map_err(|e| format!("spawn shell: {}", e))?;
+    let child = pair.slave.spawn_command(cmd).map_err(|e| format!("spawn shell: {e}"))?;
     drop(pair.slave);
 
-    let reader = pair
-        .master
-        .try_clone_reader()
-        .map_err(|e| e.to_string())?;
+    let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let writer: Box<dyn Write + Send> = pair.master.take_writer().map_err(|e| e.to_string())?;
 
-    let initial_cwd = home_for_cwd
-        .canonicalize()
-        .unwrap_or_else(|_| home_for_cwd.clone());
+    let initial_cwd = home_for_cwd.canonicalize().unwrap_or_else(|_| home_for_cwd.clone());
 
     let session = Arc::new(Session {
         writer: std::sync::Mutex::new(writer),
@@ -79,11 +76,11 @@ pub fn create_session(
             sniff_buf: Vec::new(),
         }),
     });
-    manager.sessions.insert(pane_id.clone(), Arc::clone(&session));
+    manager.sessions.insert(pane_id.to_string(), Arc::clone(&session));
 
     let session_clone = Arc::clone(&session);
-    let pane_id_clone = pane_id.clone();
-    let manager_clone = Arc::clone(&manager);
+    let pane_id_clone = pane_id.to_string();
+    let manager_clone = Arc::clone(manager);
     tokio::task::spawn_blocking(move || {
         let mut reader = reader;
         let mut buf = [0u8; 4096];
@@ -93,7 +90,7 @@ pub fn create_session(
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
                     let data = &buf[..n];
-                    session_clone.screen.lock().unwrap().feed(data);
+                    session_clone.screen.lock().expect("mutex poisoned").feed(data);
                     session_clone.on_pty_output(data);
 
                     utf8_tail.extend_from_slice(data);
@@ -122,14 +119,13 @@ pub fn create_session(
         if manager_clone.sessions.remove(&pane_id_clone).is_some() {
             // Find the parent tab and clean up its layout; for single-pane tabs
             // this returns the tab-level pane_id so we broadcast the correct ID.
-            let tab_pane_id = manager_clone.on_pty_exited(&pane_id_clone)
+            let tab_pane_id = manager_clone
+                .on_pty_exited(&pane_id_clone)
                 .unwrap_or_else(|| pane_id_clone.clone());
-            manager_clone.broadcast_sync(&SyncMsg::TabClosed {
-                pane_id: tab_pane_id,
-            });
+            manager_clone.broadcast_sync(&SyncMsg::TabClosed { pane_id: tab_pane_id });
         }
         info!("PTY exited, session removed: pane={}", pane_id_clone);
-        let cb = session_clone.tauri_on_exit.lock().unwrap().clone();
+        let cb = session_clone.tauri_on_exit.lock().expect("mutex poisoned").clone();
         if let Some(f) = cb {
             f(pane_id_clone);
         }
@@ -138,14 +134,14 @@ pub fn create_session(
     Ok((session, shell_type))
 }
 
+#[must_use]
 pub fn setup_zsh_title_hooks(home: &str) -> Option<std::path::PathBuf> {
     let zdotdir = std::env::temp_dir().join(format!("dinotty_zsh_{}", std::process::id()));
     std::fs::create_dir_all(&zdotdir).ok()?;
 
     let zshenv = format!(
         r#"[[ -f "{home}/.zshenv" ]] && source "{home}/.zshenv"
-"#,
-        home = home
+"#
     );
 
     let zshrc = format!(
@@ -174,14 +170,12 @@ fi
 if [[ -z "${{preexec_functions[(r)_dinotty_preexec]}}" ]]; then
   preexec_functions+=(_dinotty_preexec)
 fi
-"#,
-        home = home
+"#
     );
 
     let zprofile = format!(
         r#"[[ -f "{home}/.zprofile" ]] && source "{home}/.zprofile"
-"#,
-        home = home
+"#
     );
 
     std::fs::write(zdotdir.join(".zshenv"), zshenv).ok()?;
@@ -190,6 +184,7 @@ fi
     Some(zdotdir)
 }
 
+#[must_use]
 pub fn get_shell() -> String {
     // Non-interactive shells that should be skipped
     const BLOCKED: &[&str] = &[
@@ -206,13 +201,7 @@ pub fn get_shell() -> String {
             return s;
         }
     }
-    for s in [
-        "/bin/zsh",
-        "/usr/bin/zsh",
-        "/bin/bash",
-        "/usr/bin/bash",
-        "/bin/sh",
-    ] {
+    for s in ["/bin/zsh", "/usr/bin/zsh", "/bin/bash", "/usr/bin/bash", "/bin/sh"] {
         if std::path::Path::new(s).exists() {
             return s.to_string();
         }
@@ -220,6 +209,7 @@ pub fn get_shell() -> String {
     "/bin/sh".to_string()
 }
 
+#[must_use]
 pub fn get_shell_type(shell: &str) -> String {
     if shell.contains("zsh") {
         "zsh".into()
@@ -230,6 +220,7 @@ pub fn get_shell_type(shell: &str) -> String {
     }
 }
 
+#[must_use]
 pub fn get_shell_args(shell: &str) -> Vec<&'static str> {
     if shell.contains("zsh") || shell.contains("bash") {
         vec!["-i", "-l"]

@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use axum::{
     extract::{
         ws::{Message, WebSocket},
@@ -46,11 +47,16 @@ pub struct FileWatcherState {
     watchers: Arc<RwLock<HashMap<String, broadcast::Sender<WatchMessage>>>>,
 }
 
+impl Default for FileWatcherState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FileWatcherState {
+    #[must_use]
     pub fn new() -> Self {
-        Self {
-            watchers: Arc::new(RwLock::new(HashMap::new())),
-        }
+        Self { watchers: Arc::new(RwLock::new(HashMap::new())) }
     }
 
     pub async fn subscribe(&self, key: &str) -> broadcast::Receiver<WatchMessage> {
@@ -114,12 +120,16 @@ impl FileWatcherState {
                         _ => None,
                     };
                     let events: Vec<WatchMessage> = match kind {
-                        Some(k) => event.paths.into_iter().map(|p| {
-                            WatchMessage::FileEvent(FileEvent {
-                                path: p.to_string_lossy().to_string(),
-                                kind: k,
+                        Some(k) => event
+                            .paths
+                            .into_iter()
+                            .map(|p| {
+                                WatchMessage::FileEvent(FileEvent {
+                                    path: p.to_string_lossy().to_string(),
+                                    kind: k,
+                                })
                             })
-                        }).collect(),
+                            .collect(),
                         None => vec![],
                     };
 
@@ -131,9 +141,7 @@ impl FileWatcherState {
                 }
                 Err(e) => {
                     error!("Watch error: {}", e);
-                    let _ = tx.send(WatchMessage::Error {
-                        message: e.to_string(),
-                    });
+                    let _ = tx.send(WatchMessage::Error { message: e.to_string() });
                 }
             }
         }
@@ -150,12 +158,15 @@ pub struct WatchQuery {
     pub path: String,
 }
 
+#[allow(clippy::unused_async)]
 pub async fn watch_handler(
     ws: WebSocketUpgrade,
     Query(q): Query<WatchQuery>,
     State((manager, watcher_state)): State<(Arc<SessionManager>, Arc<FileWatcherState>)>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_watch_socket(socket, q.pane_id, q.path, manager, watcher_state))
+    ws.on_upgrade(move |socket| {
+        handle_watch_socket(socket, q.pane_id, q.path, manager, watcher_state)
+    })
 }
 
 async fn handle_watch_socket(
@@ -165,24 +176,20 @@ async fn handle_watch_socket(
     manager: Arc<SessionManager>,
     watcher_state: Arc<FileWatcherState>,
 ) {
-    let session = match manager.sessions.get(&pane_id) {
-        Some(s) => s.clone(),
-        None => {
-            let _ = socket
-                .send(Message::Text(
-                    serde_json::to_string(&WatchMessage::Error {
-                        message: "unknown pane".to_string(),
-                    })
-                    .unwrap()
-                    .into(),
-                ))
-                .await;
-            return;
-        }
+    let session = if let Some(s) = manager.sessions.get(&pane_id) {
+        s.clone()
+    } else {
+        let _ = socket
+            .send(Message::Text(
+                serde_json::to_string(&WatchMessage::Error { message: "unknown pane".to_string() })
+                    .unwrap(),
+            ))
+            .await;
+        return;
     };
 
     let root = {
-        let state = session.cwd_state.lock().unwrap();
+        let state = session.cwd_state.lock().expect("mutex poisoned");
         match state.cwd.canonicalize() {
             Ok(c) => c,
             Err(_) => state.cwd.clone(),
@@ -206,8 +213,7 @@ async fn handle_watch_socket(
                 serde_json::to_string(&WatchMessage::Error {
                     message: "path not found".to_string(),
                 })
-                .unwrap()
-                .into(),
+                .unwrap(),
             ))
             .await;
         return;
@@ -224,14 +230,12 @@ async fn handle_watch_socket(
                 match msg {
                     Ok(event) => {
                         if let Ok(json) = serde_json::to_string(&event) {
-                            if socket.send(Message::Text(json.into())).await.is_err() {
+                            if socket.send(Message::Text(json)).await.is_err() {
                                 break;
                             }
                         }
                     }
-                    Err(broadcast::error::RecvError::Lagged(_)) => {
-                        continue;
-                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {},
                     Err(_) => break,
                 }
             }
@@ -242,8 +246,7 @@ async fn handle_watch_socket(
                             break;
                         }
                     }
-                    Some(Err(_)) => break,
-                    None => break,
+                    Some(Err(_)) | None => break,
                 }
             }
         }

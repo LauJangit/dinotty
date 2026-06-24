@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use axum::{
     body::Body,
     extract::Request,
@@ -6,11 +7,7 @@ use axum::{
     response::Response,
 };
 use dashmap::DashMap;
-use std::{
-    net::IpAddr,
-    sync::OnceLock,
-    time::Instant,
-};
+use std::{net::IpAddr, sync::OnceLock, time::Instant};
 
 use crate::settings::SettingsState;
 
@@ -27,6 +24,8 @@ fn fail_map() -> &'static DashMap<IpAddr, FailRecord> {
 const MAX_FAILURES: u32 = 5;
 const LOCKOUT_SECS: u64 = 60;
 
+/// # Panics
+/// Panics if the response builder fails (which should not happen with valid status codes and bodies).
 pub async fn auth_middleware(
     request: Request,
     next: Next,
@@ -41,9 +40,14 @@ pub async fn auth_middleware(
         return next.run(request).await;
     }
 
-    if path == "/" || path == "/api/notify" || path == "/api/token-configured"
-        || path == "/manifest.json" || path == "/logo.png"
-        || path.starts_with("/assets/") || path.starts_with("/preview/") || path.starts_with("/icons/")
+    if path == "/"
+        || path == "/api/notify"
+        || path == "/api/token-configured"
+        || path == "/manifest.json"
+        || path == "/logo.png"
+        || path.starts_with("/assets/")
+        || path.starts_with("/preview/")
+        || path.starts_with("/icons/")
     {
         return next.run(request).await;
     }
@@ -70,12 +74,13 @@ pub async fn auth_middleware(
                         .status(StatusCode::TOO_MANY_REQUESTS)
                         .header(header::CONTENT_TYPE, "application/json")
                         .header("Retry-After", (LOCKOUT_SECS - elapsed).to_string())
-                        .body(Body::from(r#"{"error":"too many failed attempts, please try again later"}"#))
+                        .body(Body::from(
+                            r#"{"error":"too many failed attempts, please try again later"}"#,
+                        ))
                         .unwrap();
-                } else {
-                    drop(rec);
-                    map.remove(&client_ip);
                 }
+                drop(rec);
+                map.remove(&client_ip);
             }
         }
         if check_token(&request, token) {
@@ -83,7 +88,8 @@ pub async fn auth_middleware(
             return next.run(request).await;
         }
         {
-            let mut rec = map.entry(client_ip).or_insert(FailRecord { count: 0, last_fail: Instant::now() });
+            let mut rec =
+                map.entry(client_ip).or_insert(FailRecord { count: 0, last_fail: Instant::now() });
             rec.count += 1;
             rec.last_fail = Instant::now();
         }
@@ -104,12 +110,13 @@ pub async fn auth_middleware(
                     .status(StatusCode::TOO_MANY_REQUESTS)
                     .header(header::CONTENT_TYPE, "application/json")
                     .header("Retry-After", (LOCKOUT_SECS - elapsed).to_string())
-                    .body(Body::from(r#"{"error":"too many failed attempts, please try again later"}"#))
+                    .body(Body::from(
+                        r#"{"error":"too many failed attempts, please try again later"}"#,
+                    ))
                     .unwrap();
-            } else {
-                drop(rec);
-                map.remove(&client_ip);
             }
+            drop(rec);
+            map.remove(&client_ip);
         }
     }
 
@@ -122,7 +129,8 @@ pub async fn auth_middleware(
     // without incrementing the counter, so normal pre-auth API calls (settings,
     // plugins, etc.) don't accidentally trigger the lockout.
     if path == "/api/auth" {
-        let mut rec = map.entry(client_ip).or_insert(FailRecord { count: 0, last_fail: Instant::now() });
+        let mut rec =
+            map.entry(client_ip).or_insert(FailRecord { count: 0, last_fail: Instant::now() });
         rec.count += 1;
         rec.last_fail = Instant::now();
     }
@@ -189,14 +197,18 @@ fn matches_cidr(ip: IpAddr, cidr: &str) -> bool {
     let Ok(prefix_len) = prefix_str.parse::<u32>() else { return false };
     match (ip, addr_str.parse::<IpAddr>()) {
         (IpAddr::V4(ip4), Ok(IpAddr::V4(net4))) => {
-            if prefix_len > 32 { return false; }
+            if prefix_len > 32 {
+                return false;
+            }
             let mask = if prefix_len == 0 { 0u32 } else { !0u32 << (32 - prefix_len) };
             let ip_bits = u32::from(ip4);
             let net_bits = u32::from(net4);
             (ip_bits & mask) == (net_bits & mask)
         }
         (IpAddr::V6(ip6), Ok(IpAddr::V6(net6))) => {
-            if prefix_len > 128 { return false; }
+            if prefix_len > 128 {
+                return false;
+            }
             let ip_bits = u128::from(ip6);
             let net_bits = u128::from(net6);
             let mask = if prefix_len == 0 { 0u128 } else { !0u128 << (128 - prefix_len) };
@@ -232,8 +244,8 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
     if a.len() != b.len() {
         return false;
     }
-    a.bytes()
-        .zip(b.bytes())
-        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
-        == 0
+    a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
+
+#[cfg(test)]
+mod tests;

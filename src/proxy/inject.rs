@@ -1,4 +1,4 @@
-pub const INJECT_SCRIPT_INTERNAL: &str = r#"<script>(function(){
+pub const INJECT_SCRIPT_INTERNAL: &str = r"<script>(function(){
 window.parent.postMessage({type:'preview-ready'},'*');
 window.parent.postMessage({type:'preview-console',level:'info',args:['[dinotty] inject script loaded'],ts:Date.now()});
 window.addEventListener('error',function(e){
@@ -95,9 +95,9 @@ var _replaceState=history.replaceState;
 history.replaceState=function(){var r=_replaceState.apply(this,arguments);notifyNav();return r;};
 window.addEventListener('popstate',function(){notifyNav();});
 }
-})();</script>"#;
+})();</script>";
 
-pub const INJECT_SCRIPT_EXTERNAL: &str = r#"<script>(function(){
+pub const INJECT_SCRIPT_EXTERNAL: &str = r"<script>(function(){
 window.parent.postMessage({type:'preview-ready'},'*');
 window.addEventListener('error',function(e){
 window.parent.postMessage({type:'preview-error',message:e.message,source:e.filename,line:e.lineno},'*');
@@ -210,4 +210,4 @@ notifyNav(realUrl());
 return r;
 };
 window.addEventListener('popstate',function(){notifyNav(realUrl());});
-})();</script>"#;
+})();</script>";

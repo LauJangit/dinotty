@@ -1,10 +1,10 @@
-use serde::{Deserialize, Serialize};
-use std::sync::{Arc, OnceLock};
-use tauri::{AppHandle, Emitter, State};
+use base64::Engine;
 use dinotty_server::pty;
 use dinotty_server::session::{SessionManager, SessionStatus, SyncMsg};
 use reqwest::Method;
-use base64::Engine;
+use serde::{Deserialize, Serialize};
+use std::sync::{Arc, OnceLock};
+use tauri::{AppHandle, Emitter, State};
 
 mod embedded_server;
 
@@ -21,19 +21,17 @@ struct PtyExit {
     pane_id: String,
 }
 
-fn spawn_tauri_output_forwarder(app: AppHandle, pane_id: String, session: Arc<dinotty_server::session::Session>) {
+fn spawn_tauri_output_forwarder(
+    app: AppHandle,
+    pane_id: String,
+    session: Arc<dinotty_server::session::Session>,
+) {
     let mut rx = session.add_client();
     let app2 = app.clone();
     let pid = pane_id.clone();
     tauri::async_runtime::spawn(async move {
         while let Some(data) = rx.recv().await {
-            let _ = app2.emit(
-                "pty-output",
-                PtyOutput {
-                    pane_id: pid.clone(),
-                    data,
-                },
-            );
+            let _ = app2.emit("pty-output", PtyOutput { pane_id: pid.clone(), data });
         }
     });
 }
@@ -48,13 +46,7 @@ fn emit_join_sync(app: &AppHandle, pane_id: &str, session: &Arc<dinotty_server::
         let screen = session.screen.lock().unwrap();
         screen.snapshot()
     };
-    let _ = app.emit(
-        "pty-output",
-        PtyOutput {
-            pane_id: pane_id.to_string(),
-            data: snapshot,
-        },
-    );
+    let _ = app.emit("pty-output", PtyOutput { pane_id: pane_id.to_string(), data: snapshot });
 }
 
 #[tauri::command]
@@ -86,7 +78,7 @@ fn pty_spawn(
     }
 
     let (session, shell_type) =
-        pty::create_session(Arc::clone(&manager), pane_id.clone(), Some(Arc::clone(&exit_cb)))?;
+        pty::create_session(&manager, &pane_id, Some(Arc::clone(&exit_cb)))?;
 
     spawn_tauri_output_forwarder(app.clone(), pane_id.clone(), Arc::clone(&session));
 
@@ -118,40 +110,30 @@ fn pty_resize(
     let sessions = &state.sessions;
     let session = sessions.get(&pane_id).ok_or("session not found")?;
     let m = session.master.lock().unwrap();
-    m.resize(PtySize {
-        rows,
-        cols,
-        pixel_width: 0,
-        pixel_height: 0,
-    })
-    .map_err(|e| e.to_string())?;
+    m.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }).map_err(|e| e.to_string())?;
     drop(m);
     *session.size.lock().unwrap() = (cols, rows);
-    session
-        .screen
-        .lock()
-        .unwrap()
-        .resize(cols as usize, rows as usize);
+    session.screen.lock().unwrap().resize(cols as usize, rows as usize);
     Ok(())
 }
 
 #[tauri::command]
 fn pty_kill(pane_id: String, state: State<'_, Arc<SessionManager>>) -> Result<(), String> {
     state.kill_and_remove(&pane_id);
-    state.broadcast_sync(&SyncMsg::TabClosed {
-        pane_id: pane_id.clone(),
-    });
+    state.broadcast_sync(&SyncMsg::TabClosed { pane_id: pane_id.clone() });
     // Collect affected layouts before purging
-    let before_layouts: Vec<(String, serde_json::Value)> = state.tab_layouts.iter()
-        .map(|e| (e.key().clone(), e.value().clone()))
-        .collect();
+    let before_layouts: Vec<(String, serde_json::Value)> =
+        state.tab_layouts.iter().map(|e| (e.key().clone(), e.value().clone())).collect();
     state.purge_pane_from_layouts(&pane_id);
     // Broadcast layout changes to all clients
     for (tab_id, old_val) in &before_layouts {
         if let Some(new_val) = state.tab_layouts.get(tab_id) {
             if *new_val.value() != *old_val {
-                let layout = new_val.value().get("layout").cloned().unwrap_or(serde_json::Value::Null);
-                let active = new_val.value().get("active_pane_id")
+                let layout =
+                    new_val.value().get("layout").cloned().unwrap_or(serde_json::Value::Null);
+                let active = new_val
+                    .value()
+                    .get("active_pane_id")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
@@ -171,9 +153,8 @@ fn pty_detach(pane_id: String, state: State<'_, Arc<SessionManager>>) -> Result<
     if let Some(entry) = state.sessions.get(&pane_id) {
         let session = Arc::clone(entry.value());
         if !session.has_clients() {
-            *session.status.lock().unwrap() = SessionStatus::Detached {
-                since: std::time::Instant::now(),
-            };
+            *session.status.lock().unwrap() =
+                SessionStatus::Detached { since: std::time::Instant::now() };
         }
     }
     Ok(())
@@ -278,11 +259,9 @@ async fn tauri_upload(
 
 fn main() {
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::new(
-                std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into()),
-            ),
-        )
+        .with_env_filter(tracing_subscriber::EnvFilter::new(
+            std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into()),
+        ))
         .init();
 
     let args: Vec<String> = std::env::args().collect();
@@ -317,10 +296,8 @@ fn main() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
-                let path_strings: Vec<String> = paths
-                    .iter()
-                    .map(|p| p.to_string_lossy().into_owned())
-                    .collect();
+                let path_strings: Vec<String> =
+                    paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
                 let _ = window.emit("file-drop-paths", &path_strings);
             }
         })

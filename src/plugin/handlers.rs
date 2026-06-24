@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 use axum::{
     body::Body,
     extract::{Path, Query, State},
@@ -15,23 +16,27 @@ use tokio::sync::{Mutex as TokioMutex, RwLock};
 
 use crate::session::SessionManager;
 
-use super::helpers::*;
+use super::helpers::{
+    copy_dir_all, extract_zip, find_plugin_root, is_safe_segment, plugin_err, set_executable,
+    validate_manifest, version_gt,
+};
 use super::manager::PluginManagerState;
-use super::types::*;
+use super::types::{
+    DeleteQuery, DevLinkRequest, ExecRequest, ExecResult, InstallDirRequest, InstallGitRequest,
+    ManagedProcess, MarketPlugin, PluginInfo, PluginManifest, PluginStateValue, ProcessInfo,
+    ProcessStartRequest, ProcessState, RegistryIndex, SpawnQuery,
+};
 
 // ─── Marketplace Registry Cache ─────────────────────────────────────────────
 
-const REGISTRY_CACHE_TTL: Duration = Duration::from_secs(300); // 5 minutes
+const REGISTRY_CACHE_TTL: Duration = Duration::from_mins(5); // 5 minutes
 
 struct RegistryCache {
     data: RwLock<Option<(Instant, String)>>,
 }
 
-static REGISTRY_CACHE: std::sync::LazyLock<RegistryCache> = std::sync::LazyLock::new(|| {
-    RegistryCache {
-        data: RwLock::new(None),
-    }
-});
+static REGISTRY_CACHE: std::sync::LazyLock<RegistryCache> =
+    std::sync::LazyLock::new(|| RegistryCache { data: RwLock::new(None) });
 
 /// Fetch the registry JSON, using a 5-minute in-memory cache to avoid
 /// repeated cold-start HTTP round-trips to GitHub on every page load.
@@ -51,31 +56,17 @@ async fn fetch_cached_registry() -> Result<String, Response> {
         std::env::var("DINOTTY_REGISTRY_URL").unwrap_or_else(|_| DEFAULT_REGISTRY_URL.into());
 
     let client = &crate::proxy::HTTP_CLIENT_FOLLOW_REDIRECTS;
-    let resp = client
-        .get(&registry_url)
-        .send()
-        .await
-        .map_err(|e| {
-            plugin_err(
-                StatusCode::BAD_GATEWAY,
-                &format!("failed to fetch registry: {e}"),
-            )
-        })?;
+    let resp = client.get(&registry_url).send().await.map_err(|e| {
+        plugin_err(StatusCode::BAD_GATEWAY, &format!("failed to fetch registry: {e}"))
+    })?;
 
     let body = resp.text().await.map_err(|e| {
-        plugin_err(
-            StatusCode::BAD_GATEWAY,
-            &format!("failed to read registry: {e}"),
-        )
+        plugin_err(StatusCode::BAD_GATEWAY, &format!("failed to read registry: {e}"))
     })?;
 
     // Validate JSON before caching
-    let _: RegistryIndex = serde_json::from_str(&body).map_err(|e| {
-        plugin_err(
-            StatusCode::BAD_GATEWAY,
-            &format!("invalid registry JSON: {e}"),
-        )
-    })?;
+    let _: RegistryIndex = serde_json::from_str(&body)
+        .map_err(|e| plugin_err(StatusCode::BAD_GATEWAY, &format!("invalid registry JSON: {e}")))?;
 
     // Update cache
     {
@@ -88,20 +79,23 @@ async fn fetch_cached_registry() -> Result<String, Response> {
 
 // ─── Basic CRUD ─────────────────────────────────────────────────────────────
 
+#[allow(clippy::unused_async)]
 pub async fn list_plugins(State(pm): State<PluginManagerState>) -> Json<Vec<PluginInfo>> {
     Json(pm.list())
 }
 
+/// # Errors
+/// Returns `StatusCode::NOT_FOUND` if the plugin is not found.
+#[allow(clippy::unused_async)]
 pub async fn plugin_detail(
     Path(id): Path<String>,
     State(pm): State<PluginManagerState>,
 ) -> Result<Json<PluginInfo>, StatusCode> {
-    pm.registry
-        .get(&id)
-        .map(|info| Json(info.clone()))
-        .ok_or(StatusCode::NOT_FOUND)
+    pm.registry.get(&id).map(|info| Json(info.clone())).ok_or(StatusCode::NOT_FOUND)
 }
 
+/// # Panics
+/// Panics if the response builder fails.
 pub async fn plugin_asset(
     Path((id, subpath)): Path<(String, String)>,
     State(pm): State<PluginManagerState>,
@@ -113,21 +107,18 @@ pub async fn plugin_asset(
     let plugin_path = pm.plugin_dir.join(&id);
     let file_path = plugin_path.join(&subpath);
 
-    let canonical = match std::fs::canonicalize(&file_path) {
-        Ok(p) => p,
-        Err(_) => return plugin_err(StatusCode::NOT_FOUND, "file not found"),
+    let Ok(canonical) = std::fs::canonicalize(&file_path) else {
+        return plugin_err(StatusCode::NOT_FOUND, "file not found");
     };
-    let canonical_plugin = match std::fs::canonicalize(&plugin_path) {
-        Ok(p) => p,
-        Err(_) => return plugin_err(StatusCode::NOT_FOUND, "plugin not found"),
+    let Ok(canonical_plugin) = std::fs::canonicalize(&plugin_path) else {
+        return plugin_err(StatusCode::NOT_FOUND, "plugin not found");
     };
     if !canonical.starts_with(&canonical_plugin) {
         return plugin_err(StatusCode::FORBIDDEN, "access denied");
     }
 
-    let content = match tokio::fs::read(&file_path).await {
-        Ok(c) => c,
-        Err(_) => return plugin_err(StatusCode::NOT_FOUND, "file not found"),
+    let Ok(content) = tokio::fs::read(&file_path).await else {
+        return plugin_err(StatusCode::NOT_FOUND, "file not found");
     };
     let mime = mime_guess::from_path(&file_path).first_or_octet_stream();
 
@@ -145,9 +136,8 @@ pub async fn plugin_exec(
     State(pm): State<PluginManagerState>,
     Json(body): Json<ExecRequest>,
 ) -> Response {
-    let info = match pm.registry.get(&id) {
-        Some(i) => i,
-        None => return plugin_err(StatusCode::NOT_FOUND, "plugin not found"),
+    let Some(info) = pm.registry.get(&id) else {
+        return plugin_err(StatusCode::NOT_FOUND, "plugin not found");
     };
     let bin = match &info.manifest.bin {
         Some(b) if b.mode == "cli" => b,
@@ -186,15 +176,17 @@ pub async fn plugin_exec(
     }
 }
 
+/// # Panics
+/// Panics if the child process stdout cannot be captured.
+#[allow(clippy::unused_async)]
 pub async fn plugin_spawn_ws(
     Path(id): Path<String>,
     Query(params): Query<SpawnQuery>,
     State(pm): State<PluginManagerState>,
     ws: axum::extract::WebSocketUpgrade,
 ) -> Response {
-    let info = match pm.registry.get(&id) {
-        Some(i) => i,
-        None => return plugin_err(StatusCode::NOT_FOUND, "plugin not found"),
+    let Some(info) = pm.registry.get(&id) else {
+        return plugin_err(StatusCode::NOT_FOUND, "plugin not found");
     };
     let bin = match &info.manifest.bin {
         Some(b) if b.mode == "cli" => b.clone(),
@@ -244,9 +236,7 @@ pub async fn plugin_spawn_ws(
         tokio::spawn(async move {
             while let Ok(Some(line)) = stdout_reader.next_line().await {
                 if tx2
-                    .send(
-                        serde_json::json!({"type": "stdout", "data": line + "\n"}).to_string(),
-                    )
+                    .send(serde_json::json!({"type": "stdout", "data": line + "\n"}).to_string())
                     .is_err()
                 {
                     break;
@@ -257,9 +247,7 @@ pub async fn plugin_spawn_ws(
         tokio::spawn(async move {
             while let Ok(Some(line)) = stderr_reader.next_line().await {
                 if tx
-                    .send(
-                        serde_json::json!({"type": "stderr", "data": line + "\n"}).to_string(),
-                    )
+                    .send(serde_json::json!({"type": "stderr", "data": line + "\n"}).to_string())
                     .is_err()
                 {
                     break;
@@ -276,12 +264,9 @@ pub async fn plugin_spawn_ws(
                     }
                 }
                 msg = socket.recv() => {
-                    match msg {
-                        None => {
-                            let _ = child.kill().await;
-                            break;
-                        }
-                        Some(_) => {}
+                    if msg.is_none() {
+                        let _ = child.kill().await;
+                        break;
                     }
                 }
                 status = child.wait() => {
@@ -312,7 +297,10 @@ pub async fn plugin_storage_list(
     if let Ok(mut entries) = tokio::fs::read_dir(&dir).await {
         while let Ok(Some(entry)) = entries.next_entry().await {
             if let Some(name) = entry.file_name().to_str() {
-                if name.ends_with(".json") {
+                if std::path::Path::new(name)
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+                {
                     keys.push(name.trim_end_matches(".json").to_string());
                 }
             }
@@ -329,9 +317,8 @@ pub async fn plugin_storage_get(
         return plugin_err(StatusCode::BAD_REQUEST, "invalid id or key");
     }
     let path = pm.data_dir.join(&id).join(format!("{key}.json"));
-    let content = match tokio::fs::read_to_string(&path).await {
-        Ok(c) => c,
-        Err(_) => return plugin_err(StatusCode::NOT_FOUND, "key not found"),
+    let Ok(content) = tokio::fs::read_to_string(&path).await else {
+        return plugin_err(StatusCode::NOT_FOUND, "key not found");
     };
     match serde_json::from_str::<serde_json::Value>(&content) {
         Ok(val) => Json(serde_json::json!({ "value": val })).into_response(),
@@ -339,6 +326,8 @@ pub async fn plugin_storage_get(
     }
 }
 
+/// # Panics
+/// Panics if JSON serialization of the value fails (which should be infallible for `serde_json::Value`).
 pub async fn plugin_storage_set(
     Path((id, key)): Path<(String, String)>,
     State(pm): State<PluginManagerState>,
@@ -351,8 +340,10 @@ pub async fn plugin_storage_set(
     let _ = tokio::fs::create_dir_all(&dir).await;
     let path = dir.join(format!("{key}.json"));
     let val = body.get("value").cloned().unwrap_or(body);
-    match tokio::fs::write(&path, serde_json::to_string(&val).unwrap()).await {
-        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+    match tokio::fs::write(&path, serde_json::to_string(&val).expect("serialization is infallible"))
+        .await
+    {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
@@ -366,7 +357,7 @@ pub async fn plugin_storage_delete(
     }
     let path = pm.data_dir.join(&id).join(format!("{key}.json"));
     match tokio::fs::remove_file(&path).await {
-        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(_) => StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -387,7 +378,7 @@ pub async fn install_plugin(
         Err(e) => return plugin_err(StatusCode::BAD_REQUEST, &e.to_string()),
     };
 
-    match pm.install(&data).await {
+    match pm.install(&data) {
         Ok(manifest) => Json(manifest).into_response(),
         Err(e) => plugin_err(StatusCode::INTERNAL_SERVER_ERROR, &e),
     }
@@ -408,7 +399,7 @@ pub async fn update_plugin(
         Err(e) => return plugin_err(StatusCode::BAD_REQUEST, &e.to_string()),
     };
 
-    match pm.update(&id, &data).await {
+    match pm.update(&id, &data) {
         Ok(manifest) => Json(manifest).into_response(),
         Err(e) => plugin_err(StatusCode::INTERNAL_SERVER_ERROR, &e),
     }
@@ -427,6 +418,7 @@ pub async fn delete_plugin(
 
 // ─── Dev-Link ───────────────────────────────────────────────────────────────
 
+#[allow(clippy::unused_async)]
 pub async fn dev_link_plugin(
     State(pm): State<PluginManagerState>,
     Json(body): Json<DevLinkRequest>,
@@ -437,9 +429,8 @@ pub async fn dev_link_plugin(
     };
 
     let manifest_path = src.join("plugin.json");
-    let content = match std::fs::read_to_string(&manifest_path) {
-        Ok(c) => c,
-        Err(_) => return plugin_err(StatusCode::BAD_REQUEST, "plugin.json not found"),
+    let Ok(content) = std::fs::read_to_string(&manifest_path) else {
+        return plugin_err(StatusCode::BAD_REQUEST, "plugin.json not found");
     };
     let manifest: PluginManifest = match serde_json::from_str(&content) {
         Ok(m) => m,
@@ -474,21 +465,20 @@ pub async fn dev_link_plugin(
     Json(manifest).into_response()
 }
 
+#[allow(clippy::unused_async)]
 pub async fn install_from_dir(
     State(pm): State<PluginManagerState>,
     Json(body): Json<InstallDirRequest>,
 ) -> Response {
     let src = match std::fs::canonicalize(&body.path) {
         Ok(p) => p,
-        Err(e) => {
-            return plugin_err(StatusCode::BAD_REQUEST, &format!("invalid path: {e}"))
-        }
+        Err(e) => return plugin_err(StatusCode::BAD_REQUEST, &format!("invalid path: {e}")),
     };
     if !src.is_dir() {
         return plugin_err(StatusCode::BAD_REQUEST, "path is not a directory");
     }
 
-    match pm.install_from_dir(&src, body.dev_link).await {
+    match pm.install_from_dir(&src, body.dev_link) {
         Ok(manifest) => Json(manifest).into_response(),
         Err(e) => plugin_err(StatusCode::INTERNAL_SERVER_ERROR, &e),
     }
@@ -508,10 +498,7 @@ pub async fn get_market_registry(State(pm): State<PluginManagerState>) -> Respon
     let registry: RegistryIndex = match serde_json::from_str(&body) {
         Ok(r) => r,
         Err(e) => {
-            return plugin_err(
-                StatusCode::BAD_GATEWAY,
-                &format!("invalid registry JSON: {e}"),
-            )
+            return plugin_err(StatusCode::BAD_GATEWAY, &format!("invalid registry JSON: {e}"))
         }
     };
 
@@ -521,10 +508,8 @@ pub async fn get_market_registry(State(pm): State<PluginManagerState>) -> Respon
         .map(|entry| {
             let installed = pm.registry.get(&entry.id);
             let installed_version = installed.as_ref().map(|i| i.manifest.version.clone());
-            let has_update = installed_version
-                .as_ref()
-                .map(|v| version_gt(&entry.version, v))
-                .unwrap_or(false);
+            let has_update =
+                installed_version.as_ref().is_some_and(|v| version_gt(&entry.version, v));
 
             MarketPlugin {
                 id: entry.id,
@@ -547,6 +532,8 @@ pub async fn get_market_registry(State(pm): State<PluginManagerState>) -> Respon
     Json(market).into_response()
 }
 
+/// # Panics
+/// Panics if the response builder fails.
 pub async fn get_market_readme(Path(id): Path<String>) -> Response {
     let body = match fetch_cached_registry().await {
         Ok(b) => b,
@@ -556,18 +543,14 @@ pub async fn get_market_readme(Path(id): Path<String>) -> Response {
     let registry: RegistryIndex = match serde_json::from_str(&body) {
         Ok(r) => r,
         Err(e) => {
-            return plugin_err(
-                StatusCode::BAD_GATEWAY,
-                &format!("invalid registry JSON: {e}"),
-            )
+            return plugin_err(StatusCode::BAD_GATEWAY, &format!("invalid registry JSON: {e}"))
         }
     };
 
     let client = &crate::proxy::HTTP_CLIENT_FOLLOW_REDIRECTS;
 
-    let entry = match registry.plugins.iter().find(|p| p.id == id) {
-        Some(e) => e,
-        None => return plugin_err(StatusCode::NOT_FOUND, "plugin not found in registry"),
+    let Some(entry) = registry.plugins.iter().find(|p| p.id == id) else {
+        return plugin_err(StatusCode::NOT_FOUND, "plugin not found in registry");
     };
 
     let readme_url = match &entry.subdir {
@@ -575,19 +558,15 @@ pub async fn get_market_readme(Path(id): Path<String>) -> Response {
             "https://raw.githubusercontent.com/{}/{}/{}/README.md",
             entry.repo, entry.branch, sub
         ),
-        None => format!(
-            "https://raw.githubusercontent.com/{}/{}/README.md",
-            entry.repo, entry.branch
-        ),
+        None => {
+            format!("https://raw.githubusercontent.com/{}/{}/README.md", entry.repo, entry.branch)
+        }
     };
 
     let readme_resp = match client.get(&readme_url).send().await {
         Ok(r) => r,
         Err(e) => {
-            return plugin_err(
-                StatusCode::BAD_GATEWAY,
-                &format!("failed to fetch README: {e}"),
-            )
+            return plugin_err(StatusCode::BAD_GATEWAY, &format!("failed to fetch README: {e}"))
         }
     };
 
@@ -605,10 +584,7 @@ pub async fn get_market_readme(Path(id): Path<String>) -> Response {
     let readme_text = match readme_resp.text().await {
         Ok(t) => t,
         Err(e) => {
-            return plugin_err(
-                StatusCode::BAD_GATEWAY,
-                &format!("failed to read README: {e}"),
-            )
+            return plugin_err(StatusCode::BAD_GATEWAY, &format!("failed to read README: {e}"))
         }
     };
 
@@ -620,6 +596,8 @@ pub async fn get_market_readme(Path(id): Path<String>) -> Response {
         .unwrap()
 }
 
+/// # Panics
+/// Panics if `SystemTime::now()` fails (which should not happen).
 pub async fn install_from_git(
     State(pm): State<PluginManagerState>,
     Json(body): Json<InstallGitRequest>,
@@ -628,10 +606,8 @@ pub async fn install_from_git(
         return plugin_err(StatusCode::BAD_REQUEST, "invalid repo format, expected owner/repo");
     }
 
-    let zip_url = format!(
-        "https://github.com/{}/archive/refs/heads/{}.zip",
-        body.repo, body.branch
-    );
+    let zip_url =
+        format!("https://github.com/{}/archive/refs/heads/{}.zip", body.repo, body.branch);
 
     let client = &crate::proxy::HTTP_CLIENT_FOLLOW_REDIRECTS;
     let resp = match client.get(&zip_url).send().await {
@@ -640,10 +616,7 @@ pub async fn install_from_git(
     };
 
     if !resp.status().is_success() {
-        return plugin_err(
-            StatusCode::BAD_GATEWAY,
-            &format!("GitHub returned {}", resp.status()),
-        );
+        return plugin_err(StatusCode::BAD_GATEWAY, &format!("GitHub returned {}", resp.status()));
     }
 
     let bytes = match resp.bytes().await {
@@ -664,9 +637,8 @@ pub async fn install_from_git(
     };
 
     let manifest_path = plugin_root.join("plugin.json");
-    let content = match std::fs::read_to_string(&manifest_path) {
-        Ok(c) => c,
-        Err(_) => return plugin_err(StatusCode::BAD_REQUEST, "plugin.json not found"),
+    let Ok(content) = std::fs::read_to_string(&manifest_path) else {
+        return plugin_err(StatusCode::BAD_REQUEST, "plugin.json not found");
     };
     let manifest: PluginManifest = match serde_json::from_str(&content) {
         Ok(m) => m,
@@ -743,14 +715,14 @@ pub async fn install_from_git(
 
 // ─── Process Management ─────────────────────────────────────────────────────
 
+#[allow(clippy::unused_async)]
 pub async fn plugin_process_start(
     Path(id): Path<String>,
     State((pm, manager)): State<(PluginManagerState, Arc<SessionManager>)>,
     Json(body): Json<ProcessStartRequest>,
 ) -> Response {
-    let info = match pm.registry.get(&id) {
-        Some(i) => i,
-        None => return plugin_err(StatusCode::NOT_FOUND, "plugin not found"),
+    let Some(info) = pm.registry.get(&id) else {
+        return plugin_err(StatusCode::NOT_FOUND, "plugin not found");
     };
     let bin = match &info.manifest.bin {
         Some(b) if b.mode == "cli" => b,
@@ -781,7 +753,7 @@ pub async fn plugin_process_start(
     let proc_id = pid.to_string();
     let child_arc = Arc::new(TokioMutex::new(Some(child)));
 
-    let managed = ManagedProcess {
+    let managed_proc = ManagedProcess {
         info: ProcessInfo {
             pid,
             command: bin_path.to_string_lossy().into_owned(),
@@ -795,7 +767,7 @@ pub async fn plugin_process_start(
     pm.processes
         .entry(id.clone())
         .or_insert_with(DashMap::new)
-        .insert(proc_id.clone(), managed);
+        .insert(proc_id.clone(), managed_proc);
 
     let pm_clone = Arc::clone(&pm);
     let manager_clone = Arc::clone(&manager);
@@ -833,6 +805,7 @@ pub async fn plugin_process_start(
     .into_response()
 }
 
+#[allow(clippy::unused_async)]
 pub async fn plugin_process_list(
     Path(id): Path<String>,
     State(pm): State<PluginManagerState>,

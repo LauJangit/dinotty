@@ -1,3 +1,5 @@
+use axum::extract::State as AxumState;
+use axum::Json;
 use axum::{
     body::Body,
     extract::Path,
@@ -12,22 +14,20 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
-use axum::extract::State as AxumState;
-use axum::Json;
 
 use dinotty_server::auth;
 use dinotty_server::file_watcher::{self, FileWatcherState};
 use dinotty_server::history;
+use dinotty_server::history::HistoryState;
 use dinotty_server::monitor::{self, MonitorState};
 use dinotty_server::notification::{self, NotificationBroadcast};
 use dinotty_server::plugin::{self, PluginManager, PluginManagerState};
 use dinotty_server::proxy;
 use dinotty_server::session::SessionManager;
 use dinotty_server::settings;
-use dinotty_server::history::HistoryState;
 use dinotty_server::tabs;
-use dinotty_server::ws;
 use dinotty_server::workspace;
+use dinotty_server::ws;
 
 #[derive(Embed)]
 #[folder = "../frontend/dist/"]
@@ -111,10 +111,9 @@ async fn static_handler(Path(path): Path<String>) -> impl IntoResponse {
                 .body(Body::from(content.data.into_owned()))
                 .unwrap()
         }
-        None => Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .body(Body::from("not found"))
-            .unwrap(),
+        None => {
+            Response::builder().status(StatusCode::NOT_FOUND).body(Body::from("not found")).unwrap()
+        }
     }
 }
 
@@ -122,22 +121,17 @@ async fn index(
     axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
     AxumState(state): AxumState<AppState>,
 ) -> impl IntoResponse {
-    let content = StaticFiles::get("index.html")
-        .expect("index.html must exist in frontend/dist/");
+    let content = StaticFiles::get("index.html").expect("index.html must exist in frontend/dist/");
     let html = String::from_utf8_lossy(&content.data);
 
     let stored_token = state.auth_token.read().await.clone();
-    let token_value = params.get("token")
-        .filter(|t| {
-            urlencoding::decode(t).map(|d| d == stored_token).unwrap_or(false)
-        })
+    let token_value = params
+        .get("token")
+        .filter(|t| urlencoding::decode(t).map(|d| d == stored_token).unwrap_or(false))
         .map(|_| stored_token)
         .unwrap_or_default();
 
-    let tag = format!(
-        "<meta name=\"auth-token\" content=\"{}\">\n</head>",
-        token_value
-    );
+    let tag = format!("<meta name=\"auth-token\" content=\"{}\">\n</head>", token_value);
     let html = html.replace("</head>", &tag);
     (
         [(header::CACHE_CONTROL, axum::http::HeaderValue::from_static("no-store"))],
@@ -156,10 +150,9 @@ async fn icon_handler(Path(path): Path<String>) -> impl IntoResponse {
                 .body(Body::from(content.data.into_owned()))
                 .unwrap()
         }
-        None => Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .body(Body::from("not found"))
-            .unwrap(),
+        None => {
+            Response::builder().status(StatusCode::NOT_FOUND).body(Body::from("not found")).unwrap()
+        }
     }
 }
 
@@ -169,17 +162,14 @@ async fn manifest_handler() -> impl IntoResponse {
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(content.data.into_owned()))
             .unwrap(),
-        None => Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .body(Body::from("not found"))
-            .unwrap(),
+        None => {
+            Response::builder().status(StatusCode::NOT_FOUND).body(Body::from("not found")).unwrap()
+        }
     }
 }
 
 fn read_git_info() -> GitInfo {
-    let version = option_env!("DINOTTY_VERSION")
-        .unwrap_or(env!("CARGO_PKG_VERSION"))
-        .to_string();
+    let version = option_env!("DINOTTY_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")).to_string();
 
     let repo_url = std::process::Command::new("git")
         .args(["remote", "get-url", "origin"])
@@ -190,9 +180,9 @@ fn read_git_info() -> GitInfo {
             let url = String::from_utf8_lossy(&o.stdout).trim().to_string();
             if url.starts_with("git@") {
                 url.replace(":", "/")
-                   .replace("git@", "https://")
-                   .trim_end_matches(".git")
-                   .to_string()
+                    .replace("git@", "https://")
+                    .trim_end_matches(".git")
+                    .to_string()
             } else {
                 url.trim_end_matches(".git").to_string()
             }
@@ -239,12 +229,20 @@ async fn update_token(
 ) -> impl IntoResponse {
     let new_token = body.token.trim().to_string();
     if new_token.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "token cannot be empty"}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "token cannot be empty"})),
+        )
+            .into_response();
     }
     *state.auth_token.write().await = new_token.clone();
     if let Err(e) = settings::save_token(&new_token) {
         tracing::error!("Failed to persist token: {}", e);
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "failed to save"}))).into_response();
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "failed to save"})),
+        )
+            .into_response();
     }
     StatusCode::OK.into_response()
 }
@@ -260,9 +258,8 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
     let plugins = Arc::new(PluginManager::new());
     plugins.scan();
 
-    let initial_token = settings::load_token()
-        .or_else(|| std::env::var("DINOTTY_TOKEN").ok())
-        .unwrap_or_default();
+    let initial_token =
+        settings::load_token().or_else(|| std::env::var("DINOTTY_TOKEN").ok()).unwrap_or_default();
     if initial_token.is_empty() {
         tracing::info!("No auth token configured — first-time setup required");
     } else {
@@ -303,7 +300,10 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
         .route("/api/tabs/:tab_id/layout", put(tabs::update_layout))
         .route("/api/input", post(ws::post_input))
         .route("/api/settings", get(settings::get_settings).put(settings::put_settings))
-        .route("/api/settings/background", post(settings::upload_background).get(settings::get_background))
+        .route(
+            "/api/settings/background",
+            post(settings::upload_background).get(settings::get_background),
+        )
         .route("/api/workspace/resolve", get(workspace::workspace_resolve))
         .route("/api/workspace/list", get(workspace::workspace_list))
         .route("/api/workspace/meta", get(workspace::workspace_meta))
@@ -334,16 +334,24 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
                 .route("/api/plugins/install", post(plugin::install_plugin))
                 .route("/api/plugins/install-git", post(plugin::install_from_git))
                 .route("/api/plugins/:id/update", post(plugin::update_plugin))
-                .layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024))
+                .layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024)),
         )
         .route("/api/plugins/:id", get(plugin::plugin_detail).delete(plugin::delete_plugin))
         .route("/api/plugins/:id/exec", post(plugin::plugin_exec))
         .route("/api/plugins/:id/spawn", get(plugin::plugin_spawn_ws))
         .route("/api/plugins/:id/process/start", post(plugin::plugin_process_start))
-        .route("/api/plugins/:id/process", get(plugin::plugin_process_list).delete(plugin::plugin_process_stop_all))
+        .route(
+            "/api/plugins/:id/process",
+            get(plugin::plugin_process_list).delete(plugin::plugin_process_stop_all),
+        )
         .route("/api/plugins/:id/process/:pid", delete(plugin::plugin_process_stop))
         .route("/api/plugins/:id/storage", get(plugin::plugin_storage_list))
-        .route("/api/plugins/:id/storage/:key", get(plugin::plugin_storage_get).put(plugin::plugin_storage_set).delete(plugin::plugin_storage_delete))
+        .route(
+            "/api/plugins/:id/storage/:key",
+            get(plugin::plugin_storage_get)
+                .put(plugin::plugin_storage_set)
+                .delete(plugin::plugin_storage_delete),
+        )
         .route("/api/plugins/:id/*path", get(plugin::plugin_asset))
         .route("/api/proxy", any(proxy::external_proxy_handler))
         .route("/preview/:port", any(proxy::proxy_handler_root))
@@ -352,29 +360,37 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
         .route("/assets/*path", get(static_handler))
         .route("/icons/*path", get(icon_handler))
         .route("/manifest.json", get(manifest_handler))
-        .route("/logo.png", get(|| async {
-            match StaticFiles::get("logo.png") {
-                Some(content) => {
-                    Response::builder()
+        .route(
+            "/logo.png",
+            get(|| async {
+                match StaticFiles::get("logo.png") {
+                    Some(content) => Response::builder()
                         .header(header::CONTENT_TYPE, "image/png")
                         .header(header::CACHE_CONTROL, "public, max-age=86400")
                         .body(Body::from(content.data.into_owned()))
-                        .unwrap()
+                        .unwrap(),
+                    None => Response::builder()
+                        .status(StatusCode::NOT_FOUND)
+                        .body(Body::from("not found"))
+                        .unwrap(),
                 }
-                None => Response::builder()
-                    .status(StatusCode::NOT_FOUND)
-                    .body(Body::from("not found"))
-                    .unwrap(),
-            }
-        }))
+            }),
+        )
         .route("/", get(index))
-        .layer(middleware::from_fn_with_state(state.clone(), |AxumState(s): AxumState<AppState>, req: axum::extract::Request, next: middleware::Next| async move {
-            let token = s.auth_token.read().await.clone();
-            let client_ip = req.extensions().get::<axum::extract::ConnectInfo<SocketAddr>>()
-                .map(|ci| ci.ip())
-                .unwrap_or_else(|| "127.0.0.1".parse().unwrap());
-            auth::auth_middleware(req, next, &token, &s.settings, client_ip).await
-        }))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            |AxumState(s): AxumState<AppState>,
+             req: axum::extract::Request,
+             next: middleware::Next| async move {
+                let token = s.auth_token.read().await.clone();
+                let client_ip = req
+                    .extensions()
+                    .get::<axum::extract::ConnectInfo<SocketAddr>>()
+                    .map(|ci| ci.ip())
+                    .unwrap_or_else(|| "127.0.0.1".parse().unwrap());
+                auth::auth_middleware(req, next, &token, &s.settings, client_ip).await
+            },
+        ))
         .layer(CorsLayer::permissive())
         .with_state(state);
 

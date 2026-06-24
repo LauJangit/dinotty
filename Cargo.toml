@@ -66,4 +66,10 @@ conf-files = ["/etc/dinotty/env.example"]
 enable = true
 start = true
 
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+
 [dev-dependencies]

@@ -9,10 +9,15 @@ use std::sync::Arc;
 
 use crate::session::SessionManager;
 
-use super::*;
+use super::{get_root, json_err, normalize_join, PanePathQuery, PaneQuery};
 
 macro_rules! try_res {
-    ($e:expr) => { match $e { Ok(v) => v, Err(e) => return e } };
+    ($e:expr) => {
+        match $e {
+            Ok(v) => v,
+            Err(e) => return e,
+        }
+    };
 }
 
 #[derive(Serialize)]
@@ -37,46 +42,33 @@ pub async fn workspace_git_status(
             .args(["status", "--porcelain"])
             .current_dir(&root)
             .output()
-    }).await {
+    })
+    .await
+    {
         Ok(Ok(o)) if o.status.success() => o,
-        _ => {
-            return Json(GitStatusResponse {
-                is_git_repo: false,
-                files: vec![],
-            })
-            .into_response()
-        }
+        _ => return Json(GitStatusResponse { is_git_repo: false, files: vec![] }).into_response(),
     };
     let stdout = String::from_utf8_lossy(&output.stdout);
     let files: Vec<GitFileStatus> = stdout
         .lines()
         .filter(|l| l.len() >= 4)
-        .filter_map(|line| {
+        .map(|line| {
             let xy = &line[..2];
             let path = line[3..].trim_start_matches('"').trim_end_matches('"');
             let path = path.split(" -> ").last().unwrap_or(path).to_string();
             let status = match xy {
                 "??" => "untracked",
                 "A " | "AM" => "staged_new",
-                "M " => "staged_modified",
-                " M" => "modified",
-                "MM" => "staged_modified",
+                "M " | "MM" => "staged_modified",
                 " D" => "deleted",
                 "D " => "staged_deleted",
                 "R " | "RM" => "renamed",
                 _ => "modified",
             };
-            Some(GitFileStatus {
-                path,
-                status: status.to_string(),
-            })
+            GitFileStatus { path, status: status.to_string() }
         })
         .collect();
-    Json(GitStatusResponse {
-        is_git_repo: true,
-        files,
-    })
-    .into_response()
+    Json(GitStatusResponse { is_git_repo: true, files }).into_response()
 }
 
 #[derive(Serialize)]
@@ -103,12 +95,8 @@ pub async fn workspace_git_diff(
     Query(q): Query<PanePathQuery>,
 ) -> impl IntoResponse {
     let no_git = || {
-        Json(GitDiffResponse {
-            is_git_repo: false,
-            original_content: None,
-            changes: vec![],
-        })
-        .into_response()
+        Json(GitDiffResponse { is_git_repo: false, original_content: None, changes: vec![] })
+            .into_response()
     };
     let root = try_res!(get_root(&manager, &q.pane_id));
     let git_check = tokio::task::spawn_blocking({
@@ -119,9 +107,10 @@ pub async fn workspace_git_diff(
                 .current_dir(&root)
                 .output()
         }
-    }).await;
+    })
+    .await;
     match git_check {
-        Ok(Ok(o)) if o.status.success() => {},
+        Ok(Ok(o)) if o.status.success() => {}
         _ => return no_git(),
     }
     let rel = q.path.trim().trim_start_matches('/');
@@ -133,20 +122,18 @@ pub async fn workspace_git_diff(
         let rel = rel.to_string();
         move || {
             std::process::Command::new("git")
-                .args(["show", &format!("HEAD:{}", rel)])
+                .args(["show", &format!("HEAD:{rel}")])
                 .current_dir(&root)
                 .output()
         }
-    }).await;
+    })
+    .await;
     let original_content = match original {
         Ok(Ok(o)) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
         _ => return no_git(),
     };
     let target = try_res!(normalize_join(&root, rel));
-    let current = match std::fs::read_to_string(&target) {
-        Ok(c) => c,
-        Err(_) => return no_git(),
-    };
+    let Ok(current) = std::fs::read_to_string(&target) else { return no_git() };
     let diff = similar::TextDiff::from_lines(&original_content, &current);
     let mut changes: Vec<GitChange> = Vec::new();
     let mut orig_line = 1usize;
@@ -192,12 +179,8 @@ pub async fn workspace_git_diff(
         }
     }
 
-    Json(GitDiffResponse {
-        is_git_repo: true,
-        original_content: Some(original_content),
-        changes,
-    })
-    .into_response()
+    Json(GitDiffResponse { is_git_repo: true, original_content: Some(original_content), changes })
+        .into_response()
 }
 
 #[derive(Deserialize)]
@@ -206,6 +189,7 @@ pub struct GitStageBody {
     pub end_line: usize,
 }
 
+#[allow(clippy::too_many_lines)]
 pub async fn workspace_git_stage_lines(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<PanePathQuery>,
@@ -221,11 +205,12 @@ pub async fn workspace_git_stage_lines(
         let rel = rel.to_string();
         move || {
             std::process::Command::new("git")
-                .args(["show", &format!("HEAD:{}", rel)])
+                .args(["show", &format!("HEAD:{rel}")])
                 .current_dir(&root)
                 .output()
         }
-    }).await;
+    })
+    .await;
     let original = match original_out {
         Ok(Ok(o)) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
         _ => String::new(),
@@ -267,8 +252,8 @@ pub async fn workspace_git_stage_lines(
                 }
             }
             similar::DiffOp::Replace { old_index, old_len, new_index, new_len } => {
-                let in_range = mod_line >= body.start_line
-                    && mod_line + new_len - 1 <= body.end_line;
+                let in_range =
+                    mod_line >= body.start_line && mod_line + new_len - 1 <= body.end_line;
                 if in_range {
                     for i in 0..*new_len {
                         staged_lines.push(cur_lines[new_index + i].to_string());
@@ -283,7 +268,7 @@ pub async fn workspace_git_stage_lines(
         }
     }
     let staged_content = staged_lines.join("\n");
-    let mut patch = format!("--- a/{}\n+++ b/{}\n", rel, rel);
+    let mut patch = format!("--- a/{rel}\n+++ b/{rel}\n");
     let udiff = similar::TextDiff::from_lines(&original, &staged_content);
     for hunk in udiff.unified_diff().context_radius(3).iter_hunks() {
         patch.push_str(&hunk.to_string());
@@ -304,13 +289,11 @@ pub async fn workspace_git_stage_lines(
                 }
                 child.wait()
             })
-    }).await;
+    })
+    .await;
     match result {
         Ok(Ok(s)) if s.success() => Json(serde_json::json!({ "ok": true })).into_response(),
-        Ok(Ok(s)) => json_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            &format!("git apply failed: {}", s),
-        ),
+        Ok(Ok(s)) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &format!("git apply failed: {s}")),
         Ok(Err(e)) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
         Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -352,7 +335,7 @@ pub async fn workspace_git_revert_lines(
     let new_content = result_lines.join("\n");
     let trailing = current.ends_with('\n');
     let write_content = if trailing && !new_content.ends_with('\n') {
-        format!("{}\n", new_content)
+        format!("{new_content}\n")
     } else {
         new_content
     };

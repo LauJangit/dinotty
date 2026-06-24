@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::result_large_err)]
 use axum::{
     body::Body,
     extract::{Query, State},
@@ -17,12 +18,10 @@ mod syntax;
 
 pub use git::{
     workspace_git_diff, workspace_git_revert_lines, workspace_git_stage_lines,
-    workspace_git_status, GitChange, GitDiffResponse, GitFileStatus, GitRevertBody,
-    GitStageBody, GitStatusResponse,
+    workspace_git_status, GitChange, GitDiffResponse, GitFileStatus, GitRevertBody, GitStageBody,
+    GitStatusResponse,
 };
-pub use syntax::{
-    workspace_syntax_check, SyntaxCheckBody, SyntaxCheckResponse, SyntaxDiagnostic,
-};
+pub use syntax::{workspace_syntax_check, SyntaxCheckBody, SyntaxCheckResponse, SyntaxDiagnostic};
 
 const MAX_TEXT_PREVIEW: usize = 512 * 1024;
 const MAX_DOWNLOAD: u64 = 500 * 1024 * 1024;
@@ -88,7 +87,12 @@ pub struct MetaResponse {
 }
 
 macro_rules! try_res {
-    ($e:expr) => { match $e { Ok(v) => v, Err(e) => return e } };
+    ($e:expr) => {
+        match $e {
+            Ok(v) => v,
+            Err(e) => return e,
+        }
+    };
 }
 
 fn json_err(status: StatusCode, msg: &str) -> Response {
@@ -101,16 +105,30 @@ fn get_root(manager: &SessionManager, pane_id: &str) -> Result<PathBuf, Response
         .get(pane_id)
         .map(|r| Arc::clone(r.value()))
         .ok_or_else(|| json_err(StatusCode::NOT_FOUND, "unknown pane"))?;
-    let state = session.cwd_state.lock().unwrap();
+    let state = session.cwd_state.lock().expect("mutex poisoned");
     Ok(state.cwd.canonicalize().unwrap_or_else(|_| state.cwd.clone()))
 }
 
 impl MetaResponse {
     fn media(kind: &'static str, mime: &'static str) -> Self {
-        Self { kind, content: None, language: None, truncated: false, mime: Some(mime.to_string()), message: None }
+        Self {
+            kind,
+            content: None,
+            language: None,
+            truncated: false,
+            mime: Some(mime.to_string()),
+            message: None,
+        }
     }
     fn unsupported() -> Self {
-        Self { kind: "unsupported", content: None, language: None, truncated: false, mime: None, message: Some("binary file".into()) }
+        Self {
+            kind: "unsupported",
+            content: None,
+            language: None,
+            truncated: false,
+            mime: None,
+            message: Some("binary file".into()),
+        }
     }
 }
 
@@ -128,9 +146,8 @@ fn normalize_join(root: &Path, rel: &str) -> Result<PathBuf, Response> {
 
 fn path_must_be_under(root: &Path, candidate: &Path) -> Result<(), Response> {
     let root_canon = root.canonicalize().map_err(|_| json_err(StatusCode::NOT_FOUND, "cwd"))?;
-    let cand_canon = candidate
-        .canonicalize()
-        .map_err(|_| json_err(StatusCode::NOT_FOUND, "path"))?;
+    let cand_canon =
+        candidate.canonicalize().map_err(|_| json_err(StatusCode::NOT_FOUND, "path"))?;
     if !cand_canon.starts_with(&root_canon) {
         return Err(json_err(StatusCode::FORBIDDEN, "outside workspace"));
     }
@@ -138,9 +155,7 @@ fn path_must_be_under(root: &Path, candidate: &Path) -> Result<(), Response> {
 }
 
 fn rel_from_root(root: &Path, full: &Path) -> Option<String> {
-    full.strip_prefix(root)
-        .ok()
-        .map(|p| p.to_string_lossy().replace('\\', "/"))
+    full.strip_prefix(root).ok().map(|p| p.to_string_lossy().replace('\\', "/"))
 }
 
 fn validate_entry_name(name: &str) -> Result<&str, Response> {
@@ -156,21 +171,18 @@ fn validate_entry_name(name: &str) -> Result<&str, Response> {
 
 fn parent_dir_must_be_in_workspace(root: &Path, file_path: &Path) -> Result<(), Response> {
     let root_canon = root.canonicalize().map_err(|_| json_err(StatusCode::NOT_FOUND, "cwd"))?;
-    let parent = file_path
-        .parent()
-        .ok_or_else(|| json_err(StatusCode::BAD_REQUEST, "invalid path"))?;
+    let parent =
+        file_path.parent().ok_or_else(|| json_err(StatusCode::BAD_REQUEST, "invalid path"))?;
     if !parent.exists() {
         return Err(json_err(StatusCode::NOT_FOUND, "parent not found"));
     }
-    let parent_canon = parent
-        .canonicalize()
-        .map_err(|_| json_err(StatusCode::NOT_FOUND, "parent not found"))?;
+    let parent_canon =
+        parent.canonicalize().map_err(|_| json_err(StatusCode::NOT_FOUND, "parent not found"))?;
     if !parent_canon.starts_with(&root_canon) {
         return Err(json_err(StatusCode::FORBIDDEN, "outside workspace"));
     }
     Ok(())
 }
-
 
 fn resolve_user_path(home: Option<PathBuf>, raw: &str) -> PathBuf {
     let raw = raw.trim();
@@ -185,6 +197,7 @@ fn resolve_user_path(home: Option<PathBuf>, raw: &str) -> PathBuf {
     PathBuf::from(raw)
 }
 
+#[allow(clippy::unused_async)]
 pub async fn workspace_resolve(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<ResolveQuery>,
@@ -195,7 +208,8 @@ pub async fn workspace_resolve(
     } else {
         try_res!(normalize_join(&root, &q.path))
     };
-    let canon = joined.canonicalize().map_err(|_| json_err(StatusCode::NOT_FOUND, "path not found"));
+    let canon =
+        joined.canonicalize().map_err(|_| json_err(StatusCode::NOT_FOUND, "path not found"));
     let canon = try_res!(canon);
     try_res!(path_must_be_under(&root, &canon));
     let Some(rel) = rel_from_root(&root, &canon) else {
@@ -204,6 +218,7 @@ pub async fn workspace_resolve(
     Json(ResolveResponse { rel }).into_response()
 }
 
+#[allow(clippy::unused_async)]
 pub async fn workspace_list(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<WorkspaceListQuery>,
@@ -222,9 +237,7 @@ pub async fn workspace_list(
         return json_err(StatusCode::BAD_REQUEST, "not a directory");
     }
     let mut entries = match std::fs::read_dir(&target) {
-        Ok(rd) => rd
-            .filter_map(|e| e.ok())
-            .collect::<Vec<_>>(),
+        Ok(rd) => rd.filter_map(std::result::Result::ok).collect::<Vec<_>>(),
         Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     };
     entries.sort_by_key(|e| {
@@ -244,26 +257,15 @@ pub async fn workspace_list(
         .collect::<Vec<_>>();
     let cwd_display = root.to_string_lossy().into_owned();
     let path_display = q.path.trim().trim_start_matches('/').to_string();
-    Json(ListResponse {
-        cwd: cwd_display,
-        path: path_display,
-        entries: list,
-    })
-    .into_response()
+    Json(ListResponse { cwd: cwd_display, path: path_display, entries: list }).into_response()
 }
 
 fn detect_language(path: &Path) -> &'static str {
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
     match ext.as_str() {
         "rs" => "rust",
-        "js" | "mjs" | "cjs" => "javascript",
-        "ts" | "mts" | "cts" => "typescript",
-        "tsx" => "typescript",
-        "jsx" => "javascript",
+        "js" | "mjs" | "cjs" | "jsx" => "javascript",
+        "ts" | "mts" | "cts" | "tsx" => "typescript",
         "py" => "python",
         "go" => "go",
         "java" => "java",
@@ -272,15 +274,12 @@ fn detect_language(path: &Path) -> &'static str {
         "json" => "json",
         "yaml" | "yml" => "yaml",
         "toml" => "toml",
-        "xml" => "xml",
+        "xml" | "vue" => "xml",
         "html" | "htm" => "html",
-        "css" => "css",
-        "scss" | "sass" => "css",
+        "css" | "scss" | "sass" => "css",
         "md" | "markdown" => "markdown",
         "sh" | "bash" | "zsh" => "bash",
         "sql" => "sql",
-        "vue" => "xml",
-        "txt" | "log" | "csv" => "plaintext",
         _ => "plaintext",
     }
 }
@@ -379,13 +378,16 @@ fn office_kind(path: &Path) -> Option<(&'static str, &'static str)> {
     let ext = path.extension()?.to_str()?.to_lowercase();
     Some(match ext.as_str() {
         "doc" => ("office", "application/msword"),
-        "docx" => ("office", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        "docx" => {
+            ("office", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        }
         "xls" => ("office", "application/vnd.ms-excel"),
         "xlsx" => ("office", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
         _ => return None,
     })
 }
 
+#[allow(clippy::unused_async)]
 pub async fn workspace_meta(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<PanePathQuery>,
@@ -417,11 +419,7 @@ pub async fn workspace_meta(
         Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     };
     let truncated = bytes.len() > MAX_TEXT_PREVIEW;
-    let slice = if truncated {
-        &bytes[..MAX_TEXT_PREVIEW]
-    } else {
-        &bytes[..]
-    };
+    let slice = if truncated { &bytes[..MAX_TEXT_PREVIEW] } else { &bytes[..] };
     let text = match std::str::from_utf8(slice) {
         Ok(t) => t.to_string(),
         Err(_) => return Json(MetaResponse::unsupported()).into_response(),
@@ -464,33 +462,27 @@ pub async fn workspace_raw(
         return json_err(StatusCode::BAD_REQUEST, "file too large");
     }
     let len = meta.len();
-    let mime = media_kind(&target)
-        .map(|(_, m)| m.to_string())
-        .unwrap_or_else(|| {
-            mime_guess::from_path(&target)
-                .first_or_octet_stream()
-                .to_string()
-        });
+    let mime = media_kind(&target).map_or_else(
+        || mime_guess::from_path(&target).first_or_octet_stream().to_string(),
+        |(_, m)| m.to_string(),
+    );
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_str(&mime).unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+        HeaderValue::from_str(&mime)
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
     );
     headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
 
     if len == 0 {
-        headers.insert(
-            header::CONTENT_LENGTH,
-            HeaderValue::from_static("0"),
-        );
+        headers.insert(header::CONTENT_LENGTH, HeaderValue::from_static("0"));
         return (StatusCode::OK, headers, Body::empty()).into_response();
     }
 
     let range = req_headers
         .get(header::RANGE)
         .and_then(|v| v.to_str().ok())
-        .map(|r| resolve_byte_range(r, len))
-        .unwrap_or(ByteRangeResult::Full);
+        .map_or(ByteRangeResult::Full, |r| resolve_byte_range(r, len));
 
     match range {
         ByteRangeResult::Partial { start, end } => {
@@ -499,6 +491,7 @@ pub async fn workspace_raw(
                 Ok(f) => f,
                 Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
             };
+            #[allow(clippy::cast_possible_truncation)]
             let chunk_len = (end - start + 1) as usize;
             let mut chunk = vec![0u8; chunk_len];
             if let Err(e) = file.seek(std::io::SeekFrom::Start(start)).await {
@@ -561,6 +554,7 @@ pub struct CreateEntryBody {
     pub name: String,
 }
 
+#[allow(clippy::unused_async)]
 pub async fn workspace_create_entry(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<CreateEntryQuery>,
@@ -585,11 +579,7 @@ pub async fn workspace_create_entry(
         if let Err(e) = std::fs::create_dir(&dest) {
             return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
         }
-    } else if let Err(e) = std::fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&dest)
-    {
+    } else if let Err(e) = std::fs::OpenOptions::new().create_new(true).write(true).open(&dest) {
         return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
     }
     let Some(rel) = rel_from_root(&root, &dest) else {
@@ -603,6 +593,7 @@ pub struct PutFileBody {
     pub content: String,
 }
 
+#[allow(clippy::unused_async)]
 pub async fn workspace_put_file(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<PanePathQuery>,
@@ -623,6 +614,7 @@ pub async fn workspace_put_file(
     Json(serde_json::json!({ "ok": true })).into_response()
 }
 
+#[allow(clippy::unused_async)]
 pub async fn workspace_delete(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<PanePathQuery>,
@@ -633,13 +625,11 @@ pub async fn workspace_delete(
         return json_err(StatusCode::NOT_FOUND, "not found");
     }
     try_res!(path_must_be_under(&root, &target));
-    let root_canon = match root.canonicalize() {
-        Ok(p) => p,
-        Err(_) => return json_err(StatusCode::NOT_FOUND, "cwd"),
+    let Ok(root_canon) = root.canonicalize() else {
+        return json_err(StatusCode::NOT_FOUND, "cwd");
     };
-    let cand_canon = match target.canonicalize() {
-        Ok(p) => p,
-        Err(_) => return json_err(StatusCode::NOT_FOUND, "not found"),
+    let Ok(cand_canon) = target.canonicalize() else {
+        return json_err(StatusCode::NOT_FOUND, "not found");
     };
     if cand_canon == root_canon {
         return json_err(StatusCode::BAD_REQUEST, "cannot delete workspace root");
@@ -663,6 +653,7 @@ pub struct RenameBody {
     pub new_name: String,
 }
 
+#[allow(clippy::unused_async)]
 pub async fn workspace_rename(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<PanePathQuery>,
@@ -698,6 +689,7 @@ pub struct MoveBody {
     pub dest: String,
 }
 
+#[allow(clippy::unused_async)]
 pub async fn workspace_move(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<PanePathQuery>,
@@ -723,12 +715,8 @@ pub async fn workspace_move(
         return json_err(StatusCode::CONFLICT, "already exists in destination");
     }
     if source.is_dir() {
-        let dest_canon = dest_dir
-            .canonicalize()
-            .unwrap_or_else(|_| dest_dir.clone());
-        let source_canon = source
-            .canonicalize()
-            .unwrap_or_else(|_| source.clone());
+        let dest_canon = dest_dir.canonicalize().unwrap_or_else(|_| dest_dir.clone());
+        let source_canon = source.canonicalize().unwrap_or_else(|_| source.clone());
         if dest_canon.starts_with(&source_canon) {
             return json_err(StatusCode::BAD_REQUEST, "cannot move into itself");
         }
@@ -750,7 +738,7 @@ fn unique_path(dir: &Path, base: &str) -> PathBuf {
     let ext = p.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
     let mut n = 1u32;
     loop {
-        let cand = dir.join(format!("{} ({}){}", stem, n, ext));
+        let cand = dir.join(format!("{stem} ({n}){ext}"));
         if !cand.exists() {
             return cand;
         }
@@ -795,7 +783,7 @@ pub async fn workspace_upload(
             }
             continue;
         }
-        let Some(filename) = field.file_name().map(|s| s.to_string()) else {
+        let Some(filename) = field.file_name().map(std::string::ToString::to_string) else {
             continue;
         };
         let rel = pending_rel_path.take().unwrap_or_else(|| filename.clone());
@@ -803,20 +791,18 @@ pub async fn workspace_upload(
         if rel_path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
             return json_err(StatusCode::BAD_REQUEST, "path must not contain ..");
         }
-        let file_dest_dir = if let Some(parent) = rel_path.parent().filter(|p| !p.as_os_str().is_empty()) {
-            let sub = try_res!(normalize_join(&dest_dir, &parent.to_string_lossy()));
-            try_res!(path_must_be_under(&root, &sub));
-            if let Err(e) = std::fs::create_dir_all(&sub) {
-                return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
-            }
-            sub
-        } else {
-            dest_dir.clone()
-        };
-        let base = rel_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("file");
+        let file_dest_dir =
+            if let Some(parent) = rel_path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                let sub = try_res!(normalize_join(&dest_dir, &parent.to_string_lossy()));
+                try_res!(path_must_be_under(&root, &sub));
+                if let Err(e) = std::fs::create_dir_all(&sub) {
+                    return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+                }
+                sub
+            } else {
+                dest_dir.clone()
+            };
+        let base = rel_path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
         let path = unique_path(&file_dest_dir, base);
         {
             use tokio::io::AsyncWriteExt;

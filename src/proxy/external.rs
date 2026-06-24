@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use axum::{
     body::Body,
     extract::Query,
@@ -9,7 +10,7 @@ use std::net::IpAddr;
 
 use super::inject::INJECT_SCRIPT_EXTERNAL;
 use super::response::build_proxied_response;
-use super::rewrite::{RewriteMode, rewrite_form_urlencoded_body};
+use super::rewrite::{rewrite_form_urlencoded_body, RewriteMode};
 use super::{extract_request, HTTP_CLIENT_FOLLOW_REDIRECTS};
 
 #[derive(Deserialize)]
@@ -63,6 +64,9 @@ async fn check_host_not_private(parsed: &reqwest::Url, msg: &str) -> Result<(), 
     Ok(())
 }
 
+/// # Panics
+/// Panics if the response builder fails (which should not happen with valid status codes and bodies).
+#[allow(clippy::too_many_lines)]
 pub async fn external_proxy_handler(
     Query(params): Query<ExternalProxyParams>,
     req: axum::extract::Request,
@@ -76,14 +80,11 @@ pub async fn external_proxy_handler(
             .unwrap();
     }
 
-    let parsed = match reqwest::Url::parse(&target_url) {
-        Ok(u) => u,
-        Err(_) => {
-            return Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body(Body::from("Invalid URL"))
-                .unwrap();
-        }
+    let Ok(parsed) = reqwest::Url::parse(&target_url) else {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(Body::from("Invalid URL"))
+            .unwrap();
     };
 
     let scheme = parsed.scheme();
@@ -94,7 +95,9 @@ pub async fn external_proxy_handler(
             .unwrap();
     }
 
-    if let Err(r) = check_host_not_private(&parsed, "Access to private/internal addresses is not allowed").await {
+    if let Err(r) =
+        check_host_not_private(&parsed, "Access to private/internal addresses is not allowed").await
+    {
         return r;
     }
 
@@ -108,9 +111,13 @@ pub async fn external_proxy_handler(
         target_url.clone(),
     );
 
-    for (name, value) in headers.iter() {
+    for (name, value) in &headers {
         let n = name.as_str();
-        if n == "host" || n == "connection" || n == "upgrade" || n == "origin" || n == "referer"
+        if n == "host"
+            || n == "connection"
+            || n == "upgrade"
+            || n == "origin"
+            || n == "referer"
             || n == "accept-encoding"
         {
             continue;
@@ -121,10 +128,8 @@ pub async fn external_proxy_handler(
     }
 
     if !body_bytes.is_empty() {
-        let content_type_val = headers
-            .get(header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
+        let content_type_val =
+            headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("");
         if content_type_val.contains("application/x-www-form-urlencoded") {
             let mode = RewriteMode::External(target_url.clone());
             if let Some(rewritten) = rewrite_form_urlencoded_body(&body_bytes, &target_url, &mode) {
@@ -140,7 +145,7 @@ pub async fn external_proxy_handler(
     let upstream_resp = match proxy_req.send().await {
         Ok(r) => r,
         Err(e) => {
-            let msg = format!("Proxy error: {}", e);
+            let msg = format!("Proxy error: {e}");
             return Response::builder()
                 .status(StatusCode::BAD_GATEWAY)
                 .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
@@ -151,7 +156,10 @@ pub async fn external_proxy_handler(
 
     let final_url = upstream_resp.url().clone();
     let final_url_str = final_url.to_string();
-    if let Err(r) = check_host_not_private(&final_url, "Redirect to private/internal address is not allowed").await {
+    if let Err(r) =
+        check_host_not_private(&final_url, "Redirect to private/internal address is not allowed")
+            .await
+    {
         return r;
     }
 
@@ -163,8 +171,14 @@ pub async fn external_proxy_handler(
         .replace('>', "&gt;");
     let inject_script = INJECT_SCRIPT_EXTERNAL.replacen(
         "<script>",
-        &format!("<script data-base-url=\"{}\">", escaped_url),
+        &format!("<script data-base-url=\"{escaped_url}\">"),
         1,
     );
-    build_proxied_response(upstream_resp, inject_base, &inject_script, Some(RewriteMode::External(final_url_str))).await
+    build_proxied_response(
+        upstream_resp,
+        inject_base,
+        &inject_script,
+        Some(RewriteMode::External(final_url_str)),
+    )
+    .await
 }

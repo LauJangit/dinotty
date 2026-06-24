@@ -1,3 +1,9 @@
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
 use axum::{
     extract::ws::{Message, WebSocket},
     extract::{State, WebSocketUpgrade},
@@ -95,13 +101,17 @@ pub struct MonitorState {
     tx: broadcast::Sender<String>,
 }
 
+impl Default for MonitorState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MonitorState {
+    #[must_use]
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel::<String>(8);
-        Self {
-            history: Arc::new(Mutex::new(VecDeque::with_capacity(MAX_HISTORY))),
-            tx,
-        }
+        Self { history: Arc::new(Mutex::new(VecDeque::with_capacity(MAX_HISTORY))), tx }
     }
 
     pub fn start_collector(self) {
@@ -129,14 +139,18 @@ impl MonitorState {
                     }
                 }
 
-                let (data, new_net) =
-                    collect_metrics(&mut sys, &mut disks, &mut networks, &prev_net, 2.0, gpu_available.unwrap_or(false)).await;
+                let (data, new_net) = collect_metrics(
+                    &mut sys,
+                    &mut disks,
+                    &mut networks,
+                    &prev_net,
+                    2.0,
+                    gpu_available.unwrap_or(false),
+                )
+                .await;
                 prev_net = new_net;
 
-                let json = match serde_json::to_string(&data) {
-                    Ok(j) => j,
-                    Err(_) => continue,
-                };
+                let Ok(json) = serde_json::to_string(&data) else { continue };
 
                 {
                     let mut buf = self.history.lock().await;
@@ -152,6 +166,7 @@ impl MonitorState {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 async fn collect_metrics(
     sys: &mut System,
     disks: &mut Disks,
@@ -166,12 +181,9 @@ async fn collect_metrics(
     networks.refresh(true);
 
     let cpu = {
-        let cores: Vec<f32> = sys.cpus().iter().map(|c| c.cpu_usage()).collect();
-        let avg = if cores.is_empty() {
-            0.0
-        } else {
-            cores.iter().sum::<f32>() / cores.len() as f32
-        };
+        let cores: Vec<f32> = sys.cpus().iter().map(sysinfo::Cpu::cpu_usage).collect();
+        let avg =
+            if cores.is_empty() { 0.0 } else { cores.iter().sum::<f32>() / cores.len() as f32 };
         let load = System::load_average();
         CpuData {
             usage: avg,
@@ -188,11 +200,7 @@ async fn collect_metrics(
         let total = sys.total_memory();
         let used = sys.used_memory();
         let available = sys.available_memory();
-        let usage = if total > 0 {
-            used as f64 / total as f64 * 100.0
-        } else {
-            0.0
-        };
+        let usage = if total > 0 { used as f64 / total as f64 * 100.0 } else { 0.0 };
         MemoryData {
             used,
             available,
@@ -209,11 +217,7 @@ async fn collect_metrics(
             let total = d.total_space();
             let available = d.available_space();
             let used = total.saturating_sub(available);
-            let usage = if total > 0 {
-                used as f64 / total as f64 * 100.0
-            } else {
-                0.0
-            };
+            let usage = if total > 0 { used as f64 / total as f64 * 100.0 } else { 0.0 };
             DiskData {
                 mount: d.mount_point().to_string_lossy().to_string(),
                 fs_type: d.file_system().to_string_lossy().to_string(),
@@ -244,35 +248,15 @@ async fn collect_metrics(
             } else {
                 (0, 0)
             };
-            new_net.insert(name.to_string(), (rx_total, tx_total));
+            new_net.insert(name.clone(), (rx_total, tx_total));
 
-            Some(NetworkData {
-                name: name.to_string(),
-                ip,
-                rx_rate,
-                tx_rate,
-                rx_total,
-                tx_total,
-            })
+            Some(NetworkData { name: name.clone(), ip, rx_rate, tx_rate, rx_total, tx_total })
         })
         .collect();
 
-    let gpu = if gpu_available {
-        collect_gpu().await.unwrap_or_default()
-    } else {
-        Vec::new()
-    };
+    let gpu = if gpu_available { collect_gpu().await.unwrap_or_default() } else { Vec::new() };
 
-    (
-        MonitorData {
-            cpu,
-            memory,
-            disk,
-            network,
-            gpu,
-        },
-        new_net,
-    )
+    (MonitorData { cpu, memory, disk, network, gpu }, new_net)
 }
 
 fn parse_f64(s: &str) -> f64 {
@@ -373,6 +357,7 @@ async fn collect_gpu() -> Option<Vec<GpuData>> {
     }
 }
 
+#[allow(clippy::unused_async)]
 pub async fn ws_monitor_handler(
     State(state): State<MonitorState>,
     ws: WebSocketUpgrade,
@@ -387,12 +372,9 @@ async fn handle_monitor_socket(socket: WebSocket, state: MonitorState) {
     {
         let buf = state.history.lock().await;
         if !buf.is_empty() {
-            let msg = HistoryMessage {
-                r#type: "history",
-                data: buf.iter().cloned().collect(),
-            };
+            let msg = HistoryMessage { r#type: "history", data: buf.iter().cloned().collect() };
             if let Ok(json) = serde_json::to_string(&msg) {
-                if ws_tx.send(Message::Text(json.into())).await.is_err() {
+                if ws_tx.send(Message::Text(json)).await.is_err() {
                     return;
                 }
             }
@@ -405,11 +387,11 @@ async fn handle_monitor_socket(socket: WebSocket, state: MonitorState) {
         loop {
             match rx.recv().await {
                 Ok(json) => {
-                    if ws_tx.send(Message::Text(json.into())).await.is_err() {
+                    if ws_tx.send(Message::Text(json)).await.is_err() {
                         break;
                     }
                 }
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Lagged(_)) => {}
                 Err(_) => break,
             }
         }
