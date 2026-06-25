@@ -10,12 +10,8 @@ let _activeUploadFn:
   | null = null
 let _workspaceDropHover = false
 let _hoveredDir: string | undefined = undefined
+let _dragCounterRef: { value: number } | null = null
 
-// Mouse-position-based workspace detection for Tauri native drag-drop
-let _workspaceElement: HTMLElement | null = null
-let _workspaceMouseX = 0
-let _workspaceMouseY = 0
-let _onMouseMove: ((e: MouseEvent) => void) | null = null
 let _tauriUnlisten: (() => void) | null = null
 
 function fileToBase64(file: File): Promise<string> {
@@ -30,17 +26,6 @@ function fileToBase64(file: File): Promise<string> {
   })
 }
 
-function isMouseOverWorkspace(): boolean {
-  if (!_workspaceElement) return false
-  const rect = _workspaceElement.getBoundingClientRect()
-  return (
-    _workspaceMouseX >= rect.left &&
-    _workspaceMouseX <= rect.right &&
-    _workspaceMouseY >= rect.top &&
-    _workspaceMouseY <= rect.bottom
-  )
-}
-
 function setupTauriFileDrop() {
   if (tauriFileDropRegistered) return
   tauriFileDropRegistered = true
@@ -49,12 +34,8 @@ function setupTauriFileDrop() {
   if (!listen) return
 
   // Tauri v2 listen() returns Promise<UnlistenFn>
-  const unlistenPromise = listen('file-drop-paths', async (event: any) => {
+  const unlistenDrop = listen('file-drop-paths', async (event: any) => {
     if (!_activeUploadFn) return
-    // In Tauri v2, HTML5 drag events (dragenter/dragover) may not fire for OS file drags,
-    // so _workspaceDropHover may never be set. Use mouse position as fallback.
-    const overWorkspace = _workspaceDropHover || isMouseOverWorkspace()
-    if (!overWorkspace) return
     const paths: string[] = event.payload || []
     if (!paths.length) return
     const files: { file: File; path: string }[] = []
@@ -73,30 +54,27 @@ function setupTauriFileDrop() {
     }
     if (files.length) await _activeUploadFn!(files, _hoveredDir)
   })
-  if (unlistenPromise && typeof unlistenPromise.then === 'function') {
-    unlistenPromise.then((fn: () => void) => {
-      _tauriUnlisten = fn
-    })
-  }
-}
 
-function setupWorkspaceDragDrop(el: HTMLElement | null) {
-  _workspaceElement = el
-  if (el && isTauri()) {
-    _onMouseMove = (e: MouseEvent) => {
-      _workspaceMouseX = e.clientX
-      _workspaceMouseY = e.clientY
-    }
-    document.addEventListener('mousemove', _onMouseMove)
+  // Listen for drag-enter/leave to show drop overlay
+  const unlistenActive = listen('file-drop-active', (event: any) => {
+    if (!_dragCounterRef) return
+    _dragCounterRef.value = event.payload ? 1 : 0
+  })
+
+  const unlistens: Promise<void>[] = []
+  if (unlistenDrop && typeof unlistenDrop.then === 'function') {
+    unlistens.push(unlistenDrop.then((fn: () => void) => { _tauriUnlisten = fn }))
+  }
+  if (unlistenActive && typeof unlistenActive.then === 'function') {
+    unlistens.push(unlistenActive.then((fn: () => void) => {
+      // chain with existing unlisten
+      const prev = _tauriUnlisten
+      _tauriUnlisten = () => { prev?.(); fn() }
+    }))
   }
 }
 
 function teardownWorkspaceDragDrop() {
-  if (_onMouseMove) {
-    document.removeEventListener('mousemove', _onMouseMove)
-    _onMouseMove = null
-  }
-  _workspaceElement = null
   if (_tauriUnlisten) {
     _tauriUnlisten()
     _tauriUnlisten = null
@@ -290,11 +268,21 @@ export function useFileOperations(opts: {
   async function downloadFile(rel: string) {
     if (!rel) return
     await getApiBase()
+    const name = rel.split('/').pop() || 'file'
     const q = new URLSearchParams({ pane_id: opts.paneId(), path: rel })
-    const res = await authFetch(apiUrl(`/api/workspace/raw?${q}`))
+    const url = apiUrl(`/api/workspace/raw?${q}`)
+    if (isTauri()) {
+      const token = getAuthToken()
+      const headers: [string, string][] = []
+      if (token) headers.push(['Authorization', `Bearer ${token}`])
+      try {
+        await tauriInvoke('tauri_download', { url, filename: name, headers })
+      } catch {}
+      return
+    }
+    const res = await authFetch(url)
     if (!res.ok) return
     const blob = await res.blob()
-    const name = rel.split('/').pop() || 'file'
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
     a.download = name
@@ -353,9 +341,11 @@ export function useFileOperations(opts: {
 
   function setActiveWorkspace() {
     _activeUploadFn = uploadFiles
+    _dragCounterRef = dragCounter
   }
   function clearActiveWorkspace() {
     if (_activeUploadFn === uploadFiles) _activeUploadFn = null
+    if (_dragCounterRef === dragCounter) _dragCounterRef = null
   }
 
   function setHoveredDir(dir: string | undefined) {
@@ -403,7 +393,6 @@ export function useFileOperations(opts: {
     onWorkspaceDragEnter,
     onWorkspaceDragLeave,
     onWorkspaceDrop,
-    setupWorkspaceDragDrop,
     teardownWorkspaceDragDrop,
   }
 }

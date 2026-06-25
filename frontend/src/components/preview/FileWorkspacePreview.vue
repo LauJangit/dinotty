@@ -395,6 +395,15 @@
     @confirm="ctxMenu.onMoveConfirm"
     @cancel="ctxMenu.onMoveCancel"
   />
+  <ConfirmModal
+    :visible="!!ctxMenu.deleteConfirm.value"
+    :title="t('filePreview.ctxDelete')"
+    :message="deleteConfirmMessage"
+    :confirm-text="t('filePreview.ctxDelete')"
+    :cancel-text="t('filePreview.cancel')"
+    @confirm="ctxMenu.executeDelete"
+    @cancel="ctxMenu.cancelDelete"
+  />
   <SelectionToolbar
     :selected-text="editor.editorSelection.value?.text ?? ''"
     :anchor-rect="editor.editorSelection.value?.rect ?? null"
@@ -581,6 +590,15 @@ const ctxIsBookmarked = computed(() => {
   const rel = ctxMenu.contextMenu.value?.rel || selectedRel.value
   if (!rel) return false
   return workspaceBookmarks.isBookmarked(ops.absolutePath(rel))
+})
+
+const deleteConfirmMessage = computed(() => {
+  const info = ctxMenu.deleteConfirm.value
+  if (!info) return ''
+  const base = info.isDir
+    ? t('filePreview.confirmDeleteFolder')
+    : t('filePreview.confirmDeleteFile')
+  return info.discardNeeded ? `${t('filePreview.discardChanges')}\n\n${base}` : base
 })
 
 function ctxToggleBookmark() {
@@ -1060,7 +1078,6 @@ onMounted(() => {
   window.addEventListener('keydown', onEditorSaveKeydown, true)
   window.addEventListener('scroll', onCloseContextScroll, true)
   ops.setActiveWorkspace()
-  ops.setupWorkspaceDragDrop(fileWorkspaceBodyRef.value)
   void getApiBase()
 })
 

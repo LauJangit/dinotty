@@ -1,8 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 
 use dinotty_server::{
-    auth, file_watcher, history, monitor, notification, openapi, plugin, proxy, session, settings,
-    tabs, workspace, ws,
+    agent, audit, auth, file_watcher, history, mcp, monitor, notification, openapi, plugin, proxy,
+    session, settings, tabs, token, webhook, workspace, ws,
 };
 
 use axum::{
@@ -93,6 +93,12 @@ pub struct AppState {
     pub port: u16,
     pub plugins: PluginManagerState,
     pub git_info: GitInfo,
+    pub tokens: token::TokenState,
+    pub audit: audit::AuditState,
+    pub agent: agent::AgentState,
+    pub webhooks: webhook::WebhookState,
+    pub mcp: mcp::transport::McpState,
+    pub mcp_sse: Arc<mcp::transport::SseState>,
 }
 
 // Allow extracting Arc<SessionManager> from AppState for ws handlers
@@ -143,6 +149,36 @@ impl axum::extract::FromRef<AppState> for PluginManagerState {
 impl axum::extract::FromRef<AppState> for (PluginManagerState, Arc<SessionManager>) {
     fn from_ref(state: &AppState) -> Self {
         (state.plugins.clone(), state.manager.clone())
+    }
+}
+
+impl axum::extract::FromRef<AppState> for token::TokenState {
+    fn from_ref(state: &AppState) -> Self {
+        state.tokens.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for audit::AuditState {
+    fn from_ref(state: &AppState) -> Self {
+        state.audit.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for agent::AgentState {
+    fn from_ref(state: &AppState) -> Self {
+        state.agent.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for mcp::transport::McpState {
+    fn from_ref(state: &AppState) -> Self {
+        state.mcp.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<mcp::transport::SseState> {
+    fn from_ref(state: &AppState) -> Self {
+        state.mcp_sse.clone()
     }
 }
 
@@ -306,6 +342,31 @@ async fn main() {
     let git_info = read_git_info();
     tracing::info!("Git info: {}", git_info.version);
 
+    // Initialize new modules
+    let tokens = Arc::new(token::TokenManager::new(auth_token.clone()));
+    tokens.start_cleanup_task();
+
+    let audit_logger = Arc::new(audit::AuditLogger::new());
+
+    let agent_state = agent::AgentState {
+        manager: manager.clone(),
+        settings: settings_state.clone(),
+        tokens: tokens.clone(),
+        audit: audit_logger.clone(),
+        run_limiter: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+    };
+
+    // Load webhook configs from settings
+    let webhook_configs = {
+        // Webhook configs will be added to settings later; for now empty
+        Vec::<webhook::WebhookConfig>::new()
+    };
+    let webhooks = Arc::new(webhook::WebhookDispatcher::new(webhook_configs));
+    webhooks.start(&manager.event_bus);
+
+    let mcp_server = Arc::new(mcp::server::McpServer::new(manager.clone(), settings_state.clone()));
+    let mcp_sse = Arc::new(mcp::transport::SseState::new());
+
     let state = AppState {
         manager,
         settings: settings_state,
@@ -317,6 +378,12 @@ async fn main() {
         port,
         plugins,
         git_info,
+        tokens,
+        audit: audit_logger,
+        agent: agent_state,
+        webhooks,
+        mcp: mcp_server,
+        mcp_sse,
     };
 
     state.plugins.watch_changes(state.manager.clone());
@@ -405,6 +472,30 @@ async fn main() {
                     .delete(plugin::plugin_storage_delete),
             )
             .route("/api/plugins/:id/*path", get(plugin::plugin_asset))
+            // Agent API + Token management + MCP — protected by agent token middleware
+            .merge(
+                Router::new()
+                    .route("/api/agent/run", post(agent::agent_run))
+                    .route("/api/agent/send", post(agent::agent_send))
+                    .route("/api/agent/read", get(agent::agent_read))
+                    .route("/ws/agent", get(agent::agent_ws_handler))
+                    .route("/api/tokens", post(token::create_token).get(token::list_tokens))
+                    .route(
+                        "/api/tokens/:id",
+                        get(token::get_token_detail)
+                            .put(token::update_token)
+                            .delete(token::revoke_token),
+                    )
+                    .route("/mcp/sse", get(mcp::transport::mcp_sse_handler))
+                    .route("/mcp/message", post(mcp::transport::mcp_message_handler))
+                    .layer(middleware::from_fn_with_state(
+                        token::AgentAuthState {
+                            global_token: auth_token.clone(),
+                            tokens: state.tokens.clone(),
+                        },
+                        token::agent_token_middleware,
+                    )),
+            )
             .route("/preview/:port", any(proxy::proxy_handler_root))
             .route("/preview/:port/", any(proxy::proxy_handler_root))
             .route("/preview/:port/*path", any(proxy::proxy_handler_wildcard))

@@ -311,6 +311,10 @@ const messages: Record<Locale, Record<string, string>> = {
     'confirm.closeTabMessage': 'Closing this session will terminate all running processes. Close',
     'confirm.closeTabConfirm': 'Close',
     'confirm.closeTabCancel': 'Cancel',
+    'confirm.closeWindowTitle': 'Close window?',
+    'confirm.closeWindowMessage': 'Closing the window will terminate all terminal sessions.',
+    'confirm.closeWindowConfirm': 'Close',
+    'confirm.closeWindowCancel': 'Cancel',
 
     'fileBookmark.title': 'Bookmarks',
     'fileBookmark.empty': 'No bookmarks yet',
@@ -656,6 +660,10 @@ const messages: Record<Locale, Record<string, string>> = {
     'confirm.closeTabMessage': '关闭此会话将终止所有正在运行的进程。仍要关闭',
     'confirm.closeTabConfirm': '关闭',
     'confirm.closeTabCancel': '取消',
+    'confirm.closeWindowTitle': '关闭窗口？',
+    'confirm.closeWindowMessage': '关闭窗口将终止所有终端会话。',
+    'confirm.closeWindowConfirm': '关闭',
+    'confirm.closeWindowCancel': '取消',
 
     'fileBookmark.title': '书签',
     'fileBookmark.empty': '暂无书签',
