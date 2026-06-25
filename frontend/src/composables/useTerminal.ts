@@ -677,11 +677,7 @@ export class TerminalInstance {
   }
 
   private _setupTouchScroll(wrapper: HTMLElement) {
-    requestAnimationFrame(() => {
-      const screen = wrapper.querySelector('.xterm-screen') as HTMLElement
-      const viewport = wrapper.querySelector('.xterm-viewport') as HTMLElement
-      if (!screen || !viewport) return
-
+    const attachHandlers = (screen: HTMLElement) => {
       // Prevent native browser scroll on the viewport from conflicting with our
       // custom touch-to-wheel translation.  Without this, both the browser's
       // overflow-y:scroll and our JS handler fire simultaneously → chaotic scroll.
@@ -780,7 +776,22 @@ export class TerminalInstance {
         screen.removeEventListener('touchmove', onTouchMove)
         screen.removeEventListener('touchend', onTouchEnd)
       }
-    })
+    }
+
+    // Retry until xterm renders its DOM — single rAF is unreliable on slower
+    // devices / Safari where the renderer may need an extra frame.
+    let retries = 0
+    const tryAttach = () => {
+      requestAnimationFrame(() => {
+        const screen = wrapper.querySelector('.xterm-screen') as HTMLElement
+        if (screen) {
+          attachHandlers(screen)
+          return
+        }
+        if (++retries < 30) tryAttach() // ~500ms at 60fps, then give up
+      })
+    }
+    tryAttach()
   }
 
   private _sendWheelEvent(target: HTMLElement, deltaY: number, clientX: number, clientY: number) {

@@ -28,6 +28,15 @@
     @open-file="onMenuOpenFile"
     @open-link="onMenuOpenLink"
   />
+  <SelectionHandles
+    :visible="handlesVisible"
+    :start-x="handleStartX"
+    :start-y="handleStartY"
+    :end-x="handleEndX"
+    :end-y="handleEndY"
+    @drag="onHandleDrag"
+    @drag-end="onHandleDragEnd"
+  />
 </template>
 
 <script setup lang="ts">
@@ -35,6 +44,7 @@ import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { TerminalInstance } from '../../composables/useTerminal'
 import SearchBar from './SearchBar.vue'
 import TerminalContextMenu from './TerminalContextMenu.vue'
+import SelectionHandles from './SelectionHandles.vue'
 
 const props = defineProps<{
   paneId: string
@@ -66,6 +76,17 @@ let longPressTimer: ReturnType<typeof setTimeout> | null = null
 let longPressStartX = 0
 let longPressStartY = 0
 let longPressFired = false
+
+// Selection handles state
+const handlesVisible = ref(false)
+const handleStartX = ref(0)
+const handleStartY = ref(0)
+const handleEndX = ref(0)
+const handleEndY = ref(0)
+let selAnchorRow = 0
+let selAnchorCol = 0
+let dragHandle: 'start' | 'end' | null = null
+let selectionTouched = false
 
 // Link context menu state
 const linkType = ref<'file' | 'link'>()
@@ -111,6 +132,7 @@ function onContextMenu(e: MouseEvent) {
 
 function closeMenu() {
   menuVisible.value = false
+  handlesVisible.value = false
   linkType.value = undefined
   linkTarget.value = undefined
 }
@@ -213,9 +235,34 @@ function updateSelectionTo(clientX: number, clientY: number) {
   }
 }
 
+function bufferToPixel(col: number, bufferRow: number): { x: number; y: number } {
+  const xt = terminal?.xterm
+  if (!xt || !cachedScreenRect || !cachedCellW || !cachedCellH) return { x: 0, y: 0 }
+  const viewportY = xt.buffer.active.viewportY
+  const row = bufferRow - viewportY
+  return {
+    x: cachedScreenRect.left + col * cachedCellW,
+    y: cachedScreenRect.top + row * cachedCellH,
+  }
+}
+
+function selectionToPixelCoords(): { start: { x: number; y: number }; end: { x: number; y: number } } {
+  const xt = terminal?.xterm
+  if (!xt) return { start: { x: 0, y: 0 }, end: { x: 0, y: 0 } }
+  const selection = xt.getSelectionPosition()
+  if (!selection) return { start: { x: 0, y: 0 }, end: { x: 0, y: 0 } }
+  // getSelectionPosition() returns 0-based coordinates (despite type definition saying 1-based)
+  // start handle: left edge of first selected char
+  // end handle: right edge of last selected char (end.x is one past last selected)
+  const start = bufferToPixel(selection.start.x, selection.start.y)
+  const end = bufferToPixel(selection.end.x, selection.end.y)
+  return { start, end }
+}
+
 // Mobile long-press to start touch selection
 function onTouchStart(e: TouchEvent) {
   if (!terminal || terminal.isMouseModeEnabled()) return
+  if (handlesVisible.value) return // selection mode active, don't start new long-press
   longPressFired = false
   const touch = e.touches[0]
   longPressStartX = touch.clientX
@@ -223,9 +270,28 @@ function onTouchStart(e: TouchEvent) {
   longPressTimer = setTimeout(() => {
     longPressFired = true
 
-    // Programmatically select the word at the touch position
-    selectWordAtTouch(longPressStartX, longPressStartY)
+    const wordPos = selectWordAtTouch(longPressStartX, longPressStartY)
+    if (!wordPos) return
 
+    // Enter selection mode
+    cacheCellDims()
+    terminal!.inTouchSelection = true
+    terminal!.selStartRow = wordPos.bufferRow
+    terminal!.selStartCol = wordPos.startCol
+    selAnchorRow = wordPos.bufferRow
+    selAnchorCol = wordPos.startCol
+    selectionTouched = false
+
+    // Show handles at selection boundaries
+    const coords = selectionToPixelCoords()
+    handleStartX.value = coords.start.x
+    handleStartY.value = coords.start.y
+    handleEndX.value = coords.end.x
+    handleEndY.value = coords.end.y
+    handlesVisible.value = true
+    dragHandle = null
+
+    // Also show context menu (standard long-press UX)
     const text = terminal!.getSelection()
     menuSelectedText.value = text
     menuX.value = longPressStartX
@@ -234,55 +300,63 @@ function onTouchStart(e: TouchEvent) {
   }, 500)
 }
 
-function selectWordAtTouch(clientX: number, clientY: number) {
+function selectWordAtTouch(clientX: number, clientY: number): { bufferRow: number; startCol: number } | null {
   const xterm = terminal?.xterm
-  if (!xterm) return
+  if (!xterm) return null
 
   const xtermEl = xterm.element
-  if (!xtermEl) return
+  if (!xtermEl) return null
 
   const screen = xtermEl.querySelector('.xterm-screen') as HTMLElement
-  if (!screen) return
+  if (!screen) return null
 
-  // Get cell dimensions from xterm.js internals
   const core = (xterm as any)._core
   const dims = core?._renderService?.dimensions
-  if (!dims?.css?.cell?.width || !dims.css.cell.height) return
+  if (!dims?.css?.cell?.width || !dims.css.cell.height) return null
 
   const { width: cellW, height: cellH } = dims.css.cell
   const rect = screen.getBoundingClientRect()
 
-  // Convert pixel coords to terminal col/row
   const col = Math.floor((clientX - rect.left) / cellW)
   const row = Math.floor((clientY - rect.top) / cellH)
 
-  if (col < 0 || row < 0 || col >= xterm.cols || row >= xterm.rows) return
+  if (col < 0 || row < 0 || col >= xterm.cols || row >= xterm.rows) return null
 
-  // Read the buffer line at the touch position (viewport-relative)
   const buffer = xterm.buffer.active
   const bufferRow = buffer.viewportY + row
   const line = buffer.getLine(bufferRow)
-  if (!line) return
+  if (!line) return null
 
   const lineText = line.translateToString(true)
-  if (!lineText) return
+  if (!lineText) return null
 
-  // Find word boundaries at the touch column
   const wordRegex = /[\w.:/@-]+/g
   let match: RegExpExecArray | null
   while ((match = wordRegex.exec(lineText)) !== null) {
     if (col >= match.index && col < match.index + match[0].length) {
       xterm.select(match.index, bufferRow, match[0].length)
-      return
+      return { bufferRow, startCol: match.index }
     }
   }
+  return null
 }
 
 function onTouchMove(e: TouchEvent) {
+  if (dragHandle) return // handle drag in progress, ignore terminal touch
   if (terminal?.inTouchSelection) {
+    e.preventDefault()
+    if (!selectionTouched) {
+      selectionTouched = true
+      menuVisible.value = false // Close menu when user starts adjusting
+    }
     const touch = e.touches[0]
     updateSelectionTo(touch.clientX, touch.clientY)
     menuSelectedText.value = terminal!.xterm?.getSelection() ?? ''
+    const coords = selectionToPixelCoords()
+    handleStartX.value = coords.start.x
+    handleStartY.value = coords.start.y
+    handleEndX.value = coords.end.x
+    handleEndY.value = coords.end.y
     return
   }
   if (longPressTimer && !longPressFired) {
@@ -298,18 +372,28 @@ function onTouchMove(e: TouchEvent) {
 }
 
 function onTouchEnd(e: TouchEvent) {
+  if (dragHandle) return // handle drag in progress, ignore terminal touch
   if (terminal?.inTouchSelection) {
     e.preventDefault()
     terminal.inTouchSelection = false
-    menuSelectedText.value = terminal.xterm?.getSelection() ?? ''
-    menuX.value = longPressStartX
-    menuY.value = longPressStartY
-    menuVisible.value = true
+    const text = terminal.xterm?.getSelection() ?? ''
+    menuSelectedText.value = text
+    if (selectionTouched) {
+      if (text) {
+        // User dragged to adjust → show menu at end handle
+        menuX.value = handleEndX.value
+        menuY.value = handleEndY.value + 24
+        menuVisible.value = true
+      } else {
+        handlesVisible.value = false
+      }
+    }
+    // If not touched: menu already visible from long press, keep it
+    selectionTouched = false
     return
   }
   if (longPressFired) {
     e.preventDefault()
-    e.stopPropagation()
     longPressFired = false
   }
   if (longPressTimer) {
@@ -324,7 +408,67 @@ function onTouchCancel() {
     longPressTimer = null
   }
   longPressFired = false
+  selectionTouched = false
+  dragHandle = null
   if (terminal) terminal.inTouchSelection = false
+  handlesVisible.value = false
+}
+
+// Handle drag from selection handles
+function onHandleDrag(handle: 'start' | 'end', clientX: number, clientY: number) {
+  const xt = terminal?.xterm
+  if (!xt) return
+  selectionTouched = true
+  if (!dragHandle) {
+    dragHandle = handle
+    // Block scroll handler during handle drag
+    terminal!.inTouchSelection = true
+    menuVisible.value = false
+    if (handle === 'end') {
+      selAnchorRow = terminal!.selStartRow
+      selAnchorCol = terminal!.selStartCol
+    } else {
+      const selPos = xt.getSelectionPosition()
+      if (selPos) {
+        selAnchorRow = selPos.end.y
+        selAnchorCol = selPos.end.x - 1 // end.x is one past last selected
+      }
+    }
+  }
+  const pos = touchToBufferPos(clientX, clientY)
+  if (!pos) return
+  // Convert viewport-relative to absolute buffer coordinates
+  const moveRow = xt.buffer.active.viewportY + pos.row
+  const moveCol = pos.col
+  if (moveRow < selAnchorRow || (moveRow === selAnchorRow && moveCol < selAnchorCol)) {
+    xt.select(moveCol, moveRow, calcSelectionLength(moveCol, moveRow, selAnchorCol, selAnchorRow))
+    terminal!.selStartRow = moveRow
+    terminal!.selStartCol = moveCol
+  } else {
+    xt.select(selAnchorCol, selAnchorRow, calcSelectionLength(selAnchorCol, selAnchorRow, moveCol, moveRow))
+    terminal!.selStartRow = selAnchorRow
+    terminal!.selStartCol = selAnchorCol
+  }
+  menuSelectedText.value = xt.getSelection() ?? ''
+  const coords = selectionToPixelCoords()
+  handleStartX.value = coords.start.x
+  handleStartY.value = coords.start.y
+  handleEndX.value = coords.end.x
+  handleEndY.value = coords.end.y
+}
+
+function onHandleDragEnd() {
+  if (terminal) terminal.inTouchSelection = false
+  dragHandle = null
+  const text = terminal?.xterm?.getSelection() ?? ''
+  menuSelectedText.value = text
+  if (text) {
+    menuX.value = handleEndX.value
+    menuY.value = handleEndY.value + 24
+    menuVisible.value = true
+  } else {
+    handlesVisible.value = false
+  }
 }
 
 onMounted(() => {
