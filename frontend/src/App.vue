@@ -144,6 +144,16 @@
 
     <ConfirmCloseDialog @confirm="onConfirmClose" />
 
+    <ConfirmModal
+      :visible="windowCloseConfirmVisible"
+      :title="t('confirm.closeWindowTitle')"
+      :message="t('confirm.closeWindowMessage')"
+      :confirm-text="t('confirm.closeWindowConfirm')"
+      :cancel-text="t('confirm.closeWindowCancel')"
+      @confirm="onWindowCloseConfirm"
+      @cancel="onWindowCloseCancel"
+    />
+
     <CommandBookmarks ref="bookmarksRef" :get-send-fn="getSendFn" :create-tab="newTab" />
 
     <ServerList ref="serverListRef" @connect="onServerConnect" />
@@ -185,6 +195,7 @@ import MobileKeyboard from './components/keyboard/MobileKeyboard.vue'
 import KbToggleButton from './components/keyboard/KbToggleButton.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
 import ConfirmCloseDialog from './components/ui/ConfirmCloseDialog.vue'
+import ConfirmModal from './components/ui/ConfirmModal.vue'
 import PreviewPanel from './components/preview/PreviewPanel.vue'
 import CommandBookmarks from './components/command/CommandBookmarks.vue'
 import ServerList from './components/ServerList.vue'
@@ -197,7 +208,7 @@ import {
   checkTokenConfigured,
   setAuthToken,
 } from './composables/apiBase'
-import { isTauri } from './composables/useTransport'
+import { isTauri, tauriInvoke } from './composables/useTransport'
 import { isTouchDevice, setActivePaneId } from './composables/useTerminal'
 import { useI18n } from './composables/useI18n'
 import { useKeybindings } from './composables/useKeybindings'
@@ -235,6 +246,8 @@ const { syncConnected, kbVisible, settingsOpen, authenticated, needsSetup } = st
 
 const settingsStore = useSettingsStore()
 const appSettings = settingsStore.settings
+
+const windowCloseConfirmVisible = ref(false)
 
 let linkJustActivated = false
 
@@ -397,10 +410,14 @@ function persist() {
   persistTimer = setTimeout(persistNow, 200)
 }
 // Flush pending persist on page unload
-window.addEventListener('beforeunload', () => {
+window.addEventListener('beforeunload', (e) => {
   if (persistTimer) {
     clearTimeout(persistTimer)
     persistNow()
+  }
+  if (appSettings.confirm_before_close_tab && tabs.value.some((t) => t.type === 'terminal')) {
+    e.preventDefault()
+    e.returnValue = ''
   }
 })
 
@@ -978,7 +995,36 @@ const _focusHandler = () => {
   nextTick(() => focusActive())
 }
 
+// Tauri window close confirmation
+let unlistenWindowClose: (() => void) | undefined
+function setupTauriWindowClose() {
+  if (!isTauri()) return
+  const listen = (window as any).__TAURI__?.event?.listen
+  if (!listen) return
+  listen('window-close-requested', () => {
+    if (appSettings.confirm_before_close_tab && tabs.value.some((t) => t.type === 'terminal')) {
+      windowCloseConfirmVisible.value = true
+    } else {
+      tauriInvoke('close_window')
+    }
+  }).then((fn: () => void) => {
+    unlistenWindowClose = fn
+  })
+}
+function onWindowCloseConfirm() {
+  windowCloseConfirmVisible.value = false
+  if (persistTimer) {
+    clearTimeout(persistTimer)
+    persistNow()
+  }
+  tauriInvoke('close_window')
+}
+function onWindowCloseCancel() {
+  windowCloseConfirmVisible.value = false
+}
+
 onMounted(async () => {
+  setupTauriWindowClose()
   document.addEventListener('keydown', onGlobalKeydown)
   window.addEventListener('focus', _focusHandler)
   window.addEventListener('resize', onOrientationChange)
@@ -1052,6 +1098,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  unlistenWindowClose?.()
   document.removeEventListener('keydown', onGlobalKeydown)
   window.removeEventListener('focus', _focusHandler)
   window.removeEventListener('resize', onOrientationChange)

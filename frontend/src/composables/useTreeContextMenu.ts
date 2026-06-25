@@ -1,4 +1,4 @@
-import { ref, computed, nextTick, type Ref } from 'vue'
+import { ref, computed, type Ref } from 'vue'
 import { copyToClipboard } from '../utils/clipboard'
 import type { DirEntry } from '../components/workspace/TreeRows'
 
@@ -39,6 +39,7 @@ export function useTreeContextMenu(opts: {
   const contextMenu = ref<{ x: number; y: number; rel: string; isDir: boolean } | null>(null)
   const addMenuOpen = ref(false)
   const moveConfirm = ref<{ src: string; destDir: string } | null>(null)
+  const deleteConfirm = ref<{ rel: string; isDir: boolean; discardNeeded: boolean } | null>(null)
 
   const ctxDeleteKeyHint = computed(() =>
     typeof navigator !== 'undefined' && /Mac|iPhone|iPod|iPad/i.test(navigator.platform)
@@ -127,36 +128,39 @@ export function useTreeContextMenu(opts: {
     opts.inlineRename.value = { rel: targetRel, isDir: targetIsDir }
   }
 
-  async function ctxDelete() {
+  function ctxDelete() {
     if (!contextMenu.value) return
     const { rel, isDir } = contextMenu.value
     closeContextMenu()
     const targetRel = rel || opts.selectedRel.value
     const targetIsDir = rel ? isDir : opts.selectedIsDir.value
     if (!targetRel) return
-    const discardNeeded =
+    const discardNeeded = !!(
       opts.editorDirty.value &&
       opts.meta.value &&
       (opts.meta.value.kind === 'text' || opts.meta.value.kind === 'markdown')
+    )
+    deleteConfirm.value = { rel: targetRel, isDir: targetIsDir, discardNeeded }
+  }
+
+  async function executeDelete() {
+    const info = deleteConfirm.value
+    if (!info) return
+    deleteConfirm.value = null
+    const { rel, isDir, discardNeeded } = info
     const prevRel = opts.selectedRel.value
     const prevIsDir = opts.selectedIsDir.value
     const prevMeta = opts.meta.value
-    const deleteMsg = targetIsDir
-      ? opts.t('filePreview.confirmDeleteFolder')
-      : opts.t('filePreview.confirmDeleteFile')
-    if (discardNeeded) {
-      if (!confirm(`${opts.t('filePreview.discardChanges')}\n\n${deleteMsg}`)) return
-      opts.editorText.value = opts.editorBaseline.value
-    }
-    opts.selectedRel.value = targetRel
-    opts.selectedIsDir.value = targetIsDir
+    if (discardNeeded) opts.editorText.value = opts.editorBaseline.value
+    opts.selectedRel.value = rel
+    opts.selectedIsDir.value = isDir
     opts.meta.value = null
     const resetState = () => {
       opts.selectedRel.value = null
       opts.selectedIsDir.value = false
       opts.meta.value = null
     }
-    const ok = await opts.deleteSelected(discardNeeded ?? false, opts.t, resetState)
+    const ok = await opts.deleteSelected(true, opts.t, resetState)
     if (!ok) {
       opts.selectedRel.value = prevRel
       opts.selectedIsDir.value = prevIsDir
@@ -164,9 +168,13 @@ export function useTreeContextMenu(opts: {
     }
   }
 
+  function cancelDelete() {
+    deleteConfirm.value = null
+  }
+
   function ctxUpload() {
     closeContextMenu()
-    nextTick(() => opts.triggerUpload())
+    opts.triggerUpload()
   }
 
   async function ctxDownload() {
@@ -251,6 +259,7 @@ export function useTreeContextMenu(opts: {
     contextMenu,
     addMenuOpen,
     moveConfirm,
+    deleteConfirm,
     ctxDeleteKeyHint,
     contextMenuStyle,
     closeContextMenu,
@@ -262,6 +271,8 @@ export function useTreeContextMenu(opts: {
     ctxNewFolder,
     ctxRename,
     ctxDelete,
+    executeDelete,
+    cancelDelete,
     ctxUpload,
     ctxDownload,
     ctxCopyPath,

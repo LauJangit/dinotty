@@ -7,8 +7,31 @@
 )]
 use std::collections::VecDeque;
 use std::fmt::Write;
+use std::time::Instant;
 use unicode_width::UnicodeWidthChar;
 use vte::{Params, Perform};
+
+/// OSC 133 command detection state
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommandState {
+    Idle,
+    CommandStart,
+    Executing,
+}
+
+/// Result of a detected command execution
+#[derive(Clone, Debug)]
+pub struct CommandResult {
+    pub exit_code: i32,
+    pub duration_ms: u64,
+    pub method: String, // "shell_integration" or "prompt_detection"
+}
+
+/// Tracks a pending command for collecting output
+struct PendingCommand {
+    start_time: Instant,
+    output_buf: String,
+}
 
 #[derive(Clone, Copy, Default)]
 pub struct CellAttrs {
@@ -144,6 +167,12 @@ pub struct VirtualScreen {
     cols: usize,
     rows: usize,
     saved_cursor: Option<CursorState>,
+    // OSC 133 command detection
+    command_state: CommandState,
+    pending_command: Option<PendingCommand>,
+    command_results: Vec<CommandResult>,
+    // Prompt detection fallback
+    last_output_time: Option<Instant>,
 }
 
 impl VirtualScreen {
@@ -158,16 +187,139 @@ impl VirtualScreen {
             cols,
             rows,
             saved_cursor: None,
+            command_state: CommandState::Idle,
+            pending_command: None,
+            command_results: Vec::new(),
+            last_output_time: None,
         }
     }
 
+    /// Drain all pending command results. Called by the WS handler after feeding output.
+    pub fn drain_command_results(&mut self) -> Vec<CommandResult> {
+        std::mem::take(&mut self.command_results)
+    }
+
+    /// Get the collected stdout from the current/last command
+    pub fn take_command_output(&mut self) -> String {
+        self.pending_command.as_mut().map(|p| std::mem::take(&mut p.output_buf)).unwrap_or_default()
+    }
+
+    /// Check if shell integration (OSC 133) has been detected
+    #[must_use]
+    pub fn has_shell_integration(&self) -> bool {
+        !self.command_results.is_empty()
+            || matches!(self.command_state, CommandState::CommandStart | CommandState::Executing)
+    }
+
+    /// Check if enough time has passed since last output for prompt detection.
+    /// Returns true if we should attempt prompt detection (>= 100ms silence).
+    #[must_use]
+    pub fn should_check_prompt(&self) -> bool {
+        self.last_output_time.is_some_and(|t| t.elapsed().as_millis() >= 100)
+            && self.command_state == CommandState::Idle
+    }
+
+    /// Attempt prompt detection on the current screen content.
+    /// Returns a `CommandResult` if a prompt pattern is found at the cursor line.
+    pub fn detect_prompt(&mut self) -> Option<CommandResult> {
+        use regex::Regex;
+        use std::sync::OnceLock;
+
+        static PROMPT_PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
+        let patterns = PROMPT_PATTERNS.get_or_init(|| {
+            [
+                r"^[#$%>] ?$",
+                r"^[a-zA-Z0-9_.\-]+@[a-zA-Z0-9_.\-]+[:~].*[$#] ?$",
+                r"^[a-zA-Z0-9_.\-]+@.*\$ ?$",
+            ]
+            .iter()
+            .filter_map(|p| Regex::new(p).ok())
+            .collect()
+        });
+
+        // Get the current cursor line content
+        let buf = if self.using_alternate { &self.alternate } else { &self.primary };
+        let row = buf.cursor.row;
+        if row >= buf.rows {
+            return None;
+        }
+
+        let line: String = buf.cells[row]
+            .iter()
+            .take(buf.cursor.col + 1)
+            .map(|c| if c.ch == '\0' { ' ' } else { c.ch })
+            .collect();
+        let line = line.trim_end();
+
+        for re in patterns {
+            if re.is_match(line) {
+                let duration_ms = self
+                    .pending_command
+                    .as_ref()
+                    .map_or(0, |p| p.start_time.elapsed().as_millis() as u64);
+
+                self.command_state = CommandState::Idle;
+                self.pending_command.take();
+
+                return Some(CommandResult {
+                    exit_code: -1,
+                    duration_ms,
+                    method: "prompt_detection".to_string(),
+                });
+            }
+        }
+
+        None
+    }
+
+    /// Called when a command is sent to the terminal (from agent API).
+    /// Sets up state for command output collection.
+    pub fn begin_command_tracking(&mut self) {
+        self.command_state = CommandState::CommandStart;
+        self.pending_command =
+            Some(PendingCommand { start_time: Instant::now(), output_buf: String::new() });
+    }
+
+    /// Force-finish command tracking (e.g. on timeout). Returns collected output.
+    pub fn finish_command_tracking(&mut self, exit_code: i32) -> (String, CommandResult) {
+        let pending = self.pending_command.take();
+        let stdout = pending.as_ref().map(|p| p.output_buf.clone()).unwrap_or_default();
+        let duration_ms = pending.map_or(0, |p| p.start_time.elapsed().as_millis() as u64);
+
+        let result = CommandResult { exit_code, duration_ms, method: "timeout".to_string() };
+        self.command_state = CommandState::Idle;
+        (stdout, result)
+    }
+
     pub fn feed(&mut self, data: &[u8]) {
+        // Track output timing for prompt detection fallback
+        self.last_output_time = Some(Instant::now());
+
+        // Collect visible output for command stdout capture
+        if matches!(self.command_state, CommandState::CommandStart | CommandState::Executing) {
+            if let Some(ref mut pending) = self.pending_command {
+                // Only collect printable ASCII and UTF-8 text, skip ESC sequences
+                for &b in data {
+                    if b >= 0x20 && b != 0x7f {
+                        pending.output_buf.push(b as char);
+                    }
+                }
+                // Cap buffer at 1MB
+                if pending.output_buf.len() > 1024 * 1024 {
+                    pending.output_buf.drain(..512 * 1024);
+                }
+            }
+        }
+
         let mut performer = ScreenPerformer {
             screen: if self.using_alternate { &mut self.alternate } else { &mut self.primary },
             scrollback: &mut self.scrollback,
             saved_cursor: &mut self.saved_cursor,
             pending_switch: None,
             using_alternate: self.using_alternate,
+            command_state: &mut self.command_state,
+            pending_command: &mut self.pending_command,
+            command_results: &mut self.command_results,
         };
 
         for &byte in data {
@@ -185,6 +337,9 @@ impl VirtualScreen {
                         saved_cursor: &mut self.saved_cursor,
                         pending_switch: None,
                         using_alternate: true,
+                        command_state: &mut self.command_state,
+                        pending_command: &mut self.pending_command,
+                        command_results: &mut self.command_results,
                     };
                 } else if !enter && performer.using_alternate {
                     let saved = self.saved_cursor.clone();
@@ -195,6 +350,9 @@ impl VirtualScreen {
                         saved_cursor: &mut self.saved_cursor,
                         pending_switch: None,
                         using_alternate: false,
+                        command_state: &mut self.command_state,
+                        pending_command: &mut self.pending_command,
+                        command_results: &mut self.command_results,
                     };
                     if let Some(ref s) = saved {
                         performer.screen.cursor = s.clone();
@@ -376,6 +534,13 @@ impl VirtualScreen {
     pub fn rows(&self) -> usize {
         self.rows
     }
+
+    /// Get current cursor position (row, col).
+    #[must_use]
+    pub fn cursor_position(&self) -> (usize, usize) {
+        let buf = if self.using_alternate { &self.alternate } else { &self.primary };
+        (buf.cursor.row, buf.cursor.col)
+    }
 }
 
 fn has_attrs(a: &CellAttrs) -> bool {
@@ -455,6 +620,9 @@ struct ScreenPerformer<'a> {
     saved_cursor: &'a mut Option<CursorState>,
     pending_switch: Option<bool>,
     using_alternate: bool,
+    command_state: &'a mut CommandState,
+    pending_command: &'a mut Option<PendingCommand>,
+    command_results: &'a mut Vec<CommandResult>,
 }
 
 impl Perform for ScreenPerformer<'_> {
@@ -550,7 +718,82 @@ impl Perform for ScreenPerformer<'_> {
     fn hook(&mut self, _params: &Params, _intermediates: &[u8], _ignore: bool, _action: char) {}
     fn put(&mut self, _byte: u8) {}
     fn unhook(&mut self) {}
-    fn osc_dispatch(&mut self, _params: &[&[u8]], _bell_terminated: bool) {}
+    fn osc_dispatch(&mut self, params: &[&[u8]], _bell_terminated: bool) {
+        // OSC 133: Shell Integration (VS Code / FinalTerm / iTerm2)
+        // Format: ESC ] 133 ; <cmd> [ ; <args> ] ST
+        //   A = Prompt start
+        //   B = Command start (after user presses Enter)
+        //   C = Command executed (not all shells emit this)
+        //   D = Command finished, followed by ;exit_code
+        if params.len() < 2 {
+            return;
+        }
+        // First param should be "133"
+        if params[0] != b"133" {
+            return;
+        }
+        let cmd = params[1];
+        match cmd {
+            b"A" => {
+                // Prompt start
+                *self.command_state = CommandState::Idle;
+                self.pending_command.take();
+            }
+            b"B" => {
+                // Command start (user executed a command)
+                // If already tracking a command (double B without D), force-finish the old one
+                if matches!(
+                    *self.command_state,
+                    CommandState::CommandStart | CommandState::Executing
+                ) {
+                    if let Some(pending) = self.pending_command.take() {
+                        let duration_ms = pending.start_time.elapsed().as_millis() as u64;
+                        self.command_results.push(CommandResult {
+                            exit_code: -1,
+                            duration_ms,
+                            method: "interrupted".to_string(),
+                        });
+                    }
+                }
+                *self.command_state = CommandState::CommandStart;
+                *self.pending_command =
+                    Some(PendingCommand { start_time: Instant::now(), output_buf: String::new() });
+            }
+            b"D" => {
+                // Command finished
+                let exit_code = if params.len() >= 3 {
+                    std::str::from_utf8(params[2])
+                        .ok()
+                        .and_then(|s| s.parse::<i32>().ok())
+                        .unwrap_or(-1)
+                } else {
+                    -1
+                };
+
+                let duration_ms = self
+                    .pending_command
+                    .as_ref()
+                    .map_or(0, |p| p.start_time.elapsed().as_millis() as u64);
+
+                let stdout = self
+                    .pending_command
+                    .as_mut()
+                    .map(|p| std::mem::take(&mut p.output_buf))
+                    .unwrap_or_default();
+
+                self.command_results.push(CommandResult {
+                    exit_code,
+                    duration_ms,
+                    method: "shell_integration".to_string(),
+                });
+
+                *self.command_state = CommandState::Idle;
+                self.pending_command.take();
+                let _ = stdout; // available for future use
+            }
+            _ => {}
+        }
+    }
 
     #[allow(clippy::too_many_lines)]
     fn csi_dispatch(&mut self, params: &Params, intermediates: &[u8], _ignore: bool, action: char) {
