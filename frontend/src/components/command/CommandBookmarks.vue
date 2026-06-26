@@ -10,6 +10,7 @@
               v-model="searchQuery"
               :placeholder="t('bookmarks.search')"
               class="bookmarks-search-input"
+              @keydown="onSearchKeydown"
             />
           </div>
           <div class="bookmarks-header-actions">
@@ -79,6 +80,7 @@
               'drag-over-top': dropTarget === bm.id && dropPos === 'top',
               'drag-over-bottom': dropTarget === bm.id && dropPos === 'bottom',
               dragging: dragId === bm.id,
+              selected: i === selectedIndex,
             }"
             :draggable="editId !== bm.id"
             @dragstart="onDragStart($event, bm.id)"
@@ -145,7 +147,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, watch } from 'vue'
 import { Plus, X, Check, GripVertical, Search, Pencil } from 'lucide-vue-next'
 import { useSettings } from '../../composables/useSettings'
 import { randomId } from '../../utils/id'
@@ -166,6 +168,7 @@ const nameInputRef = ref<HTMLInputElement>()
 const commandInputRef = ref<HTMLInputElement>()
 const searchInputRef = ref<HTMLInputElement>()
 const searchQuery = ref('')
+const selectedIndex = ref(-1)
 
 // Edit state
 const editId = ref<string | null>(null)
@@ -205,11 +208,44 @@ const filteredBookmarks = computed(() => {
   return list
 })
 
+watch(searchQuery, () => { selectedIndex.value = -1 })
+
+const isTouchDevice = window.matchMedia('(hover: none) and (pointer: coarse)').matches
+
+function onSearchKeydown(e: KeyboardEvent) {
+  const list = filteredBookmarks.value
+  if (!list.length) return
+  if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    selectedIndex.value = selectedIndex.value < list.length - 1 ? selectedIndex.value + 1 : 0
+    scrollToSelected()
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    selectedIndex.value = selectedIndex.value > 0 ? selectedIndex.value - 1 : list.length - 1
+    scrollToSelected()
+  } else if (e.key === 'Enter') {
+    e.preventDefault()
+    if (selectedIndex.value >= 0 && selectedIndex.value < list.length) {
+      sendBookmark(list[selectedIndex.value])
+    }
+  }
+}
+
+function scrollToSelected() {
+  nextTick(() => {
+    const el = document.querySelector('.bookmark-item.selected')
+    el?.scrollIntoView({ block: 'nearest' })
+  })
+}
+
 function open() {
   visible.value = true
   addMode.value = false
   searchQuery.value = ''
-  nextTick(() => searchInputRef.value?.focus())
+  selectedIndex.value = -1
+  if (!isTouchDevice) {
+    nextTick(() => searchInputRef.value?.focus())
+  }
 }
 function close() {
   visible.value = false
@@ -220,7 +256,9 @@ function toggleAddMode() {
   addMode.value = !addMode.value
   if (addMode.value) {
     editId.value = null
-    nextTick(() => nameInputRef.value?.focus())
+    if (!isTouchDevice) {
+      nextTick(() => nameInputRef.value?.focus())
+    }
   }
 }
 
@@ -267,7 +305,9 @@ function startEdit(bm: { id: string; name: string; command: string; group: strin
   editCommand.value = bm.command
   editGroup.value = bm.group || ''
   addMode.value = false
-  nextTick(() => editNameInputRef.value?.focus())
+  if (!isTouchDevice) {
+    nextTick(() => editNameInputRef.value?.focus())
+  }
 }
 
 function saveEdit() {
@@ -455,8 +495,13 @@ defineExpose({ open, close })
   border: 1px solid transparent;
   transition: border-color 0.1s;
 }
-.bookmark-item:hover {
+.bookmark-item:hover,
+.bookmark-item.selected {
   background: rgba(255, 255, 255, 0.05);
+}
+.bookmark-item.selected {
+  outline: 1px solid var(--accent, #007acc);
+  outline-offset: -1px;
 }
 .bookmark-item.dragging {
   opacity: 0.4;
@@ -514,7 +559,8 @@ defineExpose({ open, close })
   opacity: 0;
   cursor: pointer;
 }
-.bookmark-item:hover .bookmark-del {
+.bookmark-item:hover .bookmark-del,
+.bookmark-item.selected .bookmark-del {
   opacity: 1;
 }
 .bookmark-del:hover {
@@ -535,7 +581,8 @@ defineExpose({ open, close })
   opacity: 0;
   cursor: pointer;
 }
-.bookmark-item:hover .bookmark-edit {
+.bookmark-item:hover .bookmark-edit,
+.bookmark-item.selected .bookmark-edit {
   opacity: 1;
 }
 .bookmark-edit:hover {

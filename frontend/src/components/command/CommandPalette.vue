@@ -80,10 +80,14 @@ watch(query, () => {
   selected.value = 0
 })
 
+const isTouchDevice = window.matchMedia('(hover: none) and (pointer: coarse)').matches
+
 function open() {
   isOpen.value = true
   query.value = ''
-  nextTick(() => inputRef.value?.focus())
+  if (!isTouchDevice) {
+    nextTick(() => inputRef.value?.focus())
+  }
 }
 
 function close() {
@@ -99,7 +103,9 @@ function openWithItems(items: Command[]) {
   overrideItems.value = items
   isOpen.value = true
   query.value = ''
-  nextTick(() => inputRef.value?.focus())
+  if (!isTouchDevice) {
+    nextTick(() => inputRef.value?.focus())
+  }
 }
 
 function onKey(e: KeyboardEvent) {
