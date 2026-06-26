@@ -30,7 +30,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, defineAsyncComponent } from 'vue'
 import { Cpu, MemoryStick, HardDrive, Wifi, Gpu } from 'lucide-vue-next'
 import { monitorData } from '../../composables/useMonitor'
 import {
@@ -43,7 +43,7 @@ import {
 } from '../../composables/useMonitor'
 import { useSettings } from '../../composables/useSettings'
 import { usePaneWarning } from '../../composables/usePaneWarning'
-import MonitorPopover from './MonitorPopover.vue'
+const MonitorPopover = defineAsyncComponent(() => import('./MonitorPopover.vue'))
 
 const data = monitorData
 const { settings } = useSettings()
@@ -171,8 +171,8 @@ function togglePopover(key: MetricKey, event: MouseEvent) {
 }
 .pane-warning {
   margin-left: auto;
-  font-size: 12px;
-  color: var(--color-yellow, #f59e0b);
+  font-size: 11px;
+  color: var(--fg-muted, rgba(255, 255, 255, 0.6));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

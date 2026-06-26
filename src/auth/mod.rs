@@ -240,7 +240,8 @@ fn check_token(request: &Request, token: &str) -> bool {
     false
 }
 
-fn constant_time_eq(a: &str, b: &str) -> bool {
+#[must_use]
+pub fn constant_time_eq(a: &str, b: &str) -> bool {
     if a.len() != b.len() {
         return false;
     }

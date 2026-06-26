@@ -10,8 +10,8 @@
           <p class="confirm-message">{{ message }}</p>
         </div>
         <div class="confirm-footer">
-          <button class="confirm-btn cancel" @click="onCancel">{{ cancelText }}</button>
-          <button class="confirm-btn primary" @click="onConfirm">{{ confirmText }}</button>
+          <button class="confirm-btn cancel" :class="{ focused: focusIndex === 0 }" @click="onCancel">{{ cancelText }}</button>
+          <button class="confirm-btn primary" :class="{ focused: focusIndex === 1 }" @click="onConfirm">{{ confirmText }}</button>
         </div>
       </div>
     </div>
@@ -19,7 +19,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 
 const props = defineProps<{
   visible: boolean
@@ -34,6 +34,10 @@ const emit = defineEmits<{
   cancel: []
 }>()
 
+const focusIndex = ref(0)
+
+watch(() => props.visible, (v) => { if (v) focusIndex.value = 0 })
+
 function onConfirm() {
   emit('confirm')
 }
@@ -43,9 +47,20 @@ function onCancel() {
 }
 
 function onKey(e: KeyboardEvent) {
-  if (e.key === 'Escape' && props.visible) {
+  if (!props.visible) return
+  if (e.key === 'Escape') {
     e.preventDefault()
+    e.stopPropagation()
     onCancel()
+  } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Tab') {
+    e.preventDefault()
+    e.stopPropagation()
+    focusIndex.value = focusIndex.value === 0 ? 1 : 0
+  } else if (e.key === 'Enter') {
+    e.preventDefault()
+    e.stopPropagation()
+    if (focusIndex.value === 0) onCancel()
+    else onConfirm()
   }
 }
 
@@ -58,7 +73,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey, true))
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.5);
-  z-index: 1000;
+  z-index: 2100;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -139,9 +154,15 @@ onUnmounted(() => window.removeEventListener('keydown', onKey, true))
   color: var(--fg-muted);
 }
 
-.confirm-btn.cancel:hover {
+.confirm-btn.cancel:hover,
+.confirm-btn.cancel.focused {
   background: rgba(255, 255, 255, 0.06);
   color: var(--fg);
+}
+
+.confirm-btn.cancel.focused {
+  outline: 1px solid var(--fg-muted);
+  outline-offset: -1px;
 }
 
 .confirm-btn.primary {
@@ -149,8 +170,14 @@ onUnmounted(() => window.removeEventListener('keydown', onKey, true))
   color: var(--color-red, #ef4444);
 }
 
-.confirm-btn.primary:hover {
+.confirm-btn.primary:hover,
+.confirm-btn.primary.focused {
   background: rgba(239, 68, 68, 0.08);
   color: var(--color-red, #ef4444);
+}
+
+.confirm-btn.primary.focused {
+  outline: 1px solid var(--color-red, #ef4444);
+  outline-offset: -1px;
 }
 </style>

@@ -1,4 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
+use crate::event_bus::EventBus;
 use crate::vt_screen::VirtualScreen;
 use dashmap::DashMap;
 use portable_pty::{Child, MasterPty};
@@ -364,18 +365,49 @@ pub struct SessionManager {
     pub active_pane_id: Arc<Mutex<Option<String>>>,
     pub tab_layouts: DashMap<String, serde_json::Value>,
     pub tab_order: Mutex<Vec<String>>,
+    pub event_bus: EventBus,
 }
 
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SyncMsg {
-    TabList { tabs: Vec<TabInfo>, active_pane_id: Option<String> },
-    TabCreated { tab_id: String, pane_id: String, layout: Option<serde_json::Value> },
-    TabClosed { pane_id: String },
-    TabActivated { pane_id: String },
-    LayoutUpdated { pane_id: String, layout: serde_json::Value, active_pane_id: String },
-    PluginChanged { plugin_id: String, change: String },
-    ProcessExited { plugin_id: String, pid: u32, exit_code: Option<i32> },
+    TabList {
+        tabs: Vec<TabInfo>,
+        active_pane_id: Option<String>,
+    },
+    TabCreated {
+        tab_id: String,
+        pane_id: String,
+        layout: Option<serde_json::Value>,
+    },
+    TabClosed {
+        pane_id: String,
+    },
+    TabActivated {
+        pane_id: String,
+    },
+    LayoutUpdated {
+        pane_id: String,
+        layout: serde_json::Value,
+        active_pane_id: String,
+    },
+    PluginChanged {
+        plugin_id: String,
+        change: String,
+    },
+    ProcessExited {
+        plugin_id: String,
+        pid: u32,
+        exit_code: Option<i32>,
+    },
+    CommandFinished {
+        pane_id: String,
+        command: String,
+        exit_code: i32,
+        duration_ms: u64,
+        stdout: String,
+        method: String,
+    },
 }
 
 #[derive(Serialize, Clone)]
@@ -403,6 +435,7 @@ impl SessionManager {
             active_pane_id: Arc::new(Mutex::new(None)),
             tab_layouts: DashMap::new(),
             tab_order: Mutex::new(Vec::new()),
+            event_bus: EventBus::new(),
         }
     }
 
@@ -584,21 +617,6 @@ impl SessionManager {
 
         tabs.sort_by_key(|t| order_index(&t.tab_id));
         drop(order);
-
-        // Include sessions that don't belong to any existing tab (neither as tab id nor as a leaf)
-        let leaf_ids: std::collections::HashSet<String> =
-            tabs.iter().filter_map(|t| t.layout.as_ref()).flat_map(collect_leaf_pane_ids).collect();
-        for entry in &self.sessions {
-            let pane_id = entry.key().clone();
-            if !tabs.iter().any(|t| t.pane_id == pane_id) && !leaf_ids.contains(&pane_id) {
-                tabs.push(TabInfo {
-                    tab_id: pane_id.clone(),
-                    pane_id,
-                    layout: None,
-                    active_pane_id: None,
-                });
-            }
-        }
 
         let active = self.active_pane_id.lock().expect("mutex poisoned").clone();
         (tabs, active)

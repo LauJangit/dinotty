@@ -33,7 +33,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, defineAsyncComponent } from 'vue'
 import { useSettings, notifyTextChange } from '../composables/useSettings'
 import { useI18n } from '../composables/useI18n'
 import {
@@ -49,7 +49,7 @@ import {
 import GeneralTab from './settings/GeneralTab.vue'
 import AppearanceTab from './settings/AppearanceTab.vue'
 import KeyboardTab from './settings/KeyboardTab.vue'
-import MonitorTab from './settings/MonitorTab.vue'
+const MonitorTab = defineAsyncComponent(() => import('./settings/MonitorTab.vue'))
 import NotificationTab from './settings/NotificationTab.vue'
 import PluginsTab from './settings/PluginsTab.vue'
 import AboutTab from './settings/AboutTab.vue'

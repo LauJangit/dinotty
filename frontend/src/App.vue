@@ -9,11 +9,16 @@
       :plugins="pluginList"
       :can-broadcast="canBroadcast"
       :broadcast-active="isBroadcastActive"
+      :is-mobile="isMobile"
+      :current-tab-title="currentTabTitle"
+      :current-tab-index="currentTabIndex"
       @activate="activateTab"
       @close="requestCloseTab"
       @action="onNewMenuAction"
       @reorder="reorderTab"
       @open-plugin="openPlugin"
+      @rename="onRenameTab"
+      @open-overview="openOverview"
     >
       <template #left>
         <button
@@ -127,6 +132,7 @@
         </template>
         <PluginView
           v-else-if="tab.type === 'plugin'"
+          :data-plugin-pane-id="tab.paneId"
           :plugin="loadedPlugins.get(tab.pluginId)!"
           :api="getPluginContext(tab.pluginId)"
         />
@@ -142,6 +148,16 @@
     <SettingsPanel :open="settingsOpen" @close="settingsOpen = false" />
 
     <ConfirmCloseDialog @confirm="onConfirmClose" />
+
+    <ConfirmModal
+      :visible="windowCloseConfirmVisible"
+      :title="t('confirm.closeWindowTitle')"
+      :message="t('confirm.closeWindowMessage')"
+      :confirm-text="t('confirm.closeWindowConfirm')"
+      :cancel-text="t('confirm.closeWindowCancel')"
+      @confirm="onWindowCloseConfirm"
+      @cancel="onWindowCloseCancel"
+    />
 
     <CommandBookmarks ref="bookmarksRef" :get-send-fn="getSendFn" :create-tab="newTab" />
 
@@ -159,6 +175,15 @@
       v-show="appSettings.show_virtual_keyboard && !kbVisible"
       :visible="kbVisible"
       @toggle="kbVisible = !kbVisible"
+    />
+
+    <TabOverview
+      :visible="overviewOpen"
+      :cards="overviewCards"
+      :active-pane-id="activePaneId"
+      @close="overviewOpen = false"
+      @activate="onOverviewActivate"
+      @close-tab="onOverviewCloseTab"
     />
   </div>
 </template>
@@ -184,6 +209,7 @@ import MobileKeyboard from './components/keyboard/MobileKeyboard.vue'
 import KbToggleButton from './components/keyboard/KbToggleButton.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
 import ConfirmCloseDialog from './components/ui/ConfirmCloseDialog.vue'
+import ConfirmModal from './components/ui/ConfirmModal.vue'
 import PreviewPanel from './components/preview/PreviewPanel.vue'
 import CommandBookmarks from './components/command/CommandBookmarks.vue'
 import ServerList from './components/ServerList.vue'
@@ -196,7 +222,7 @@ import {
   checkTokenConfigured,
   setAuthToken,
 } from './composables/apiBase'
-import { isTauri } from './composables/useTransport'
+import { isTauri, tauriInvoke } from './composables/useTransport'
 import { isTouchDevice, setActivePaneId } from './composables/useTerminal'
 import { useI18n } from './composables/useI18n'
 import { useKeybindings } from './composables/useKeybindings'
@@ -216,6 +242,10 @@ import {
   apiListTabs,
 } from './composables/useTabApi'
 import { Settings, Bell, Monitor, Plus, X, Star, AppWindow, Radar } from 'lucide-vue-next'
+import TabOverview from './components/overview/TabOverview.vue'
+import type { TabCard } from './composables/useTabPreview'
+import { useTabPreview, refreshPluginPreview, invalidatePluginPreview } from './composables/useTabPreview'
+import { useIsMobile } from './composables/useIsMobile'
 // formatCloseTabMessage moved to ConfirmCloseDialog component
 import LoginPage from './components/LoginPage.vue'
 import SetupPage from './components/SetupPage.vue'
@@ -235,6 +265,8 @@ const { syncConnected, kbVisible, settingsOpen, authenticated, needsSetup } = st
 const settingsStore = useSettingsStore()
 const appSettings = settingsStore.settings
 
+const windowCloseConfirmVisible = ref(false)
+
 let linkJustActivated = false
 
 // ── Template refs (purely UI concerns) ─────────────────────────
@@ -250,8 +282,61 @@ const { t } = useI18n()
 const { getBinding, formatBinding } = useKeybindings()
 const notif = useNotification()
 const { loadedPlugins, loadAll, getPluginContext, pluginList, allCommands } = usePluginLoader()
+const { isMobile } = useIsMobile()
+const tabPreview = useTabPreview()
 
 const isLandscape = ref(window.innerWidth > window.innerHeight)
+
+// Mission Control
+const overviewOpen = ref(false)
+const overviewCards = ref<TabCard[]>([])
+const currentTabIndex = computed(() =>
+  tabs.value.findIndex((t) => t.paneId === activePaneId.value) + 1
+)
+const currentTabTitle = computed(() => {
+  const tab = tabs.value.find((t) => t.paneId === activePaneId.value)
+  if (!tab) return ''
+  if (tab.type === 'terminal') return tab.customTitle ?? findLeaf(tab.layout, tab.activePaneId)?.title ?? 'Terminal'
+  return tab.title
+})
+
+function openOverview() {
+  overviewCards.value = tabPreview.captureAll(tabs.value, termRefs, notif.unreadByPane)
+  overviewOpen.value = true
+}
+
+function onOverviewActivate(paneId: string) {
+  activateTab(paneId)
+  overviewOpen.value = false
+  nextTick(() => {
+    const ref = termRefs[paneId]
+    ref?.focus()
+  })
+}
+
+function onOverviewCloseTab(tabId: string) {
+  requestCloseTab(tabId)
+}
+
+watch(
+  () => tabs.value.length,
+  () => {
+    if (overviewOpen.value) {
+      overviewCards.value = tabPreview.captureAll(tabs.value, termRefs, notif.unreadByPane)
+    }
+  }
+)
+
+// Capture plugin preview when active tab changes to a plugin tab (handles initial load)
+watch(
+  activePaneId,
+  (paneId) => {
+    const tab = tabs.value.find((t) => t.paneId === paneId)
+    if (tab?.type === 'plugin') {
+      nextTick(() => refreshPluginPreview(tab.paneId))
+    }
+  }
+)
 
 const resolvedPosition = computed(() => {
   const pos = appSettings.panel_position ?? 'auto'
@@ -282,14 +367,22 @@ watch(
 )
 
 // Track effective active pane for Tauri WKWebView input guard
+function syncActivePaneId() {
+  const tab = tabs.value.find((t) => t.paneId === activePaneId.value)
+  const paneId = tab?.type === 'terminal' ? tab.activePaneId : null
+  setActivePaneId(paneId)
+}
+// Fire on tab switch (store activePaneId change) and initial load
+watch(activePaneId, syncActivePaneId, { immediate: true })
+// Fire when tab list changes (add/remove) — not deep, just array reference
+watch(() => tabs.value.length, syncActivePaneId)
+// Fire when active terminal tab's internal focus changes (sync WS, etc.)
 watch(
-  [activePaneId, tabs],
   () => {
     const tab = tabs.value.find((t) => t.paneId === activePaneId.value)
-    const paneId = tab?.type === 'terminal' ? tab.activePaneId : null
-    setActivePaneId(paneId)
+    return tab?.type === 'terminal' ? tab.activePaneId : null
   },
-  { immediate: true, deep: true }
+  (paneId) => setActivePaneId(paneId),
 )
 
 const termRefs = shallowReactive<Record<string, InstanceType<typeof TerminalPane>>>({})
@@ -356,7 +449,8 @@ function onDividerDragEnd(tab: Tab) {
   }
 }
 
-function persist() {
+let persistTimer: ReturnType<typeof setTimeout> | null = null
+function persistNow() {
   const state = tabs.value.map((t) => {
     if (t.type === 'terminal') {
       return {
@@ -369,6 +463,7 @@ function persist() {
         previewAddress: t.previewAddress,
         previewUrl: t.previewUrl,
         previewKind: t.previewKind,
+        customTitle: t.customTitle,
       }
     }
     return {
@@ -381,6 +476,21 @@ function persist() {
   const activeIdx = tabs.value.findIndex((t) => t.paneId === activePaneId.value)
   localStorage.setItem('dinotty_tabs', JSON.stringify({ tabs: state, activeIdx }))
 }
+function persist() {
+  if (persistTimer) clearTimeout(persistTimer)
+  persistTimer = setTimeout(persistNow, 200)
+}
+// Flush pending persist on page unload
+window.addEventListener('beforeunload', (e) => {
+  if (persistTimer) {
+    clearTimeout(persistTimer)
+    persistNow()
+  }
+  if (appSettings.confirm_before_close_tab && tabs.value.some((t) => t.type === 'terminal')) {
+    e.preventDefault()
+    e.returnValue = ''
+  }
+})
 
 const DEFAULT_PREVIEW_URL = ''
 
@@ -441,12 +551,21 @@ async function activateTab(tabId: string) {
       console.error('Failed to activate pane:', e)
     }
   }
+  // Capture plugin preview when switching to a plugin tab
+  if (tab?.type === 'plugin') {
+    nextTick(() => refreshPluginPreview(tab.paneId))
+  }
   persist()
   nextTick(() => focusActive())
 }
 
 function reorderTab(fromId: string, toId: string) {
   session.reorderTab(fromId, toId)
+  persist()
+}
+
+function onRenameTab(paneId: string, title: string) {
+  session.renameTab(paneId, title)
   persist()
 }
 
@@ -509,6 +628,11 @@ async function onConfirmClose(tabId: string, paneId: string | null) {
 async function closeTab(tabId: string) {
   const tab = tabs.value.find((t) => t.paneId === tabId)
   if (!tab) return
+
+  // Invalidate plugin preview cache when closing a plugin tab
+  if (tab.type === 'plugin') {
+    invalidatePluginPreview(tab.paneId)
+  }
 
   if (tab.type === 'terminal') {
     // Clean up local term refs
@@ -892,6 +1016,7 @@ function onGlobalKeydown(e: KeyboardEvent) {
       if (!tab || tab.type !== 'terminal') return
       termRefs[tab.activePaneId]?.toggleSearch()
     },
+    missionControl: () => openOverview(),
   }
 
   for (const [id, action] of Object.entries(keyActions)) {
@@ -951,7 +1076,36 @@ const _focusHandler = () => {
   nextTick(() => focusActive())
 }
 
+// Tauri window close confirmation
+let unlistenWindowClose: (() => void) | undefined
+function setupTauriWindowClose() {
+  if (!isTauri()) return
+  const listen = (window as any).__TAURI__?.event?.listen
+  if (!listen) return
+  listen('window-close-requested', () => {
+    if (appSettings.confirm_before_close_tab && tabs.value.some((t) => t.type === 'terminal')) {
+      windowCloseConfirmVisible.value = true
+    } else {
+      tauriInvoke('close_window')
+    }
+  }).then((fn: () => void) => {
+    unlistenWindowClose = fn
+  })
+}
+function onWindowCloseConfirm() {
+  windowCloseConfirmVisible.value = false
+  if (persistTimer) {
+    clearTimeout(persistTimer)
+    persistNow()
+  }
+  tauriInvoke('close_window')
+}
+function onWindowCloseCancel() {
+  windowCloseConfirmVisible.value = false
+}
+
 onMounted(async () => {
+  setupTauriWindowClose()
   document.addEventListener('keydown', onGlobalKeydown)
   window.addEventListener('focus', _focusHandler)
   window.addEventListener('resize', onOrientationChange)
@@ -1025,6 +1179,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  unlistenWindowClose?.()
   document.removeEventListener('keydown', onGlobalKeydown)
   window.removeEventListener('focus', _focusHandler)
   window.removeEventListener('resize', onOrientationChange)

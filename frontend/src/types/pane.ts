@@ -35,6 +35,7 @@ export interface TerminalTab {
   previewAddress: string
   previewUrl: string
   previewKind: 'web' | 'files'
+  customTitle?: string // User-set tab title (overrides shell title)
 }
 
 /** Plugin tab (unchanged) */

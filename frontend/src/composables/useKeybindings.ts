@@ -93,6 +93,12 @@ const defs: KeyBindingDef[] = [
     titleKey: 'keybinding.switchTab',
     readonly: true,
   },
+  {
+    id: 'missionControl',
+    defaultBinding: { key: 'm', shift: true },
+    icon: '⊞',
+    titleKey: 'keybinding.missionControl',
+  },
 ]
 
 export function useKeybindings() {

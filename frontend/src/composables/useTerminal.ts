@@ -21,6 +21,76 @@ export function setActivePaneId(paneId: string | null) {
   _activePaneId = paneId
 }
 
+// Dedup window (ms) for WKWebView onData double-fire.
+// xterm.js + WKWebView on macOS can produce 2 onData events for one key
+// (modifier-prefixed sequence + actual char). The inter-event gap in
+// WKWebView multi-focus replay is sub-millisecond, while the gap between
+// the modifier-prefixed event and the real char in a Shift+key press is
+// typically > 2ms. A 2ms window rejects the multi-focus duplicate but
+// keeps the modifier sequence intact. (was 5ms — caused Shift+punct to
+// require a double press.)
+export const DEDUP_WINDOW_MS = 2
+
+/**
+ * Determine whether an incoming onData payload should be dropped because
+ * it is a WKWebView multi-focus replay of the previous event. Exported
+ * for unit testing.
+ */
+/**
+ * Standalone composition guard for unit testing.
+ * Mirrors the logic inside TerminalInstance.setupCompositionGuard.
+ */
+export function createCompositionGuard(sendData: (data: string) => void) {
+  let isComposing = false
+  let compositionJustEnded = false
+  let compositionData = ''
+  let safetyTimer: ReturnType<typeof setTimeout> | null = null
+
+  return {
+    onCompositionStart() {
+      isComposing = true
+      if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null }
+      safetyTimer = setTimeout(() => {
+        isComposing = false
+        safetyTimer = null
+      }, 1000)
+    },
+    onCompositionEnd(event: CompositionEvent) {
+      if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null }
+      isComposing = false
+      compositionJustEnded = true
+      compositionData = ''
+      if (event.data) sendData(event.data)
+      setTimeout(() => {
+        compositionJustEnded = false
+        compositionData = ''
+      }, 50)
+    },
+    guard(): boolean {
+      if (isComposing) return false
+      if (!compositionJustEnded) return true
+      return false
+    },
+    cleanup() {
+      if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null }
+      isComposing = false
+      compositionJustEnded = false
+      compositionData = ''
+    },
+  }
+}
+
+export function isDuplicateOnData(
+  data: string,
+  prev: string,
+  prevAt: number,
+  now: number,
+): boolean {
+  if (prev === '') return false
+  if (data !== prev) return false
+  return now - prevAt < DEDUP_WINDOW_MS
+}
+
 function setupGlobalTauriDragDrop() {
   if (tauriDragDropRegistered) return
   tauriDragDropRegistered = true
@@ -166,21 +236,38 @@ export class TerminalInstance {
       textarea.setAttribute('virtualkeyboardpolicy', 'manual')
     }
     if (textarea) {
+      let isComposing = false
       let compositionJustEnded = false
       let compositionData = ''
-      const onCompositionEnd = (e: Event) => {
+      let safetyTimer: ReturnType<typeof setTimeout> | null = null
+      const onCompositionStart = () => {
+        isComposing = true
+        if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null }
+        // Safety: if compositionend never fires (WebKit Bug 224932), reset after 1s
+        safetyTimer = setTimeout(() => {
+          isComposing = false
+          safetyTimer = null
+        }, 1000)
+      }
+      const onCompositionEnd = () => {
+        if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null }
+        isComposing = false
         compositionJustEnded = true
         compositionData = ''
         setTimeout(() => {
           compositionJustEnded = false
           compositionData = ''
-        }, 0)
+        }, 50)
       }
+      textarea.addEventListener('compositionstart', onCompositionStart)
       textarea.addEventListener('compositionend', onCompositionEnd)
       this._compositionCleanup = () => {
+        if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null }
+        textarea.removeEventListener('compositionstart', onCompositionStart)
         textarea.removeEventListener('compositionend', onCompositionEnd)
       }
       this._compositionGuard = (data: string): boolean => {
+        if (isComposing) return false
         if (!compositionJustEnded) return true
         if (compositionData === '') {
           compositionData = data
@@ -407,7 +494,7 @@ export class TerminalInstance {
         if (_activePaneId !== null && _activePaneId !== this.paneId) return
         // Deduplicate: WKWebView may fire onData twice for the same keystroke
         const now = performance.now()
-        if (data === this._lastInputData && now - this._lastInputTime < 5) return
+        if (isDuplicateOnData(data, this._lastInputData, this._lastInputTime, now)) return
         this._lastInputData = data
         this._lastInputTime = now
         this.onInput?.(data)
@@ -478,7 +565,7 @@ export class TerminalInstance {
         if (_activePaneId !== null && _activePaneId !== this.paneId) return
         // Deduplicate: WKWebView may fire onData twice for the same keystroke
         const now = performance.now()
-        if (data === this._lastInputData && now - this._lastInputTime < 5) return
+        if (isDuplicateOnData(data, this._lastInputData, this._lastInputTime, now)) return
         this._lastInputData = data
         this._lastInputTime = now
         this.onInput?.(data)
@@ -677,14 +764,9 @@ export class TerminalInstance {
   }
 
   private _setupTouchScroll(wrapper: HTMLElement) {
-    requestAnimationFrame(() => {
-      const screen = wrapper.querySelector('.xterm-screen') as HTMLElement
-      const viewport = wrapper.querySelector('.xterm-viewport') as HTMLElement
-      if (!screen || !viewport) return
-
+    const attachHandlers = (viewport: HTMLElement) => {
       // Prevent native browser scroll on the viewport from conflicting with our
-      // custom touch-to-wheel translation.  Without this, both the browser's
-      // overflow-y:scroll and our JS handler fire simultaneously → chaotic scroll.
+      // custom touch-to-wheel translation.
       wrapper.style.touchAction = 'none'
 
       let startX = 0
@@ -739,7 +821,7 @@ export class TerminalInstance {
           accumulatedDeltaY += deltaY
 
           if (this.xterm && Math.abs(accumulatedDeltaY) >= SCROLL_THRESHOLD) {
-            this._sendWheelEvent(screen, accumulatedDeltaY, cx, cy)
+            this._sendWheelEvent(viewport, accumulatedDeltaY, cx, cy)
             accumulatedDeltaY = 0
           }
         }
@@ -751,7 +833,7 @@ export class TerminalInstance {
         if (mode !== 'scroll') return
         // Flush remaining delta
         if (this.xterm && Math.abs(accumulatedDeltaY) > 2) {
-          this._sendWheelEvent(screen, accumulatedDeltaY, lastY, lastY)
+          this._sendWheelEvent(viewport, accumulatedDeltaY, lastY, lastY)
         }
         accumulatedDeltaY = 0
 
@@ -763,27 +845,44 @@ export class TerminalInstance {
             v *= friction
             if (Math.abs(v) < 0.05) return
             const delta = v * 16 // ~1 frame at 60fps
-            this._sendWheelEvent(screen, delta, lastY, lastY)
+            this._sendWheelEvent(viewport, delta, lastY, lastY)
             momentumId = requestAnimationFrame(step)
           }
           momentumId = requestAnimationFrame(step)
         }
       }
 
-      // passive: false so we can preventDefault() in touchmove
-      wrapper.addEventListener('touchstart', onTouchStart, { passive: true })
-      screen.addEventListener('touchmove', onTouchMove, { passive: false })
-      screen.addEventListener('touchend', onTouchEnd, { passive: true })
+      // Attach directly to the viewport (.xterm-viewport) — this intercepts
+      // touch events before iOS Safari's native scroll handler on the
+      // overflow-y:scroll element can consume them.
+      viewport.addEventListener('touchstart', onTouchStart, { passive: true })
+      viewport.addEventListener('touchmove', onTouchMove, { passive: false })
+      viewport.addEventListener('touchend', onTouchEnd, { passive: true })
       this._touchCleanup = () => {
         clearMomentum()
-        wrapper.removeEventListener('touchstart', onTouchStart)
-        screen.removeEventListener('touchmove', onTouchMove)
-        screen.removeEventListener('touchend', onTouchEnd)
+        viewport.removeEventListener('touchstart', onTouchStart)
+        viewport.removeEventListener('touchmove', onTouchMove)
+        viewport.removeEventListener('touchend', onTouchEnd)
       }
-    })
+    }
+
+    // Retry until xterm renders its DOM — single rAF is unreliable on slower
+    // devices / Safari where the renderer may need an extra frame.
+    let retries = 0
+    const tryAttach = () => {
+      requestAnimationFrame(() => {
+        const viewport = wrapper.querySelector('.xterm-viewport') as HTMLElement | null
+        if (viewport) {
+          attachHandlers(viewport)
+          return
+        }
+        if (++retries < 30) tryAttach() // ~500ms at 60fps, then give up
+      })
+    }
+    tryAttach()
   }
 
-  private _sendWheelEvent(target: HTMLElement, deltaY: number, clientX: number, clientY: number) {
+  private _sendWheelEvent(_target: HTMLElement, deltaY: number, clientX: number, clientY: number) {
     if (!this.xterm || deltaY === 0) return
 
     if (this.isMouseModeEnabled()) {
@@ -792,22 +891,27 @@ export class TerminalInstance {
       // Do NOT call scrollLines() — that shifts xterm's viewport into the main-screen
       // scrollback while the app is rendering on the alternate screen, causing a
       // garbled display when both effects are applied simultaneously.
-      target.dispatchEvent(
-        new WheelEvent('wheel', {
-          deltaY,
-          deltaX: 0,
-          deltaZ: 0,
-          deltaMode: 0,
-          bubbles: true,
-          cancelable: true,
-          clientX,
-          clientY,
-        })
-      )
+      // Dispatch on the xterm element so the event reaches xterm's internal listeners.
+      const xtermEl = this.xterm.element
+      if (xtermEl) {
+        xtermEl.dispatchEvent(
+          new WheelEvent('wheel', {
+            deltaY,
+            deltaX: 0,
+            deltaZ: 0,
+            deltaMode: 0,
+            bubbles: true,
+            cancelable: true,
+            clientX,
+            clientY,
+          })
+        )
+      }
     } else {
       // No mouse tracking: scroll xterm's viewport directly (normal shell / less / man).
+      const el = this.xterm.element
       const lineHeight =
-        this.xterm.rows && target.clientHeight ? target.clientHeight / this.xterm.rows : 20
+        this.xterm.rows && el?.clientHeight ? el.clientHeight / this.xterm.rows : 20
       const lines = Math.round(deltaY / lineHeight)
       if (lines !== 0) this.xterm.scrollLines(lines)
     }

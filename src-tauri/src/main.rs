@@ -78,7 +78,7 @@ fn pty_spawn(
     }
 
     let (session, shell_type) =
-        pty::create_session(&manager, &pane_id, Some(Arc::clone(&exit_cb)))?;
+        pty::create_session(&manager, &pane_id, Some(Arc::clone(&exit_cb)), None)?;
 
     spawn_tauri_output_forwarder(app.clone(), pane_id.clone(), Arc::clone(&session));
 
@@ -214,6 +214,30 @@ async fn tauri_read_file(path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn tauri_download(
+    url: String,
+    filename: String,
+    headers: Vec<(String, String)>,
+) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let mut req = client.get(&url);
+    for (k, v) in headers {
+        req = req.header(k, v);
+    }
+    let resp = req.send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+
+    let dialog =
+        rfd::AsyncFileDialog::new().set_title("Save File").set_file_name(&filename).save_file();
+    let file = dialog.await.ok_or("cancelled")?;
+    tokio::fs::write(file.path(), &bytes).await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 async fn tauri_upload(
     pane_id: String,
     dir: String,
@@ -257,6 +281,11 @@ async fn tauri_upload(
     Ok(FetchResponse { status, headers, body })
 }
 
+#[tauri::command]
+fn close_window(window: tauri::Window) {
+    let _ = window.destroy();
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::new(
@@ -294,12 +323,27 @@ fn main() {
             tracing::info!("Desktop mode: embedded server on port {}", port);
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
-                let path_strings: Vec<String> =
-                    paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
-                let _ = window.emit("file-drop-paths", &path_strings);
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::DragDrop(drag_event) => match drag_event {
+                tauri::DragDropEvent::Enter { .. } => {
+                    let _ = window.emit("file-drop-active", true);
+                }
+                tauri::DragDropEvent::Leave { .. } => {
+                    let _ = window.emit("file-drop-active", false);
+                }
+                tauri::DragDropEvent::Drop { paths, .. } => {
+                    let _ = window.emit("file-drop-active", false);
+                    let path_strings: Vec<String> =
+                        paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+                    let _ = window.emit("file-drop-paths", &path_strings);
+                }
+                _ => {}
+            },
+            tauri::WindowEvent::CloseRequested { api, .. } => {
+                api.prevent_close();
+                let _ = window.emit("window-close-requested", ());
             }
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             pty_spawn,
@@ -311,6 +355,8 @@ fn main() {
             tauri_fetch,
             tauri_upload,
             tauri_read_file,
+            tauri_download,
+            close_window,
         ])
         .run(tauri::generate_context!())
         .expect("error running tauri application");

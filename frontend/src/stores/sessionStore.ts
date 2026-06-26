@@ -17,10 +17,14 @@ export const useSessionStore = defineStore('session', () => {
 
   /** Tab list for TabBar component */
   const tabList = computed<TabInfo[]>(() =>
-    tabs.value.map((t) => ({
+    tabs.value.map((t, i) => ({
       paneId: t.paneId,
       title:
-        t.type === 'terminal' ? (findLeaf(t.layout, t.activePaneId)?.title ?? 'Terminal') : t.title,
+        t.type === 'terminal'
+          ? (t.customTitle ?? findLeaf(t.layout, t.activePaneId)?.title ?? 'Terminal')
+          : t.title,
+      index: i + 1,
+      type: t.type,
     }))
   )
 
@@ -109,6 +113,13 @@ export const useSessionStore = defineStore('session', () => {
     tabs.value.splice(toIdx, 0, moved)
   }
 
+  /** Rename a terminal tab's custom title. Pass empty string to clear. */
+  function renameTab(tabId: string, title: string) {
+    const tab = tabs.value.find((t) => t.paneId === tabId)
+    if (!tab || tab.type !== 'terminal') return
+    tab.customTitle = title || undefined
+  }
+
   /** Replace the entire tabs array (used during sync restore) */
   function setTabs(newTabs: Tab[]) {
     tabs.value = newTabs
@@ -134,6 +145,7 @@ export const useSessionStore = defineStore('session', () => {
     findTab,
     getActiveTerminal,
     reorderTab,
+    renameTab,
     setTabs,
   }
 })

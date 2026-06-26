@@ -1,4 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
+use crate::event_bus::BusEvent;
 use crate::session::{Session, SessionManager, SessionStatus, SyncMsg};
 use crate::vt_screen::VirtualScreen;
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
@@ -51,8 +52,10 @@ pub fn create_session(
             "bash" => {
                 cmd.env(
                     "PROMPT_COMMAND",
-                    r#"history -a; history -r; printf "\033]0;%s@%s:%s\007" "${USER}" "${HOSTNAME%%.*}" "${PWD/#$HOME/~}""#,
+                    r#"history -a; history -r; printf "\033]0;%s@%s:%s\007" "${USER}" "${HOSTNAME%%.*}" "${PWD/#$HOME/~}"; printf "\033]133;A\033\\"; printf "\033]133;D;%d\033\\" $?""#,
                 );
+                // Inject preexec-like trap for command start detection
+                cmd.env("BASH_ENV", r#"trap 'printf "\033]133;B\033\\"' DEBUG"#);
             }
             _ => {}
         }
@@ -86,6 +89,12 @@ pub fn create_session(
     });
     manager.sessions.insert(pane_id.to_string(), Arc::clone(&session));
 
+    // Publish session created event
+    manager.event_bus.publish(BusEvent::SessionCreated {
+        pane_id: pane_id.to_string(),
+        shell_type: shell_type.clone(),
+    });
+
     let session_clone = Arc::clone(&session);
     let pane_id_clone = pane_id.to_string();
     let manager_clone = Arc::clone(manager);
@@ -98,7 +107,35 @@ pub fn create_session(
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
                     let data = &buf[..n];
-                    session_clone.screen.lock().expect("mutex poisoned").feed(data);
+                    // Feed to virtual screen and check for command completion
+                    let command_results = {
+                        let mut screen = session_clone.screen.lock().expect("mutex poisoned");
+                        screen.feed(data);
+                        let results = screen.drain_command_results();
+                        // Collect stdout for each result while still holding the lock
+                        let outputs: Vec<String> =
+                            (0..results.len()).map(|_| screen.take_command_output()).collect();
+                        results.into_iter().zip(outputs).collect::<Vec<_>>()
+                    };
+                    // Publish command_finished events
+                    for (result, stdout) in command_results {
+                        manager_clone.event_bus.publish(BusEvent::CommandFinished {
+                            pane_id: pane_id_clone.clone(),
+                            command: String::new(), // Will be filled by agent API
+                            exit_code: result.exit_code,
+                            duration_ms: result.duration_ms,
+                            stdout,
+                            method: result.method.clone(),
+                        });
+                        manager_clone.broadcast_sync(&SyncMsg::CommandFinished {
+                            pane_id: pane_id_clone.clone(),
+                            command: String::new(),
+                            exit_code: result.exit_code,
+                            duration_ms: result.duration_ms,
+                            stdout: String::new(),
+                            method: result.method,
+                        });
+                    }
                     session_clone.on_pty_output(data);
 
                     utf8_tail.extend_from_slice(data);
@@ -125,6 +162,11 @@ pub fn create_session(
             }
         }
         if manager_clone.sessions.remove(&pane_id_clone).is_some() {
+            // Publish session closed event
+            manager_clone.event_bus.publish(BusEvent::SessionClosed {
+                pane_id: pane_id_clone.clone(),
+                exit_code: None,
+            });
             // Find the parent tab and clean up its layout; for single-pane tabs
             // this returns the tab-level pane_id so we broadcast the correct ID.
             let tab_pane_id = manager_clone
@@ -166,10 +208,13 @@ setopt INC_APPEND_HISTORY SHARE_HISTORY
 
 function _dinotty_precmd {{
   printf "\033]0;%s@%s:%s\007" "${{USER}}" "${{HOST%%.*}}" "${{PWD/#$HOME/~}}"
+  printf "\033]133;A\033\\"
+  printf "\033]133;D;%d\033\\" $?
 }}
 
 function _dinotty_preexec {{
   printf "\033]0;%s\007" "$1"
+  printf "\033]133;B\033\\"
 }}
 
 if [[ -z "${{precmd_functions[(r)_dinotty_precmd]}}" ]]; then

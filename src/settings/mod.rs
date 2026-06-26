@@ -470,7 +470,8 @@ impl Default for Settings {
     }
 }
 
-fn config_dir() -> PathBuf {
+#[must_use]
+pub fn config_dir() -> PathBuf {
     dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("dinotty")
 }
 

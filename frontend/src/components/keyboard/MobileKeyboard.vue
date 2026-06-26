@@ -668,27 +668,33 @@ onMounted(() => {
     naturalVH = window.visualViewport.height
     window.visualViewport.addEventListener('resize', onViewportChange)
     window.visualViewport.addEventListener('scroll', onViewportChange)
-    window.addEventListener('orientationchange', () => {
-      setTimeout(() => {
-        naturalVH = window.visualViewport!.height
-      }, 300)
-    })
+    window.addEventListener('orientationchange', onOrientationChange)
   }
 
-  let roAf = 0
   if (barRef.value) {
-    new ResizeObserver(() => {
+    resizeObserver = new ResizeObserver(() => {
       cancelAnimationFrame(roAf)
       roAf = requestAnimationFrame(() => updateHeight())
-    }).observe(barRef.value)
+    })
+    resizeObserver.observe(barRef.value)
   }
 })
+
+let roAf = 0
+let resizeObserver: ResizeObserver | null = null
+function onOrientationChange() {
+  setTimeout(() => {
+    naturalVH = window.visualViewport!.height
+  }, 300)
+}
 
 onBeforeUnmount(() => {
   if (window.visualViewport) {
     window.visualViewport.removeEventListener('resize', onViewportChange)
     window.visualViewport.removeEventListener('scroll', onViewportChange)
   }
+  window.removeEventListener('orientationchange', onOrientationChange)
+  resizeObserver?.disconnect()
   document.documentElement.style.setProperty('--mkb-height', '0px')
 })
 </script>

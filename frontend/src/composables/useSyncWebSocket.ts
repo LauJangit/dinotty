@@ -129,6 +129,7 @@ export function useSyncWebSocket(opts: {
               previewAddress: migrated?.previewAddress ?? '',
               previewUrl: migrated?.previewUrl ?? '',
               previewKind: migrated?.previewKind ?? 'web',
+              customTitle: migrated?.customTitle,
             })
           }
         }
