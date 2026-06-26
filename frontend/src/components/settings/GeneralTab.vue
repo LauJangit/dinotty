@@ -220,7 +220,7 @@ async function refreshQrCode() {
   }
 }
 
-onMounted(async () => {
+async function fetchAccessUrl() {
   try {
     await getApiBase()
     const res = await authFetch(apiUrl('/api/info'))
@@ -232,17 +232,42 @@ onMounted(async () => {
     const port = window.location.port
     accessUrl.value = `http://${host}${port ? ':' + port : ''}`
   }
+}
+
+async function refreshAccessUrlAndQr() {
+  await fetchAccessUrl()
+  await refreshQrCode()
+}
+
+onMounted(async () => {
+  await fetchAccessUrl()
   currentToken.value = (await fetchServerToken()) || getAuthToken()
   await refreshQrCode()
 })
+
+// Re-fetch IP when network changes (e.g. WiFi switch)
+function onNetworkChange() {
+  refreshAccessUrlAndQr()
+}
+
+// Also refresh when user comes back to the tab (handles seamless WiFi switches)
+function onVisibilityChange() {
+  if (document.visibilityState === 'visible') {
+    refreshAccessUrlAndQr()
+  }
+}
 
 // Auto-refresh QR code before the 5-minute TTL expires
 let qrRefreshTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
   qrRefreshTimer = setInterval(refreshQrCode, 4 * 60 * 1000)
+  window.addEventListener('online', onNetworkChange)
+  document.addEventListener('visibilitychange', onVisibilityChange)
 })
 onUnmounted(() => {
   if (qrRefreshTimer) clearInterval(qrRefreshTimer)
+  window.removeEventListener('online', onNetworkChange)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
 })
 
 async function copyAccessUrl() {
