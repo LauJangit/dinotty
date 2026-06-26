@@ -9,8 +9,10 @@ function check() {
   if (forced === '1') { isMobile.value = true; return }
   if (forced === '0') { isMobile.value = false; return }
 
-  isMobile.value = window.matchMedia('(max-width: 600px)').matches
-    && window.matchMedia('(pointer: coarse)').matches
+  const isCoarse = window.matchMedia('(pointer: coarse)').matches
+  const isPortrait = window.matchMedia('(orientation: portrait)').matches
+  const isNarrow = window.matchMedia('(max-width: 600px)').matches
+  isMobile.value = isCoarse && (isPortrait || isNarrow)
 }
 
 if (typeof window !== 'undefined') {
