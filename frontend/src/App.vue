@@ -68,7 +68,7 @@
       </template>
     </TabBar>
 
-    <div id="tab-content" @touchend="onTerminalTouch">
+    <div id="tab-content" @touchend="onTerminalTouch" @terminal-scroll="onTerminalScroll">
       <div
         v-for="tab in tabs"
         :key="tabKey(tab)"
@@ -268,6 +268,8 @@ const appSettings = settingsStore.settings
 const windowCloseConfirmVisible = ref(false)
 
 let linkJustActivated = false
+let scrollGestureDetected = false
+let scrollGestureTimer = 0
 
 // ── Template refs (purely UI concerns) ─────────────────────────
 const paletteRef = ref<InstanceType<typeof CommandPalette>>()
@@ -415,8 +417,19 @@ function registerTermRef(paneId: string, el: InstanceType<typeof TerminalPane> |
 }
 
 let viewportRefitTimer = 0
+let naturalVH = 0
 
 function onViewportResize() {
+  if (!window.visualViewport) return
+  const vh = window.visualViewport.height
+  if (vh > naturalVH) naturalVH = vh
+  const off = window.innerHeight - (window.visualViewport.offsetTop + vh)
+  // Shrink #app-root when system keyboard is visible (even without custom keyboard)
+  document.documentElement.style.setProperty('--sys-kb-height', `${Math.max(0, off)}px`)
+  // Set --kb-open: either system keyboard or custom mobile keyboard is visible
+  const sysKbOpen = naturalVH > 0 && naturalVH - vh > 120
+  document.documentElement.style.setProperty('--kb-open', (sysKbOpen || kbVisible.value) ? '1' : '0')
+
   clearTimeout(viewportRefitTimer)
   viewportRefitTimer = window.setTimeout(() => {
     if (!activePaneId.value) return
@@ -427,6 +440,11 @@ function onViewportResize() {
     }
   }, 100)
 }
+
+// Set --kb-open when custom keyboard visibility changes
+watch(kbVisible, (v) => {
+  document.documentElement.style.setProperty('--kb-open', v ? '1' : '0')
+})
 
 function genPaneId(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -804,6 +822,12 @@ function onTerminalTouch(e: TouchEvent) {
       linkJustActivated = false
       return
     }
+    // Don't show keyboard when a scroll gesture was just detected
+    if (scrollGestureDetected) {
+      scrollGestureDetected = false
+      if (kbVisible.value) kbVisible.value = false
+      return
+    }
     const tab = tabs.value.find((t) => t.paneId === activePaneId.value)
     const paneId = tab?.type === 'terminal' ? tab.activePaneId : null
     const term = paneId ? termRefs[paneId]?.getTerminal() : null
@@ -814,6 +838,13 @@ function onTerminalTouch(e: TouchEvent) {
     }
     kbVisible.value = true
   }
+}
+
+function onTerminalScroll() {
+  scrollGestureDetected = true
+  clearTimeout(scrollGestureTimer)
+  scrollGestureTimer = window.setTimeout(() => { scrollGestureDetected = false }, 300)
+  if (kbVisible.value) kbVisible.value = false
 }
 
 function onServerConnect(host: string, port: number) {
@@ -1112,6 +1143,7 @@ onMounted(async () => {
   window.addEventListener('terminal-insert-path', onTerminalInsertPath)
   window.addEventListener('terminal-insert-text', onTerminalInsertText)
   if (window.visualViewport) {
+    naturalVH = window.visualViewport.height
     window.visualViewport.addEventListener('resize', onViewportResize)
   }
   if (authenticated.value) {
@@ -1188,6 +1220,8 @@ onBeforeUnmount(() => {
   if (window.visualViewport) {
     window.visualViewport.removeEventListener('resize', onViewportResize)
   }
+  document.documentElement.style.removeProperty('--sys-kb-height')
+  document.documentElement.style.setProperty('--kb-open', '0')
   syncWs.closeWs()
 })
 </script>
@@ -1197,7 +1231,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   width: 100%;
-  height: calc(100% - var(--mkb-height, 0px));
+  height: calc(100% - var(--mkb-height, 0px) - var(--sys-kb-height, 0px));
 }
 .tab-page.active.has-preview {
   display: flex;

@@ -624,13 +624,16 @@ function updateHeight() {
 
 // Viewport listener for system keyboard detection
 let naturalVH = 0
+let sysKbOpen = false
 
 function onViewportChange() {
   if (!window.visualViewport) return
   const vh = window.visualViewport.height
   if (vh > naturalVH) naturalVH = vh
   const off = window.innerHeight - (window.visualViewport.offsetTop + vh)
-  const sysKbOpen = naturalVH - vh > 120
+  sysKbOpen = naturalVH - vh > 120
+  // Set --kb-open: either system keyboard or custom keyboard is visible
+  document.documentElement.style.setProperty('--kb-open', (sysKbOpen || props.visible) ? '1' : '0')
   if (barRef.value) {
     if (!props.visible) {
       barRef.value.style.display = 'none'
@@ -650,7 +653,9 @@ function onViewportChange() {
 
 watch(
   () => props.visible,
-  () => {
+  (v) => {
+    // Keep --kb-open in sync when custom keyboard opens/closes
+    document.documentElement.style.setProperty('--kb-open', (v || sysKbOpen) ? '1' : '0')
     nextTick(applyHeight)
   }
 )
@@ -661,6 +666,14 @@ watch(globalSelectedPath, () => {
   }
 })
 
+function onWheelCollapse() {
+  if (props.visible) emit('update:visible', false)
+}
+
+function onTerminalScrollCollapse() {
+  if (props.visible) emit('update:visible', false)
+}
+
 onMounted(() => {
   fetchSuggestions()
 
@@ -670,6 +683,9 @@ onMounted(() => {
     window.visualViewport.addEventListener('scroll', onViewportChange)
     window.addEventListener('orientationchange', onOrientationChange)
   }
+
+  // Collapse keyboard on scroll (wheel for trackpad/mouse, terminal-scroll for touch)
+  document.addEventListener('terminal-scroll', onTerminalScrollCollapse)
 
   if (barRef.value) {
     resizeObserver = new ResizeObserver(() => {
@@ -694,7 +710,9 @@ onBeforeUnmount(() => {
     window.visualViewport.removeEventListener('scroll', onViewportChange)
   }
   window.removeEventListener('orientationchange', onOrientationChange)
+  document.removeEventListener('terminal-scroll', onTerminalScrollCollapse)
   resizeObserver?.disconnect()
   document.documentElement.style.setProperty('--mkb-height', '0px')
+  document.documentElement.style.setProperty('--kb-open', '0')
 })
 </script>

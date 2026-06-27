@@ -50,7 +50,7 @@ const { settings } = useSettings()
 const warning = usePaneWarning()
 
 const monitorSettings = computed(
-  () => settings.monitor ?? { enabled: true, cpu: true, memory: true, disk: true, network: true }
+  () => settings.monitor ?? { enabled: true, cpu: true, memory: true, disk: false, network: true }
 )
 
 type MetricKey = 'cpu' | 'memory' | 'disk' | 'network' | 'gpu'
@@ -132,7 +132,8 @@ function togglePopover(key: MetricKey, event: MouseEvent) {
 
 <style scoped>
 .status-bar {
-  height: calc(24px + env(safe-area-inset-bottom, 0px));
+  height: 24px;
+  box-sizing: border-box;
   background: var(--bg, #1a1a2e);
   border-top: 1px solid var(--border, #3c3c3c);
   display: flex;

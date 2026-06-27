@@ -181,7 +181,7 @@ export const settings = reactive<SettingsData>({
     enabled: true,
     cpu: true,
     memory: true,
-    disk: true,
+    disk: false,
     network: true,
     gpu: true,
   },

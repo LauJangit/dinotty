@@ -777,6 +777,7 @@ export class TerminalInstance {
       let velocity = 0
       let momentumId = 0
       let mode: 'undecided' | 'scroll' | 'select' = 'undecided'
+      let scrollEventFired = false
       const THRESHOLD = 10
       const SCROLL_THRESHOLD = 12 // Lower threshold for more responsive feel
 
@@ -790,6 +791,7 @@ export class TerminalInstance {
       const onTouchStart = (e: TouchEvent) => {
         clearMomentum()
         this.touchMoved = false
+        scrollEventFired = false
         startX = e.touches[0].clientX
         startY = e.touches[0].clientY
         lastY = startY
@@ -815,6 +817,11 @@ export class TerminalInstance {
         }
         if (mode === 'scroll') {
           e.preventDefault() // suppress native scroll — safe because passive: false
+          // Fire terminal-scroll on first scroll movement to collapse virtual keyboard
+          if (!scrollEventFired) {
+            scrollEventFired = true
+            viewport.dispatchEvent(new CustomEvent('terminal-scroll', { bubbles: true }))
+          }
           const deltaY = lastY - cy
           const dt = now - lastTime || 1
           velocity = deltaY / dt // px/ms
@@ -850,6 +857,10 @@ export class TerminalInstance {
           }
           momentumId = requestAnimationFrame(step)
         }
+
+        // Notify that a scroll gesture ended — used to dismiss the virtual keyboard.
+        // Dispatch on viewport so it bubbles through xterm's DOM to #tab-content.
+        viewport.dispatchEvent(new CustomEvent('terminal-scroll', { bubbles: true }))
       }
 
       // Attach directly to the viewport (.xterm-viewport) — this intercepts
@@ -858,11 +869,17 @@ export class TerminalInstance {
       viewport.addEventListener('touchstart', onTouchStart, { passive: true })
       viewport.addEventListener('touchmove', onTouchMove, { passive: false })
       viewport.addEventListener('touchend', onTouchEnd, { passive: true })
+      // Wheel listener: collapse virtual keyboard on trackpad/mouse scroll
+      const onWheel = () => {
+        viewport.dispatchEvent(new CustomEvent('terminal-scroll', { bubbles: true }))
+      }
+      viewport.addEventListener('wheel', onWheel, { passive: true })
       this._touchCleanup = () => {
         clearMomentum()
         viewport.removeEventListener('touchstart', onTouchStart)
         viewport.removeEventListener('touchmove', onTouchMove)
         viewport.removeEventListener('touchend', onTouchEnd)
+        viewport.removeEventListener('wheel', onWheel)
       }
     }
 
