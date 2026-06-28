@@ -133,11 +133,9 @@ pub async fn mcp_message_handler(
     if let Some(resp) = response {
         let json = serde_json::to_string(&resp).unwrap_or_default();
 
-        // Broadcast response to all SSE clients
-        let clients = sse_state.clients.read().await;
-        for client in clients.iter() {
-            let _ = client.send(json.clone());
-        }
+        // Broadcast response to all SSE clients, removing disconnected ones
+        let mut clients = sse_state.clients.write().await;
+        clients.retain(|tx| tx.send(json.clone()).is_ok());
 
         (StatusCode::OK, Json(resp)).into_response()
     } else {

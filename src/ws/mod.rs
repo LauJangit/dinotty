@@ -393,9 +393,14 @@ async fn handle_socket(
         let mut input_rx = session.replace_input_channel();
         let write_session = Arc::clone(&session);
         tokio::spawn(async move {
-            while let Some(data) = input_rx.recv().await {
+            while let Some(first) = input_rx.recv().await {
+                // Batch: drain all pending messages to minimize lock acquisitions
+                let mut batch = first;
+                while let Ok(data) = input_rx.try_recv() {
+                    batch.push_str(&data);
+                }
                 let mut w = write_session.writer.lock().expect("mutex poisoned");
-                let _ = w.write_all(data.as_bytes());
+                let _ = w.write_all(batch.as_bytes());
             }
         });
 
@@ -497,9 +502,14 @@ async fn handle_socket(
     let mut input_rx = session.replace_input_channel();
     let write_session = Arc::clone(&session);
     tokio::spawn(async move {
-        while let Some(data) = input_rx.recv().await {
+        while let Some(first) = input_rx.recv().await {
+            // Batch: drain all pending messages to minimize lock acquisitions
+            let mut batch = first;
+            while let Ok(data) = input_rx.try_recv() {
+                batch.push_str(&data);
+            }
             let mut w = write_session.writer.lock().expect("mutex poisoned");
-            let _ = w.write_all(data.as_bytes());
+            let _ = w.write_all(batch.as_bytes());
         }
     });
 
@@ -729,6 +739,20 @@ pub async fn handle_open_api_ws(socket: WebSocket, manager: Arc<SessionManager>,
         let _ = pane_id_fwd; // keep for logging if needed
     });
 
+    // PTY write task: avoids blocking the WS read loop with synchronous I/O
+    let (pty_in_tx, mut pty_in_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let write_session = Arc::clone(&session);
+    tokio::spawn(async move {
+        while let Some(first) = pty_in_rx.recv().await {
+            let mut batch = first;
+            while let Ok(data) = pty_in_rx.try_recv() {
+                batch.push_str(&data);
+            }
+            let mut w = write_session.writer.lock().expect("mutex poisoned");
+            let _ = w.write_all(batch.as_bytes());
+        }
+    });
+
     // Read loop: accept Input and Resize messages
     while let Some(Ok(msg)) = ws_rx.next().await {
         match msg {
@@ -736,8 +760,7 @@ pub async fn handle_open_api_ws(socket: WebSocket, manager: Arc<SessionManager>,
                 if let Ok(client_msg) = serde_json::from_str::<ClientMsg>(&text) {
                     match client_msg {
                         ClientMsg::Input { data } => {
-                            let mut w = session.writer.lock().expect("mutex poisoned");
-                            let _ = w.write_all(data.as_bytes());
+                            let _ = pty_in_tx.send(data);
                         }
                         ClientMsg::Resize { cols, rows } => {
                             let m = session.master.lock().expect("mutex poisoned");
