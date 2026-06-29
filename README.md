@@ -183,6 +183,10 @@ dinotty-server -p 3000
 ## 快速开始
 
 ```bash
+# 克隆仓库（推荐 shallow clone，体积小速度快）
+git clone --depth 1 --single-branch -b dev git@github.com:xichan96/dinotty.git
+cd dinotty
+
 # 构建前端
 cd frontend && pnpm install && pnpm run build && cd ..
 

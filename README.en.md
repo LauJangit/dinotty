@@ -183,6 +183,10 @@ dinotty-server -p 3000
 ## Quick Start
 
 ```bash
+# Clone repo (shallow clone recommended — faster and smaller)
+git clone --depth 1 --single-branch -b dev git@github.com:xichan96/dinotty.git
+cd dinotty
+
 # Build frontend
 cd frontend && pnpm install && pnpm run build && cd ..
 
