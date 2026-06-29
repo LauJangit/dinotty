@@ -3,6 +3,12 @@ import { storeToRefs } from 'pinia'
 import type { SyncServerMsg, SyncClientMsg } from '../types/protocol'
 import type { TerminalTab } from '../types/pane'
 import { getAllLeaves, findLeaf, migrateTab, ensureSplitRoot } from '../types/pane'
+import {
+  initializePaneMru,
+  reconcilePaneMru,
+  removePaneFromMru,
+  touchPaneMru,
+} from '../types/paneMru'
 import { useSessionStore } from '../stores/sessionStore'
 import { useUiStore } from '../stores/uiStore'
 import {
@@ -123,6 +129,21 @@ export function useSyncWebSocket(opts: {
                   }
               ),
               activePaneId: tab.active_pane_id ?? migrated?.activePaneId ?? tab.pane_id,
+              paneMru: initializePaneMru(
+                getAllLeaves(
+                  ensureSplitRoot(
+                    serverLayout ??
+                      migrated?.layout ?? {
+                        type: 'leaf',
+                        paneId: tab.pane_id,
+                        title: 'Terminal',
+                        ratio: 1,
+                        zoomed: false,
+                      }
+                  )
+                ).map((leaf) => leaf.paneId),
+                tab.active_pane_id ?? migrated?.activePaneId ?? tab.pane_id
+              ),
               broadcastMode: false,
               broadcastActivity: 0,
               previewVisible: migrated?.previewVisible ?? false,
@@ -215,6 +236,7 @@ export function useSyncWebSocket(opts: {
             paneId: msg.tab_id,
             layout,
             activePaneId: msg.pane_id,
+            paneMru: [msg.pane_id],
             broadcastMode: false,
             broadcastActivity: 0,
             previewVisible: false,
@@ -254,8 +276,9 @@ export function useSyncWebSocket(opts: {
             if (t.type !== 'terminal') return false
             return !!findLeaf(t.layout, msg.pane_id)
           }) as TerminalTab | undefined
-          if (targetTab && activePaneId.value !== targetTab.paneId) {
+          if (targetTab) {
             suppressSync = true
+            targetTab.paneMru = touchPaneMru(targetTab.paneMru, msg.pane_id)
             targetTab.activePaneId = msg.pane_id
             activePaneId.value = targetTab.paneId
             suppressSync = false
@@ -275,13 +298,38 @@ export function useSyncWebSocket(opts: {
           const sameLeaves =
             incomingLeafIds.length === localLeafIds.length &&
             incomingLeafIds.every((id: string) => localLeafIds.includes(id))
+          const removedPaneIds = localLeafIds.filter((id) => !incomingLeafIds.includes(id))
+          const previousActivePaneId = targetTab.activePaneId
+          const activePaneWasRemoved = removedPaneIds.includes(previousActivePaneId)
 
           suppressSync = true
           if (!sameLeaves) {
             targetTab.layout = ensureSplitRoot(msg.layout)
           }
-          targetTab.activePaneId = msg.active_pane_id
+          for (const removedPaneId of removedPaneIds) {
+            targetTab.paneMru = removePaneFromMru(
+              targetTab.paneMru,
+              removedPaneId
+            ).paneMru
+          }
+          targetTab.paneMru = reconcilePaneMru(
+            targetTab.paneMru,
+            incomingLeafIds,
+            previousActivePaneId
+          )
+          if (activePaneWasRemoved) {
+            targetTab.activePaneId = targetTab.paneMru[0] ?? msg.active_pane_id
+          } else if (incomingLeafIds.includes(msg.active_pane_id)) {
+            targetTab.activePaneId = msg.active_pane_id
+            targetTab.paneMru = touchPaneMru(targetTab.paneMru, msg.active_pane_id)
+          } else {
+            targetTab.activePaneId = previousActivePaneId
+          }
           suppressSync = false
+
+          if (activePaneWasRemoved && targetTab.activePaneId !== msg.active_pane_id) {
+            sendLayoutSync(targetTab.paneId, targetTab.layout, targetTab.activePaneId)
+          }
 
           const updatedLeafIds = new Set(getAllLeaves(targetTab.layout).map((l) => l.paneId))
           tabs.value = tabs.value.filter((t) => {
@@ -294,6 +342,9 @@ export function useSyncWebSocket(opts: {
           persist()
           nextTick(() => {
             getAllLeaves(targetTab.layout).forEach((l) => termRefs[l.paneId]?.fit())
+            if (activePaneId.value === targetTab.paneId) {
+              focusActive()
+            }
           })
         }
       } else if (msg.type === 'plugin_changed') {

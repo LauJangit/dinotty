@@ -1,4 +1,5 @@
 import { randomId } from '../utils/id'
+import { initializePaneMru } from './paneMru'
 
 /** 叶子节点：一个终端 Pane */
 export interface LeafPane {
@@ -29,6 +30,7 @@ export interface TerminalTab {
   paneId: string // Tab's stable identifier (not a leaf paneId)
   layout: PaneLayout
   activePaneId: string // Currently focused leaf pane
+  paneMru: string[] // Runtime-only; most recently focused pane first
   broadcastMode: boolean
   broadcastActivity: number // Incremented on each broadcast input to re-trigger banner
   previewVisible: boolean
@@ -62,6 +64,7 @@ export function migrateTab(raw: any): TerminalTab {
         zoomed: false,
       }),
       activePaneId: raw.paneId,
+      paneMru: [raw.paneId],
       broadcastMode: false,
       broadcastActivity: 0,
       previewVisible: raw.previewVisible ?? false,
@@ -70,7 +73,12 @@ export function migrateTab(raw: any): TerminalTab {
       previewKind: raw.previewKind ?? 'web',
     }
   }
-  return raw as TerminalTab
+  const tab = raw as TerminalTab
+  const paneIds = getAllLeaves(tab.layout).map((leaf) => leaf.paneId)
+  return {
+    ...tab,
+    paneMru: initializePaneMru(paneIds, tab.activePaneId),
+  }
 }
 
 /** Find a leaf node by paneId in the layout tree */
