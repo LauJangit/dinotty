@@ -20,6 +20,7 @@ import { apiSplitPane, apiClosePane } from './useTabApi'
 import { setActivePaneId } from './useTerminal'
 import { useI18n } from './useI18n'
 import { usePaneWarning } from './usePaneWarning'
+import { reconcilePaneMru, removePaneFromMru, touchPaneMru } from '../types/paneMru'
 
 export function useSplitPane(opts: {
   tabs: Ref<Tab[]>
@@ -64,6 +65,11 @@ export function useSplitPane(opts: {
       const result = await apiSplitPane(tab.paneId, tab.activePaneId, direction)
       // Update local layout with server response
       tab.layout = ensureSplitRoot(result.layout)
+      tab.paneMru = reconcilePaneMru(
+        touchPaneMru(tab.paneMru, result.new_pane_id),
+        getAllLeaves(tab.layout).map((leaf) => leaf.paneId),
+        result.new_pane_id
+      )
       tab.activePaneId = result.new_pane_id
       setActivePaneId(result.new_pane_id)
       persist()
@@ -95,6 +101,7 @@ export function useSplitPane(opts: {
     }
 
     try {
+      const wasActive = tab.activePaneId === paneId
       const result = await apiClosePane(tab.paneId, paneId)
 
       if (result.tab_closed) {
@@ -106,10 +113,16 @@ export function useSplitPane(opts: {
       if (result.layout) {
         tab.layout = ensureSplitRoot(result.layout)
       }
-      if (result.active_pane_id) {
-        tab.activePaneId = result.active_pane_id
-        setActivePaneId(result.active_pane_id)
+      const removed = removePaneFromMru(tab.paneMru, paneId)
+      tab.paneMru = reconcilePaneMru(
+        removed.paneMru,
+        getAllLeaves(tab.layout).map((leaf) => leaf.paneId),
+        tab.activePaneId
+      )
+      if (wasActive && removed.nextPaneId) {
+        tab.activePaneId = removed.nextPaneId
       }
+      setActivePaneId(tab.activePaneId)
       delete termRefs[paneId]
       persist()
       syncTabLayout(tab)
@@ -134,6 +147,7 @@ export function useSplitPane(opts: {
   function focusPane(paneId: string) {
     const tab = findTabByPaneId(paneId)
     if (tab) {
+      tab.paneMru = touchPaneMru(tab.paneMru, paneId)
       tab.activePaneId = paneId
       // Update immediately so onData guard blocks other panes before nextTick
       setActivePaneId(paneId)

@@ -216,6 +216,7 @@ import ServerList from './components/ServerList.vue'
 import StatusBar from './components/terminal/StatusBar.vue'
 import type { Tab, TerminalTab, PluginTab, PaneLayout } from './types/pane'
 import { getAllLeaves, findLeaf, findFirstLeaf, ensureSplitRoot } from './types/pane'
+import { initializePaneMru } from './types/paneMru'
 // useSettings replaced by useSettingsStore
 import {
   getApiBase,
@@ -530,6 +531,7 @@ async function newTab() {
       paneId: result.tab_id,
       layout,
       activePaneId: result.pane_id,
+      paneMru: [result.pane_id],
       broadcastMode: false,
       broadcastActivity: 0,
       previewVisible: false,
@@ -1172,6 +1174,10 @@ onMounted(async () => {
               paneId: tab.tab_id,
               layout,
               activePaneId: tab.active_pane_id ?? tab.pane_id,
+              paneMru: initializePaneMru(
+                getAllLeaves(layout).map((leaf) => leaf.paneId),
+                tab.active_pane_id ?? tab.pane_id
+              ),
               broadcastMode: false,
               broadcastActivity: 0,
               previewVisible: false,
