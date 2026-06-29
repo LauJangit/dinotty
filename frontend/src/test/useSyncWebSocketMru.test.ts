@@ -100,9 +100,26 @@ describe('useSyncWebSocket pane MRU', () => {
 
   it('preserves focus when a non-focused pane exits', async () => {
     const { tab, emitLayout } = await setup()
-    emitLayout(layout('a', 'b'), 'a')
+    emitLayout(layout('a', 'b'), 'b')
     expect(tab.paneMru).toEqual(['b', 'a'])
     expect(tab.activePaneId).toBe('b')
+  })
+
+  it('applies a pane focus change received from another client', async () => {
+    const { tab, emitLayout, focusActive } = await setup()
+    emitLayout(layout('a', 'b', 'c'), 'c')
+    await Promise.resolve()
+    expect(tab.paneMru).toEqual(['c', 'b', 'a'])
+    expect(tab.activePaneId).toBe('c')
+    expect(focusActive).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the synchronized focus when another client closes a non-focused pane', async () => {
+    const { tab, emitLayout } = await setup()
+    emitLayout(layout('a', 'b', 'c'), 'c')
+    emitLayout(layout('a', 'c'), 'c')
+    expect(tab.paneMru).toEqual(['c', 'a'])
+    expect(tab.activePaneId).toBe('c')
   })
 
   it('keeps MRU unique after a duplicate layout message', async () => {

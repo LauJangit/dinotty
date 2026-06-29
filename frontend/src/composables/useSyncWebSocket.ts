@@ -299,7 +299,6 @@ export function useSyncWebSocket(opts: {
             incomingLeafIds.length === localLeafIds.length &&
             incomingLeafIds.every((id: string) => localLeafIds.includes(id))
           const removedPaneIds = localLeafIds.filter((id) => !incomingLeafIds.includes(id))
-          const addedPaneIds = incomingLeafIds.filter((id: string) => !localLeafIds.includes(id))
           const previousActivePaneId = targetTab.activePaneId
           const activePaneWasRemoved = removedPaneIds.includes(previousActivePaneId)
 
@@ -320,7 +319,7 @@ export function useSyncWebSocket(opts: {
           )
           if (activePaneWasRemoved) {
             targetTab.activePaneId = targetTab.paneMru[0] ?? msg.active_pane_id
-          } else if (addedPaneIds.length > 0 && incomingLeafIds.includes(msg.active_pane_id)) {
+          } else if (incomingLeafIds.includes(msg.active_pane_id)) {
             targetTab.activePaneId = msg.active_pane_id
             targetTab.paneMru = touchPaneMru(targetTab.paneMru, msg.active_pane_id)
           } else {
