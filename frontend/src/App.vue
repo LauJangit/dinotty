@@ -68,7 +68,7 @@
       </template>
     </TabBar>
 
-    <div id="tab-content" @touchend="onTerminalTouch" @terminal-scroll="onTerminalScroll">
+    <div id="tab-content" @touchend="onTerminalTouch">
       <div
         v-for="tab in tabs"
         :key="tabKey(tab)"
@@ -1138,6 +1138,7 @@ function onWindowCloseCancel() {
 onMounted(async () => {
   setupTauriWindowClose()
   document.addEventListener('keydown', onGlobalKeydown)
+  document.addEventListener('terminal-scroll', onTerminalScroll)
   window.addEventListener('focus', _focusHandler)
   window.addEventListener('resize', onOrientationChange)
   window.addEventListener('terminal-insert-path', onTerminalInsertPath)
@@ -1213,6 +1214,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   unlistenWindowClose?.()
   document.removeEventListener('keydown', onGlobalKeydown)
+  document.removeEventListener('terminal-scroll', onTerminalScroll)
   window.removeEventListener('focus', _focusHandler)
   window.removeEventListener('resize', onOrientationChange)
   window.removeEventListener('terminal-insert-path', onTerminalInsertPath)
