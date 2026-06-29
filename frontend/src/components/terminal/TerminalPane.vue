@@ -127,6 +127,14 @@ function toggleSearch() {
   searchVisible.value = !searchVisible.value
 }
 
+function adjustFontSize(delta: number) {
+  terminal?.adjustFontSize(delta)
+}
+
+function resetFontSize() {
+  terminal?.resetFontSize()
+}
+
 function onContextMenu(e: MouseEvent) {
   if (!terminal) return
   if (terminal.isMouseModeEnabled()) return
@@ -524,7 +532,7 @@ onBeforeUnmount(() => {
   terminal = null
 })
 
-defineExpose({ getTerminal, focus, blur, fit, sendData, setOutputListener, toggleSearch })
+defineExpose({ getTerminal, focus, blur, fit, sendData, setOutputListener, toggleSearch, adjustFontSize, resetFontSize })
 </script>
 
 <style scoped>

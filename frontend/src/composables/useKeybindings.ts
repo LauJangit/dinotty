@@ -99,6 +99,24 @@ const defs: KeyBindingDef[] = [
     icon: '⊞',
     titleKey: 'keybinding.missionControl',
   },
+  {
+    id: 'fontSizeUp',
+    defaultBinding: { key: '=', shift: true },
+    icon: 'A+',
+    titleKey: 'keybinding.fontSizeUp',
+  },
+  {
+    id: 'fontSizeDown',
+    defaultBinding: { key: '-', shift: false },
+    icon: 'A-',
+    titleKey: 'keybinding.fontSizeDown',
+  },
+  {
+    id: 'fontSizeReset',
+    defaultBinding: { key: '0', shift: false },
+    icon: 'A0',
+    titleKey: 'keybinding.fontSizeReset',
+  },
 ]
 
 export function useKeybindings() {

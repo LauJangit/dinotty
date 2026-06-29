@@ -9,7 +9,6 @@ use axum::{
     Json,
 };
 use futures_util::{SinkExt, StreamExt};
-use portable_pty::PtySize;
 use serde::{Deserialize, Serialize};
 use std::{io::Write, sync::Arc};
 
@@ -157,7 +156,7 @@ async fn handle_sync_socket(socket: WebSocket, manager: Arc<SessionManager>) {
                 if let Ok(sync_msg) = serde_json::from_str::<SyncClientMsg>(&text) {
                     match sync_msg {
                         SyncClientMsg::ActivateTab { pane_id } => {
-                            *manager.active_pane_id.lock().expect("mutex poisoned") =
+                            *manager.active_pane_id.lock().unwrap_or_else(|e| e.into_inner()) =
                                 Some(pane_id.clone());
                             manager.broadcast_sync_others(
                                 &SyncMsg::TabActivated { pane_id },
@@ -169,7 +168,7 @@ async fn handle_sync_socket(socket: WebSocket, manager: Arc<SessionManager>) {
                             let leaf_id = pane_id
                                 .or_else(|| crate::session::first_leaf_id(&layout))
                                 .unwrap_or_else(|| tab_id.clone());
-                            *manager.active_pane_id.lock().expect("mutex poisoned") =
+                            *manager.active_pane_id.lock().unwrap_or_else(|e| e.into_inner()) =
                                 Some(leaf_id.clone());
                             manager.insert_tab(
                                 tab_id.clone(),
@@ -327,14 +326,14 @@ async fn handle_socket(
     if let Some(session) = existing_session {
         info!("Joining existing session: pane={}", pane_id);
 
-        *session.status.lock().expect("mutex poisoned") = SessionStatus::Connected;
+        *session.status.lock().unwrap_or_else(|e| e.into_inner()) = SessionStatus::Connected;
 
         // Snapshot screen state and register for broadcast atomically
         // (holding the screen lock prevents PTY output from being both in the
         // snapshot AND queued to the broadcast channel)
         let (cols, rows, scrollback_chunks, snapshot, mut rx) = {
-            let screen = session.screen.lock().expect("mutex poisoned");
-            let (cols, rows) = *session.size.lock().expect("mutex poisoned");
+            let screen = session.screen.lock().unwrap_or_else(|e| e.into_inner());
+            let (cols, rows) = *session.size.lock().unwrap_or_else(|e| e.into_inner());
             let chunks = screen.snapshot_scrollback_chunks(200);
             let snap = screen.snapshot();
             let rx = session.add_client();
@@ -394,12 +393,13 @@ async fn handle_socket(
         let write_session = Arc::clone(&session);
         tokio::spawn(async move {
             while let Some(first) = input_rx.recv().await {
+                if write_session.is_exited() { break }
                 // Batch: drain all pending messages to minimize lock acquisitions
                 let mut batch = first;
                 while let Ok(data) = input_rx.try_recv() {
                     batch.push_str(&data);
                 }
-                let mut w = write_session.writer.lock().expect("mutex poisoned");
+                let mut w = write_session.writer.lock().unwrap_or_else(|e| e.into_inner());
                 let _ = w.write_all(batch.as_bytes());
             }
         });
@@ -427,21 +427,13 @@ async fn handle_socket(
                                 input_buffer.push(ch);
                             }
                         }
-                        let tx = session.input_tx.lock().expect("mutex poisoned");
+                        let tx = session.input_tx.lock().unwrap_or_else(|e| e.into_inner());
                         if let Some(tx) = tx.as_ref() {
                             let _ = tx.send(data);
                         }
                     }
                     Ok(ClientMsg::Resize { cols, rows }) => {
-                        let m = session.master.lock().expect("mutex poisoned");
-                        let _ = m.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
-                        drop(m);
-                        *session.size.lock().expect("mutex poisoned") = (cols, rows);
-                        session
-                            .screen
-                            .lock()
-                            .expect("mutex poisoned")
-                            .resize(cols as usize, rows as usize);
+                        let _ = session.resize(cols, rows);
                     }
                     Err(e) => error!("parse msg: {}", e),
                 },
@@ -458,7 +450,7 @@ async fn handle_socket(
         ping_task.abort();
 
         if !session.has_clients() {
-            *session.status.lock().expect("mutex poisoned") =
+            *session.status.lock().unwrap_or_else(|e| e.into_inner()) =
                 SessionStatus::Detached { since: std::time::Instant::now() };
             info!("Session detached (all clients gone): pane={}", pane_id);
         }
@@ -503,12 +495,13 @@ async fn handle_socket(
     let write_session = Arc::clone(&session);
     tokio::spawn(async move {
         while let Some(first) = input_rx.recv().await {
+            if write_session.is_exited() { break }
             // Batch: drain all pending messages to minimize lock acquisitions
             let mut batch = first;
             while let Ok(data) = input_rx.try_recv() {
                 batch.push_str(&data);
             }
-            let mut w = write_session.writer.lock().expect("mutex poisoned");
+            let mut w = write_session.writer.lock().unwrap_or_else(|e| e.into_inner());
             let _ = w.write_all(batch.as_bytes());
         }
     });
@@ -536,21 +529,13 @@ async fn handle_socket(
                             input_buffer.push(ch);
                         }
                     }
-                    let tx = session.input_tx.lock().expect("mutex poisoned");
+                    let tx = session.input_tx.lock().unwrap_or_else(|e| e.into_inner());
                     if let Some(tx) = tx.as_ref() {
                         let _ = tx.send(data);
                     }
                 }
                 Ok(ClientMsg::Resize { cols, rows }) => {
-                    let m = session.master.lock().expect("mutex poisoned");
-                    let _ = m.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
-                    drop(m);
-                    *session.size.lock().expect("mutex poisoned") = (cols, rows);
-                    session
-                        .screen
-                        .lock()
-                        .expect("mutex poisoned")
-                        .resize(cols as usize, rows as usize);
+                    let _ = session.resize(cols, rows);
                 }
                 Err(e) => error!("parse msg: {}", e),
             },
@@ -567,7 +552,7 @@ async fn handle_socket(
     ping_task.abort();
 
     if !session.has_clients() {
-        *session.status.lock().expect("mutex poisoned") =
+        *session.status.lock().unwrap_or_else(|e| e.into_inner()) =
             SessionStatus::Detached { since: std::time::Instant::now() };
         info!("Session detached (all clients gone): pane={}", pane_id);
     }
@@ -660,7 +645,7 @@ pub async fn post_input(
     let pane_id = req
         .pane_id
         .clone()
-        .or_else(|| manager.active_pane_id.lock().expect("mutex poisoned").clone());
+        .or_else(|| manager.active_pane_id.lock().unwrap_or_else(|e| e.into_inner()).clone());
 
     let pane_id = match pane_id {
         Some(id) if manager.sessions.contains_key(&id) => id,
@@ -680,7 +665,7 @@ pub async fn post_input(
 
     match manager.sessions.get(&pane_id) {
         Some(session) => {
-            let mut w = session.writer.lock().expect("mutex poisoned");
+            let mut w = session.writer.lock().unwrap_or_else(|e| e.into_inner());
             let _ = w.write_all(req.data.as_bytes());
             (StatusCode::OK, Json(serde_json::json!({ "ok": true })))
         }
@@ -744,11 +729,12 @@ pub async fn handle_open_api_ws(socket: WebSocket, manager: Arc<SessionManager>,
     let write_session = Arc::clone(&session);
     tokio::spawn(async move {
         while let Some(first) = pty_in_rx.recv().await {
+            if write_session.is_exited() { break }
             let mut batch = first;
             while let Ok(data) = pty_in_rx.try_recv() {
                 batch.push_str(&data);
             }
-            let mut w = write_session.writer.lock().expect("mutex poisoned");
+            let mut w = write_session.writer.lock().unwrap_or_else(|e| e.into_inner());
             let _ = w.write_all(batch.as_bytes());
         }
     });
@@ -763,16 +749,7 @@ pub async fn handle_open_api_ws(socket: WebSocket, manager: Arc<SessionManager>,
                             let _ = pty_in_tx.send(data);
                         }
                         ClientMsg::Resize { cols, rows } => {
-                            let m = session.master.lock().expect("mutex poisoned");
-                            let _ =
-                                m.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
-                            drop(m);
-                            *session.size.lock().expect("mutex poisoned") = (cols, rows);
-                            session
-                                .screen
-                                .lock()
-                                .expect("mutex poisoned")
-                                .resize(cols as usize, rows as usize);
+                            let _ = session.resize(cols, rows);
                         }
                     }
                 }

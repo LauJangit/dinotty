@@ -5,7 +5,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import { SearchAddon } from '@xterm/addon-search'
 import type { ClientMsg, ServerMsg } from '../types/protocol'
 import { isTauri, createTransport, type Transport } from './useTransport'
-import { onThemeChange, settings, onTextChange } from './useSettings'
+import { onThemeChange, saveSettings, settings, onTextChange } from './useSettings'
 import { wsUrlWithToken } from './apiBase'
 
 export function isTouchDevice(): boolean {
@@ -135,6 +135,7 @@ export class TerminalInstance {
   private _refitRaf: number = 0
   private _lastCols = 0
   private _lastRows = 0
+  private _resizeDebounce: number = 0
   private _lastInputData = ''
   private _lastInputTime = 0
   touchMoved = false
@@ -214,6 +215,25 @@ export class TerminalInstance {
     this.xterm.loadAddon(this.fitAddon)
 
     this.xterm.open(wrapper)
+
+    // Ctrl+Shift+C/V: Linux-style copy/paste (macOS uses Cmd+C/V natively)
+    this.xterm.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && e.type === 'keydown') {
+        if (e.key === 'C' && this.xterm.hasSelection()) {
+          navigator.clipboard.writeText(this.xterm.getSelection())
+          e.preventDefault()
+          return false
+        }
+        if (e.key === 'V') {
+          navigator.clipboard.readText().then((text) => {
+            if (text) this.xterm.paste(text)
+          }).catch(() => {})
+          e.preventDefault()
+          return false
+        }
+      }
+      return true
+    })
 
     const unicode11 = new Unicode11Addon()
     this.xterm.loadAddon(unicode11)
@@ -402,6 +422,24 @@ export class TerminalInstance {
     this._refit()
   }
 
+  adjustFontSize(delta: number) {
+    if (!this.xterm) return
+    const newSize = Math.max(8, Math.min(72, this.xterm.options.fontSize + delta))
+    this.xterm.options.fontSize = newSize
+    settings.text.font_size = newSize
+    saveSettings()
+    this._refit()
+  }
+
+  resetFontSize() {
+    if (!this.xterm) return
+    const defaultSize = 14
+    this.xterm.options.fontSize = defaultSize
+    settings.text.font_size = defaultSize
+    saveSettings()
+    this._refit()
+  }
+
   sendData(data: string, force = false) {
     // Guard: only the active pane sends input (prevents WKWebView multi-focus duplication)
     if (!force && _activePaneId !== null && _activePaneId !== this.paneId) return
@@ -430,6 +468,7 @@ export class TerminalInstance {
     if (this._reconnectTimer) clearTimeout(this._reconnectTimer)
     if (this._initialResizeTimer) clearInterval(this._initialResizeTimer)
     if (this._refitRaf) cancelAnimationFrame(this._refitRaf)
+    if (this._resizeDebounce) clearTimeout(this._resizeDebounce)
     this._resizeObserver?.disconnect()
     if (this._visibilityHandler) {
       document.removeEventListener('visibilitychange', this._visibilityHandler)
@@ -669,11 +708,24 @@ export class TerminalInstance {
     if (heightChanged && !this.isMouseModeEnabled()) {
       this.xterm.scrollToBottom()
     }
-    const resizeMsg: ClientMsg = { type: 'resize', cols, rows }
-    if (this._transport) {
-      this._transport.send(resizeMsg)
-    } else if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(resizeMsg))
+    const sendResize = () => {
+      const resizeMsg: ClientMsg = { type: 'resize', cols, rows }
+      if (this._transport) {
+        this._transport.send(resizeMsg)
+      } else if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify(resizeMsg))
+      }
+    }
+    if (force) {
+      // Initial resize: send immediately
+      sendResize()
+    } else {
+      // Debounce: coalesce rapid resize events during window drag
+      if (this._resizeDebounce) clearTimeout(this._resizeDebounce)
+      this._resizeDebounce = window.setTimeout(() => {
+        this._resizeDebounce = 0
+        sendResize()
+      }, 25)
     }
   }
 

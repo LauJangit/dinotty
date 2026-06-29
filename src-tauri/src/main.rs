@@ -30,20 +30,24 @@ fn spawn_tauri_output_forwarder(
     let app2 = app.clone();
     let pid = pane_id.clone();
     tauri::async_runtime::spawn(async move {
-        while let Some(data) = rx.recv().await {
-            let _ = app2.emit("pty-output", PtyOutput { pane_id: pid.clone(), data });
+        while let Some(first) = rx.recv().await {
+            let mut batch = first;
+            while let Ok(data) = rx.try_recv() {
+                batch.push_str(&data);
+            }
+            let _ = app2.emit("pty-output", PtyOutput { pane_id: pid.clone(), data: batch });
         }
     });
 }
 
 fn emit_join_sync(app: &AppHandle, pane_id: &str, session: &Arc<dinotty_server::session::Session>) {
-    let (cols, rows) = *session.size.lock().unwrap();
+    let (cols, rows) = *session.size.lock().unwrap_or_else(|e| e.into_inner());
     let _ = app.emit(
         "pty-reconnected",
         serde_json::json!({ "pane_id": pane_id, "cols": cols, "rows": rows }),
     );
     let snapshot = {
-        let screen = session.screen.lock().unwrap();
+        let screen = session.screen.lock().unwrap_or_else(|e| e.into_inner());
         screen.snapshot()
     };
     let _ = app.emit("pty-output", PtyOutput { pane_id: pane_id.to_string(), data: snapshot });
@@ -63,9 +67,9 @@ fn pty_spawn(
 
     if let Some(entry) = manager.sessions.get(&pane_id) {
         let session = Arc::clone(entry.value());
-        *session.status.lock().unwrap() = SessionStatus::Connected;
+        *session.status.lock().unwrap_or_else(|e| e.into_inner()) = SessionStatus::Connected;
         {
-            let mut g = session.tauri_on_exit.lock().unwrap();
+            let mut g = session.tauri_on_exit.lock().unwrap_or_else(|e| e.into_inner());
             if g.is_none() {
                 *g = Some(Arc::clone(&exit_cb));
             }
@@ -94,7 +98,10 @@ fn pty_write(
     use std::io::Write;
     let sessions = &state.sessions;
     let session = sessions.get(&pane_id).ok_or("session not found")?;
-    let mut w = session.writer.lock().unwrap();
+    if session.is_exited() {
+        return Err("session exited".into());
+    }
+    let mut w = session.writer.lock().unwrap_or_else(|e| e.into_inner());
     w.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -106,15 +113,9 @@ fn pty_resize(
     rows: u16,
     state: State<'_, Arc<SessionManager>>,
 ) -> Result<(), String> {
-    use portable_pty::PtySize;
     let sessions = &state.sessions;
     let session = sessions.get(&pane_id).ok_or("session not found")?;
-    let m = session.master.lock().unwrap();
-    m.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }).map_err(|e| e.to_string())?;
-    drop(m);
-    *session.size.lock().unwrap() = (cols, rows);
-    session.screen.lock().unwrap().resize(cols as usize, rows as usize);
-    Ok(())
+    session.resize(cols, rows)
 }
 
 #[tauri::command]
@@ -153,7 +154,7 @@ fn pty_detach(pane_id: String, state: State<'_, Arc<SessionManager>>) -> Result<
     if let Some(entry) = state.sessions.get(&pane_id) {
         let session = Arc::clone(entry.value());
         if !session.has_clients() {
-            *session.status.lock().unwrap() =
+            *session.status.lock().unwrap_or_else(|e| e.into_inner()) =
                 SessionStatus::Detached { since: std::time::Instant::now() };
         }
     }

@@ -1,4 +1,4 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
+#![allow(clippy::too_many_lines)]
 use crate::event_bus::EventBus;
 use crate::vt_screen::VirtualScreen;
 use dashmap::DashMap;
@@ -32,6 +32,7 @@ pub struct Session {
     pub input_tx: Mutex<Option<mpsc::UnboundedSender<String>>>,
     pub status: Mutex<SessionStatus>,
     pub size: Mutex<(u16, u16)>,
+    pub exited: Mutex<bool>,
     #[allow(dead_code)]
     pub shell_type: String,
     #[allow(clippy::type_complexity)]
@@ -43,24 +44,43 @@ impl Session {
     /// Explicitly kill the child process. Safe to call multiple times (idempotent).
     /// After this, the PTY reader task's `reader.read()` will return Err/Ok(0),
     /// causing it to exit and drop its `Arc<Session>`, which triggers `Drop`.
-    ///
-    /// # Panics
-    /// May panic if the internal mutex is poisoned.
     pub fn kill_child(&self) {
-        let mut child = self.child.lock().expect("child mutex poisoned");
+        let mut child = self.child.lock().unwrap_or_else(|e| e.into_inner());
         let pid = child.process_id();
         let _ = child.kill();
         let _ = child.wait();
+        self.mark_exited();
         info!("Session child killed: pid={:?}", pid);
     }
 
-    /// # Panics
-    /// May panic if the internal mutex is poisoned.
+    /// Check if the child process has exited.
+    pub fn is_exited(&self) -> bool {
+        *self.exited.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Mark the session as exited.
+    pub fn mark_exited(&self) {
+        *self.exited.lock().unwrap_or_else(|e| e.into_inner()) = true;
+    }
+
+    /// Resize the PTY and virtual screen. Consolidates three mutex acquisitions
+    /// that were previously duplicated across Tauri and WS call sites.
+    pub fn resize(&self, cols: u16, rows: u16) -> Result<(), String> {
+        use portable_pty::PtySize;
+        let m = self.master.lock().unwrap_or_else(|e| e.into_inner());
+        m.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+            .map_err(|e| e.to_string())?;
+        drop(m);
+        *self.size.lock().unwrap_or_else(|e| e.into_inner()) = (cols, rows);
+        self.screen.lock().unwrap_or_else(|e| e.into_inner()).resize(cols as usize, rows as usize);
+        Ok(())
+    }
+
     pub fn on_pty_output(&self, data: &[u8]) {
         let Some(home) = dirs::home_dir() else {
             return;
         };
-        let mut state = self.cwd_state.lock().expect("mutex poisoned");
+        let mut state = self.cwd_state.lock().unwrap_or_else(|e| e.into_inner());
         let CwdState { ref mut cwd, ref mut sniff_buf } = *state;
         sniff_cwd_from_title_osc(sniff_buf, data, &home, cwd);
     }
@@ -68,45 +88,36 @@ impl Session {
     /// Replace the input channel, closing the old one (if any) so the previous
     /// PTY write task exits. Returns the new receiver for the caller to spawn
     /// a write task on.
-    ///
-    /// # Panics
-    /// May panic if the internal mutex is poisoned.
     pub fn replace_input_channel(&self) -> mpsc::UnboundedReceiver<String> {
         let (tx, rx) = mpsc::unbounded_channel();
-        let old = self.input_tx.lock().expect("mutex poisoned").replace(tx);
+        let old = self.input_tx.lock().unwrap_or_else(|e| e.into_inner()).replace(tx);
         drop(old); // close old sender → old write task's recv() returns None
         rx
     }
 
-    /// # Panics
-    /// May panic if the internal mutex is poisoned.
     pub fn add_client(&self) -> mpsc::UnboundedReceiver<String> {
         let (tx, rx) = mpsc::unbounded_channel();
-        self.clients.lock().expect("mutex poisoned").push(tx);
+        self.clients.lock().unwrap_or_else(|e| e.into_inner()).push(tx);
         rx
     }
 
     /// Remove all existing clients so old forwarder tasks exit cleanly.
     /// Must be called before `add_client` on reconnection to prevent
     /// duplicate output delivery.
-    ///
-    /// # Panics
-    /// May panic if the internal mutex is poisoned.
     pub fn clear_clients(&self) {
-        self.clients.lock().expect("mutex poisoned").clear();
+        self.clients.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
 
-    /// # Panics
-    /// May panic if the internal mutex is poisoned.
     pub fn broadcast(&self, msg: &str) {
-        let mut clients = self.clients.lock().expect("mutex poisoned");
+        if self.is_exited() {
+            return;
+        }
+        let mut clients = self.clients.lock().unwrap_or_else(|e| e.into_inner());
         clients.retain(|tx| tx.send(msg.to_string()).is_ok());
     }
 
-    /// # Panics
-    /// May panic if the internal mutex is poisoned.
     pub fn has_clients(&self) -> bool {
-        let mut clients = self.clients.lock().expect("mutex poisoned");
+        let mut clients = self.clients.lock().unwrap_or_else(|e| e.into_inner());
         clients.retain(|tx| !tx.is_closed());
         !clients.is_empty()
     }
@@ -114,10 +125,11 @@ impl Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
-        let mut child = self.child.lock().expect("mutex poisoned");
+        let mut child = self.child.lock().unwrap_or_else(|e| e.into_inner());
         let pid = child.process_id();
         let _ = child.kill();
         let _ = child.wait();
+        *self.exited.lock().unwrap_or_else(|e| e.into_inner()) = true;
         info!("Session dropped, child reaped: pid={:?}", pid);
     }
 }
@@ -440,11 +452,8 @@ impl SessionManager {
     }
 
     /// Insert a tab layout and record its order position.
-    ///
-    /// # Panics
-    /// May panic if the internal mutex is poisoned.
     pub fn insert_tab(&self, tab_id: String, value: serde_json::Value) {
-        let mut order = self.tab_order.lock().expect("mutex poisoned");
+        let mut order = self.tab_order.lock().unwrap_or_else(|e| e.into_inner());
         if !order.contains(&tab_id) {
             order.push(tab_id.clone());
         }
@@ -453,30 +462,22 @@ impl SessionManager {
     }
 
     /// Remove a tab layout and its order entry.
-    ///
-    /// # Panics
-    /// Panics if the internal mutex is poisoned.
     pub fn remove_tab(&self, tab_id: &str) {
         self.tab_layouts.remove(tab_id);
-        let mut order = self.tab_order.lock().expect("mutex poisoned");
+        let mut order = self.tab_order.lock().unwrap_or_else(|e| e.into_inner());
         order.retain(|id| id != tab_id);
     }
 
-    /// # Panics
-    /// Panics if the internal mutex is poisoned.
     pub fn broadcast_sync(&self, msg: &SyncMsg) {
         let json = serde_json::to_string(msg).expect("serialization is infallible");
-        let mut clients = self.sync_clients.lock().expect("mutex poisoned");
+        let mut clients = self.sync_clients.lock().unwrap_or_else(|e| e.into_inner());
         clients.retain(|c| c.tx.send(json.clone()).is_ok());
     }
 
     /// Broadcast to all sync clients except the one with the given ID.
-    ///
-    /// # Panics
-    /// Panics if the internal mutex is poisoned.
     pub fn broadcast_sync_others(&self, msg: &SyncMsg, exclude_id: &str) {
         let json = serde_json::to_string(msg).expect("serialization is infallible");
-        let mut clients = self.sync_clients.lock().expect("mutex poisoned");
+        let mut clients = self.sync_clients.lock().unwrap_or_else(|e| e.into_inner());
         clients.retain(|c| {
             if c.id == exclude_id {
                 true // keep in list but don't send
@@ -486,12 +487,10 @@ impl SessionManager {
         });
     }
 
-    /// # Panics
-    /// Panics if the internal mutex is poisoned.
     pub fn add_sync_client(&self) -> (String, mpsc::UnboundedReceiver<String>) {
         let id = uuid::Uuid::new_v4().to_string();
         let (tx, rx) = mpsc::unbounded_channel();
-        self.sync_clients.lock().expect("mutex poisoned").push(SyncClient { id: id.clone(), tx });
+        self.sync_clients.lock().unwrap_or_else(|e| e.into_inner()).push(SyncClient { id: id.clone(), tx });
         (id, rx)
     }
 
@@ -506,15 +505,12 @@ impl SessionManager {
     /// preventing `Drop` from firing when we only remove from the `DashMap`.
     /// By killing the child first, the reader's `read()` returns Err/Ok(0),
     /// causing it to exit and release its `Arc`.
-    ///
-    /// # Panics
-    /// Panics if the internal mutex is poisoned.
     pub fn kill_and_remove(&self, pane_id: &str) -> bool {
         if let Some((_, session)) = self.sessions.remove(pane_id) {
             session.kill_child();
             // Drop the input channel sender so the writer task's recv() returns
             // None and the task exits, releasing its Arc<Session>.
-            session.input_tx.lock().expect("mutex poisoned").take();
+            session.input_tx.lock().unwrap_or_else(|e| e.into_inner()).take();
             true
         } else {
             false
@@ -565,8 +561,6 @@ impl SessionManager {
         emptied_tabs
     }
 
-    /// # Panics
-    /// Panics if the internal mutex is poisoned.
     pub fn tab_list(&self) -> (Vec<TabInfo>, Option<String>) {
         // Prune stale tab layouts whose leaf pane_ids no longer have sessions.
         // Without this, tab_layouts entries accumulate forever (phantom tabs).
@@ -591,11 +585,11 @@ impl SessionManager {
             self.tab_layouts.remove(key);
         }
         if !stale.is_empty() {
-            let mut order = self.tab_order.lock().expect("mutex poisoned");
+            let mut order = self.tab_order.lock().unwrap_or_else(|e| e.into_inner());
             order.retain(|id| !stale.contains(id));
         }
 
-        let order = self.tab_order.lock().expect("mutex poisoned");
+        let order = self.tab_order.lock().unwrap_or_else(|e| e.into_inner());
         let order_index = |tab_id: &str| -> usize {
             order.iter().position(|id| id == tab_id).unwrap_or(usize::MAX)
         };
@@ -618,7 +612,7 @@ impl SessionManager {
         tabs.sort_by_key(|t| order_index(&t.tab_id));
         drop(order);
 
-        let active = self.active_pane_id.lock().expect("mutex poisoned").clone();
+        let active = self.active_pane_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
         (tabs, active)
     }
 
@@ -680,8 +674,6 @@ impl SessionManager {
         }
     }
 
-    /// # Panics
-    /// Panics if the internal mutex is poisoned.
     pub fn start_cleanup_task(self: &Arc<Self>) {
         let manager = Arc::clone(self);
         tokio::spawn(async move {
@@ -695,7 +687,7 @@ impl SessionManager {
                     .sessions
                     .iter()
                     .filter_map(|entry| {
-                        let status = entry.value().status.lock().expect("mutex poisoned");
+                        let status = entry.value().status.lock().unwrap_or_else(|e| e.into_inner());
                         match *status {
                             SessionStatus::Detached { since } if since.elapsed() >= timeout => {
                                 Some(entry.key().clone())
@@ -708,7 +700,7 @@ impl SessionManager {
                     // Re-check status before killing — the session may have been
                     // reconnected between the collect pass and now.
                     let should_kill = manager.sessions.get(&pane_id).is_some_and(|entry| {
-                        let status = entry.value().status.lock().expect("mutex poisoned");
+                        let status = entry.value().status.lock().unwrap_or_else(|e| e.into_inner());
                         matches!(*status, SessionStatus::Detached { since } if since.elapsed() >= timeout)
                     });
 

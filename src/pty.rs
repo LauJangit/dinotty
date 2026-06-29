@@ -1,4 +1,4 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
+#![allow(clippy::too_many_lines)]
 use crate::event_bus::BusEvent;
 use crate::session::{Session, SessionManager, SessionStatus, SyncMsg};
 use crate::vt_screen::VirtualScreen;
@@ -81,6 +81,7 @@ pub fn create_session(
         input_tx: std::sync::Mutex::new(None),
         status: std::sync::Mutex::new(SessionStatus::Connected),
         size: std::sync::Mutex::new((80, 24)),
+        exited: std::sync::Mutex::new(false),
         shell_type: shell_type.clone(),
         tauri_on_exit: std::sync::Mutex::new(tauri_on_exit),
         cwd_state: std::sync::Mutex::new(crate::session::CwdState {
@@ -110,7 +111,7 @@ pub fn create_session(
                     let data = &buf[..n];
                     // Feed to virtual screen and check for command completion
                     let command_results = {
-                        let mut screen = session_clone.screen.lock().expect("mutex poisoned");
+                        let mut screen = session_clone.screen.lock().unwrap_or_else(|e| e.into_inner());
                         screen.feed(data);
                         let results = screen.drain_command_results();
                         // Collect stdout for each result while still holding the lock
@@ -162,6 +163,7 @@ pub fn create_session(
                 }
             }
         }
+        session_clone.mark_exited();
         if manager_clone.sessions.remove(&pane_id_clone).is_some() {
             // Publish session closed event
             manager_clone.event_bus.publish(BusEvent::SessionClosed {
@@ -176,7 +178,7 @@ pub fn create_session(
             manager_clone.broadcast_sync(&SyncMsg::TabClosed { pane_id: tab_pane_id });
         }
         info!("PTY exited, session removed: pane={}", pane_id_clone);
-        let cb = session_clone.tauri_on_exit.lock().expect("mutex poisoned").clone();
+        let cb = session_clone.tauri_on_exit.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if let Some(f) = cb {
             f(pane_id_clone);
         }

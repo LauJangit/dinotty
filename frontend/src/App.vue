@@ -307,6 +307,19 @@ function openOverview() {
   overviewOpen.value = true
 }
 
+function adjustActiveTerminalFontSize(delta: number) {
+  if (!activePaneId.value) return
+  const tab = tabs.value.find((t) => t.paneId === activePaneId.value)
+  if (!tab || tab.type !== 'terminal') return
+  const ref = termRefs[tab.activePaneId]
+  if (!ref) return
+  if (delta === 0) {
+    ref.resetFontSize()
+  } else {
+    ref.adjustFontSize(delta)
+  }
+}
+
 function onOverviewActivate(paneId: string) {
   activateTab(paneId)
   overviewOpen.value = false
@@ -1048,6 +1061,9 @@ function onGlobalKeydown(e: KeyboardEvent) {
       termRefs[tab.activePaneId]?.toggleSearch()
     },
     missionControl: () => openOverview(),
+    fontSizeUp: () => adjustActiveTerminalFontSize(1),
+    fontSizeDown: () => adjustActiveTerminalFontSize(-1),
+    fontSizeReset: () => adjustActiveTerminalFontSize(0),
   }
 
   for (const [id, action] of Object.entries(keyActions)) {
