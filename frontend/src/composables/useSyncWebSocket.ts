@@ -343,6 +343,9 @@ export function useSyncWebSocket(opts: {
           persist()
           nextTick(() => {
             getAllLeaves(targetTab.layout).forEach((l) => termRefs[l.paneId]?.fit())
+            if (activePaneId.value === targetTab.paneId) {
+              focusActive()
+            }
           })
         }
       } else if (msg.type === 'plugin_changed') {

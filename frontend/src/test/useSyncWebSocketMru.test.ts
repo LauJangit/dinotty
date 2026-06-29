@@ -65,10 +65,11 @@ async function setup() {
   const tab = makeTab()
   session.tabs = [tab]
   session.activePaneId = tab.paneId
+  const focusActive = vi.fn()
   const subject = useSyncWebSocket({
     termRefs: {},
     persist: vi.fn(),
-    focusActive: vi.fn(),
+    focusActive,
     newTab: vi.fn(),
   })
   await subject.connectSyncWS()
@@ -82,17 +83,19 @@ async function setup() {
       }),
     })
   }
-  return { tab, emitLayout }
+  return { tab, emitLayout, focusActive }
 }
 
 describe('useSyncWebSocket pane MRU', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('uses MRU fallback when a focused pane exits', async () => {
-    const { tab, emitLayout } = await setup()
+  it('uses and focuses the MRU fallback when a focused pane exits', async () => {
+    const { tab, emitLayout, focusActive } = await setup()
     emitLayout(layout('a', 'c'), 'c')
+    await Promise.resolve()
     expect(tab.paneMru).toEqual(['a', 'c'])
     expect(tab.activePaneId).toBe('a')
+    expect(focusActive).toHaveBeenCalledOnce()
   })
 
   it('preserves focus when a non-focused pane exits', async () => {
