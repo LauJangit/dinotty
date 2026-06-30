@@ -77,6 +77,7 @@ let longPressTimer: ReturnType<typeof setTimeout> | null = null
 let longPressStartX = 0
 let longPressStartY = 0
 let longPressFired = false
+let touchScrolling = false
 
 // Selection handles state
 const handlesVisible = ref(false)
@@ -279,6 +280,7 @@ function onTouchStart(e: TouchEvent) {
   if (!terminal || terminal.isMouseModeEnabled()) return
   if (handlesVisible.value) return // selection mode active, don't start new long-press
   longPressFired = false
+  touchScrolling = false
   const touch = e.touches[0]
   longPressStartX = touch.clientX
   longPressStartY = touch.clientY
@@ -374,14 +376,30 @@ function onTouchMove(e: TouchEvent) {
     handleEndY.value = coords.end.y
     return
   }
+  const touch = e.touches[0]
+  // Cancel long-press timer on any movement > 10px
   if (longPressTimer && !longPressFired) {
-    const touch = e.touches[0]
     if (
       Math.abs(touch.clientX - longPressStartX) > 10 ||
       Math.abs(touch.clientY - longPressStartY) > 10
     ) {
       clearTimeout(longPressTimer)
       longPressTimer = null
+    }
+  }
+  // Detect scroll gesture (vertical movement > horizontal) —
+  // dispatch terminal-scroll so App.vue's keyboard guard works.
+  // The viewport handlers in useTerminal.ts don't fire because
+  // .xterm-screen overlays .xterm-viewport in the DOM.
+  if (!touchScrolling) {
+    const dx = Math.abs(touch.clientX - longPressStartX)
+    const dy = Math.abs(touch.clientY - longPressStartY)
+    if (dy > dx && dy > 15) {
+      touchScrolling = true
+      if (terminal) terminal.touchMoved = true
+      (e.currentTarget as HTMLElement).dispatchEvent(
+        new CustomEvent('terminal-scroll', { bubbles: true })
+      )
     }
   }
 }
@@ -415,6 +433,12 @@ function onTouchEnd(e: TouchEvent) {
     clearTimeout(longPressTimer)
     longPressTimer = null
   }
+  if (touchScrolling) {
+    touchScrolling = false
+    (e.currentTarget as HTMLElement).dispatchEvent(
+      new CustomEvent('terminal-scroll', { bubbles: true })
+    )
+  }
 }
 
 function onTouchCancel() {
@@ -423,6 +447,7 @@ function onTouchCancel() {
     longPressTimer = null
   }
   longPressFired = false
+  touchScrolling = false
   selectionTouched = false
   dragHandle = null
   if (terminal) terminal.inTouchSelection = false

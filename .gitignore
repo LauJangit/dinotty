@@ -9,3 +9,4 @@ CLAUDE.md
 *.tsbuildinfo
 .pnpm-store/
 .DS_Store
+ghostty-comparison-optimization.md
