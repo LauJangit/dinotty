@@ -380,11 +380,6 @@
   background: rgba(255, 255, 255, 0.2);
 }
 
-/* Hide xterm.js built-in composition view (has known positioning bugs) */
-.xterm .composition-view {
-  display: none !important;
-}
-
 /* Custom preedit overlay for IME composition */
 .preedit-overlay {
   position: absolute;

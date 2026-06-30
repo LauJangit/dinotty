@@ -272,10 +272,17 @@ export class TerminalInstance {
       textarea.inputMode = 'none'
       textarea.setAttribute('virtualkeyboardpolicy', 'manual')
     }
-    if (textarea) {
+    // Composition guard: only needed on Tauri (WKWebView) where xterm.js's
+    // native IME handling is broken. On web, xterm.js handles IME natively.
+    if (textarea && isTauri()) {
       let isComposing = false
       let compositionJustEnded = false
       let safetyTimer: ReturnType<typeof setTimeout> | null = null
+
+      // Hide xterm.js built-in composition view on Tauri (has known positioning
+      // bugs in WKWebView). On web it must stay visible for native IME handling.
+      const compositionView = wrapper.querySelector('.composition-view') as HTMLElement | null
+      if (compositionView) compositionView.style.display = 'none'
 
       // Preedit overlay for IME composition display
       const preeditOverlay = document.createElement('div')

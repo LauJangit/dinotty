@@ -518,10 +518,6 @@ window.addEventListener('beforeunload', (e) => {
     clearTimeout(persistTimer)
     persistNow()
   }
-  if (appSettings.confirm_before_close_tab && tabs.value.some((t) => t.type === 'terminal')) {
-    e.preventDefault()
-    e.returnValue = ''
-  }
 })
 
 const DEFAULT_PREVIEW_URL = ''

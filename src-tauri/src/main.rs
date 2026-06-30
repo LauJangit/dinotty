@@ -98,8 +98,7 @@ async fn pty_write(
     data: String,
     state: State<'_, Arc<SessionManager>>,
 ) -> Result<(), String> {
-    let session =
-        state.sessions.get(&pane_id).ok_or("session not found")?.value().clone();
+    let session = state.sessions.get(&pane_id).ok_or("session not found")?.value().clone();
     if session.is_exited() {
         return Err("session exited".into());
     }
