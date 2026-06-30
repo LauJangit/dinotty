@@ -105,7 +105,7 @@ fn get_root(manager: &SessionManager, pane_id: &str) -> Result<PathBuf, Response
         .get(pane_id)
         .map(|r| Arc::clone(r.value()))
         .ok_or_else(|| json_err(StatusCode::NOT_FOUND, "unknown pane"))?;
-    let state = session.cwd_state.lock().expect("mutex poisoned");
+    let state = session.cwd_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     Ok(state.cwd.canonicalize().unwrap_or_else(|_| state.cwd.clone()))
 }
 

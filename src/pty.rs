@@ -71,6 +71,7 @@ pub fn create_session(
     let writer: Box<dyn Write + Send> = pair.master.take_writer().map_err(|e| e.to_string())?;
 
     let initial_cwd = home_for_cwd.canonicalize().unwrap_or_else(|_| home_for_cwd.clone());
+    let (resize_tx, resize_rx) = tokio::sync::watch::channel(None);
 
     let session = Arc::new(Session {
         writer: std::sync::Mutex::new(writer),
@@ -91,8 +92,31 @@ pub fn create_session(
         sync_active: std::sync::atomic::AtomicBool::new(false),
         sync_buffer: std::sync::Mutex::new(Vec::new()),
         sync_buffer_bytes: std::sync::atomic::AtomicUsize::new(0),
+        resize_tx,
     });
     manager.sessions.insert(pane_id.to_string(), Arc::clone(&session));
+
+    // Spawn resize debounce task: waits 25ms after last change, then applies
+    {
+        let session_weak = Arc::downgrade(&session);
+        tokio::spawn(async move {
+            let mut rx = resize_rx;
+            loop {
+                if rx.changed().await.is_err() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                let size = *rx.borrow_and_update();
+                if let Some((cols, rows)) = size {
+                    if let Some(session) = session_weak.upgrade() {
+                        let _ = session.resize(cols, rows);
+                    } else {
+                        break;
+                    }
+                }
+            }
+        });
+    }
 
     // Publish session created event
     manager.event_bus.publish(BusEvent::SessionCreated {

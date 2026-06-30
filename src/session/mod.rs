@@ -13,7 +13,7 @@ use std::{
     },
     time::Instant,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tracing::info;
 
 /// Force-flush `sync_buffer` when accumulated data exceeds this limit (256KB).
@@ -53,6 +53,8 @@ pub struct Session {
     pub sync_buffer: Mutex<Vec<String>>,
     /// Running byte count of `sync_buffer` to avoid O(n) sum on every broadcast
     pub sync_buffer_bytes: AtomicUsize,
+    /// Sender for debounced resize requests (None = no pending resize)
+    pub(crate) resize_tx: watch::Sender<Option<(u16, u16)>>,
 }
 
 impl Session {
@@ -98,6 +100,9 @@ impl Session {
     /// Returns an error if the PTY resize operation fails.
     pub fn resize(&self, cols: u16, rows: u16) -> Result<(), String> {
         use portable_pty::PtySize;
+        if self.is_exited() {
+            return Ok(());
+        }
         let m = self.master.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         m.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
             .map_err(|e| e.to_string())?;
@@ -108,6 +113,13 @@ impl Session {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .resize(cols as usize, rows as usize);
         Ok(())
+    }
+
+    /// Debounced resize: coalesces rapid calls (e.g. window drag) and applies
+    /// the latest size after a 25ms quiet period. Ensures the final resize is
+    /// always applied even if no further calls arrive.
+    pub fn resize_debounced(&self, cols: u16, rows: u16) {
+        let _ = self.resize_tx.send(Some((cols, rows)));
     }
 
     pub fn on_pty_output(&self, data: &[u8]) {

@@ -470,7 +470,7 @@ async fn handle_socket(
                         }
                     }
                     Ok(ClientMsg::Resize { cols, rows }) => {
-                        let _ = session.resize(cols, rows);
+                        session.resize_debounced(cols, rows);
                     }
                     Err(e) => error!("parse msg: {}", e),
                 },
@@ -579,7 +579,7 @@ async fn handle_socket(
                     }
                 }
                 Ok(ClientMsg::Resize { cols, rows }) => {
-                    let _ = session.resize(cols, rows);
+                    session.resize_debounced(cols, rows);
                 }
                 Err(e) => error!("parse msg: {}", e),
             },
@@ -798,7 +798,7 @@ pub async fn handle_open_api_ws(socket: WebSocket, manager: Arc<SessionManager>,
                             let _ = pty_in_tx.send(data);
                         }
                         ClientMsg::Resize { cols, rows } => {
-                            let _ = session.resize(cols, rows);
+                            session.resize_debounced(cols, rows);
                         }
                     }
                 }

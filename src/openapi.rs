@@ -231,30 +231,9 @@ pub async fn session_resize(
             .into_response();
     }
 
-    let size = req.cols;
-    let rows = req.rows;
-
-    // Update size
-    {
-        let mut s = session.size.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        *s = (size, rows);
-    }
-
-    // Resize screen buffer
-    {
-        let mut screen = session.screen.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        screen.resize(size as usize, rows as usize);
-    }
-
-    // Resize PTY
-    {
-        let master = session.master.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let _ = master.resize(portable_pty::PtySize {
-            cols: size,
-            rows,
-            pixel_width: 0,
-            pixel_height: 0,
-        });
+    if let Err(e) = session.resize(req.cols, req.rows) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e })))
+            .into_response();
     }
 
     Json(serde_json::json!({ "ok": true })).into_response()
