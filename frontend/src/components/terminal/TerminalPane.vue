@@ -138,8 +138,8 @@ function resetFontSize() {
 
 function onContextMenu(e: MouseEvent) {
   if (!terminal) return
-  if (terminal.isMouseModeEnabled()) return
   const text = terminal.getSelection()
+  if (terminal.isMouseModeEnabled() && !text) return
   menuSelectedText.value = text
   menuX.value = e.clientX
   menuY.value = e.clientY
