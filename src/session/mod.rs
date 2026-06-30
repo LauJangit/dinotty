@@ -37,7 +37,7 @@ pub struct Session {
     pub master: Mutex<Box<dyn MasterPty + Send>>,
     pub child: Mutex<Box<dyn Child + Send + Sync>>,
     pub screen: Mutex<VirtualScreen>,
-    pub clients: Mutex<Vec<mpsc::UnboundedSender<String>>>,
+    pub clients: Mutex<Vec<mpsc::Sender<String>>>,
     pub input_tx: Mutex<Option<mpsc::UnboundedSender<String>>>,
     pub status: Mutex<SessionStatus>,
     pub size: Mutex<(u16, u16)>,
@@ -130,8 +130,11 @@ impl Session {
         rx
     }
 
-    pub fn add_client(&self) -> mpsc::UnboundedReceiver<String> {
-        let (tx, rx) = mpsc::unbounded_channel();
+    pub fn add_client(&self) -> mpsc::Receiver<String> {
+        // Bounded channel provides backpressure: if a client cannot keep up
+        // with PTY output, try_send() fails and the client is dropped rather
+        // than accumulating unbounded memory.
+        let (tx, rx) = mpsc::channel(1024);
         self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(tx);
         rx
     }
@@ -163,7 +166,7 @@ impl Session {
             return;
         }
         let mut clients = self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        clients.retain(|tx| tx.send(msg.to_string()).is_ok());
+        clients.retain(|tx| tx.try_send(msg.to_string()).is_ok());
     }
 
     /// Enable or disable synchronized output mode (DEC mode 2026).
@@ -178,23 +181,28 @@ impl Session {
     /// Flush buffered output accumulated during synchronized output mode.
     /// Breaks large payloads into chunks to avoid freezing the frontend UI thread.
     pub fn flush_sync_buffer(&self) {
-        self.sync_buffer_bytes.store(0, Ordering::Relaxed);
-        let data: Vec<String> = std::mem::take(
-            &mut self.sync_buffer.lock().unwrap_or_else(std::sync::PoisonError::into_inner),
-        );
+        let data: Vec<String> = {
+            let mut buf =
+                self.sync_buffer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let d = std::mem::take(&mut *buf);
+            // Reset counter under the same lock to prevent broadcast() from
+            // pushing data between take and reset, which would lose byte counts.
+            self.sync_buffer_bytes.store(0, Ordering::Relaxed);
+            d
+        };
         if data.is_empty() {
             return;
         }
         let combined = data.join("");
         let mut clients = self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if combined.len() <= FLUSH_CHUNK_SIZE {
-            clients.retain(|tx| tx.send(combined.clone()).is_ok());
+            clients.retain(|tx| tx.try_send(combined.clone()).is_ok());
         } else {
             for chunk in combined.as_bytes().chunks(FLUSH_CHUNK_SIZE) {
                 // SAFETY: chunks split on byte boundaries of valid UTF-8 may land
                 // mid-codepoint. Use from_utf8_lossy to avoid panics.
                 let s = String::from_utf8_lossy(chunk).into_owned();
-                clients.retain(|tx| tx.send(s.clone()).is_ok());
+                clients.retain(|tx| tx.try_send(s.clone()).is_ok());
             }
         }
     }
