@@ -238,6 +238,20 @@ export class TerminalInstance {
       return true
     })
 
+    // OSC 52: clipboard write — enables copy from inside mouse-tracking apps (tmux/zellij/etc.)
+    this.xterm.parser.registerOscHandler(52, (data: string) => {
+      const sep = data.indexOf(';')
+      if (sep === -1) return true
+      const payload = data.slice(sep + 1)
+      if (payload === '?') return true // read request — not supported
+      try {
+        const bytes = Uint8Array.from(atob(payload), (c) => c.charCodeAt(0))
+        const text = new TextDecoder('utf-8').decode(bytes)
+        if (text) navigator.clipboard?.writeText(text).catch(() => {})
+      } catch { /* ignore malformed payload */ }
+      return true
+    })
+
     const unicode11 = new Unicode11Addon()
     this.xterm.loadAddon(unicode11)
     this.xterm.unicode.activeVersion = '11'
