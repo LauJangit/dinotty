@@ -144,9 +144,9 @@ impl Session {
 
     pub fn add_client(&self) -> mpsc::Receiver<String> {
         // Bounded channel provides backpressure: if a client cannot keep up
-        // with PTY output, try_send() fails and the client is dropped rather
-        // than accumulating unbounded memory.
-        let (tx, rx) = mpsc::channel(1024);
+        // with PTY output, blocking_send() pauses the PTY reader thread,
+        // which naturally slows shell output rather than dropping data.
+        let (tx, rx) = mpsc::channel(10240);
         self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(tx);
         rx
     }
@@ -177,8 +177,26 @@ impl Session {
             self.flush_sync_buffer();
             return;
         }
-        let mut clients = self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        clients.retain(|tx| tx.try_send(msg.to_string()).is_ok());
+        // Snapshot senders under lock, then release before blocking_send.
+        // This avoids holding the mutex while waiting for slow consumers.
+        let senders: Vec<mpsc::Sender<String>> = {
+            let clients = self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            clients.clone()
+        };
+        let data = msg.to_string();
+        for tx in &senders {
+            // blocking_send applies backpressure: when the channel is full,
+            // the PTY reader thread pauses, causing the shell to slow down
+            // rather than silently dropping output.
+            let _ = tx.blocking_send(data.clone());
+        }
+        // Prune closed senders under lock. Using is_closed() avoids races
+        // from index-based removal when clients are concurrently added/removed.
+        {
+            let mut clients =
+                self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            clients.retain(|tx| !tx.is_closed());
+        }
     }
 
     /// Enable or disable synchronized output mode (DEC mode 2026).
@@ -206,16 +224,32 @@ impl Session {
             return;
         }
         let combined = data.join("");
-        let mut clients = self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if combined.len() <= FLUSH_CHUNK_SIZE {
-            clients.retain(|tx| tx.try_send(combined.clone()).is_ok());
+        // Snapshot senders under lock, then release before blocking_send.
+        let senders: Vec<mpsc::Sender<String>> = {
+            let clients = self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            clients.clone()
+        };
+        let chunks: Vec<String> = if combined.len() <= FLUSH_CHUNK_SIZE {
+            vec![combined]
         } else {
-            for chunk in combined.as_bytes().chunks(FLUSH_CHUNK_SIZE) {
-                // SAFETY: chunks split on byte boundaries of valid UTF-8 may land
-                // mid-codepoint. Use from_utf8_lossy to avoid panics.
-                let s = String::from_utf8_lossy(chunk).into_owned();
-                clients.retain(|tx| tx.try_send(s.clone()).is_ok());
+            combined
+                .as_bytes()
+                .chunks(FLUSH_CHUNK_SIZE)
+                .map(|chunk| String::from_utf8_lossy(chunk).into_owned())
+                .collect()
+        };
+        for tx in &senders {
+            for chunk in &chunks {
+                if tx.blocking_send(chunk.clone()).is_err() {
+                    break;
+                }
             }
+        }
+        // Prune closed senders under lock.
+        {
+            let mut clients =
+                self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            clients.retain(|tx| !tx.is_closed());
         }
     }
 

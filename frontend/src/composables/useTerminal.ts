@@ -709,16 +709,37 @@ export class TerminalInstance {
       return
     }
     this._writing = true
-    const chunk = this._writeQueue.shift()!
-    // Split large writes to prevent UI thread blocking.
-    // A single xterm.write() with hundreds of KB synchronously blocks rendering.
+
+    // Process up to SYNC_BATCH_LIMIT chunks per frame, then yield.
+    // This prevents the xterm.write() callback chain from monopolizing
+    // the main thread and starving keyboard input events.
+    const SYNC_BATCH_LIMIT = 4
+    let processed = 0
     const MAX_CHUNK = 32 * 1024
-    if (chunk.length > MAX_CHUNK) {
-      this._writeQueue.unshift(chunk.slice(MAX_CHUNK))
-      this.xterm.write(chunk.slice(0, MAX_CHUNK), () => this._processWriteQueue())
-    } else {
-      this.xterm.write(chunk, () => this._processWriteQueue())
+
+    const processNext = () => {
+      if (!this.xterm || this._writeQueue.length === 0 || processed >= SYNC_BATCH_LIMIT) {
+        if (this._writeQueue.length > 0) {
+          // More data to process — yield to the browser, then continue
+          requestAnimationFrame(() => this._processWriteQueue())
+        } else {
+          this._writing = false
+        }
+        return
+      }
+      processed++
+      const chunk = this._writeQueue.shift()!
+      // Split large writes to prevent UI thread blocking.
+      // A single xterm.write() with hundreds of KB synchronously blocks rendering.
+      if (chunk.length > MAX_CHUNK) {
+        this._writeQueue.unshift(chunk.slice(MAX_CHUNK))
+        this.xterm.write(chunk.slice(0, MAX_CHUNK), () => processNext())
+      } else {
+        this.xterm.write(chunk, () => processNext())
+      }
     }
+
+    processNext()
   }
 
   private _scheduleReconnect() {

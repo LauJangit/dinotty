@@ -432,9 +432,17 @@ async fn handle_socket(
                 while let Ok(data) = input_rx.try_recv() {
                     batch.push_str(&data);
                 }
-                let mut w =
-                    write_session.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                let _ = w.write_all(batch.as_bytes());
+                let ws = Arc::clone(&write_session);
+                // Move blocking I/O off the async runtime
+                if tokio::task::spawn_blocking(move || {
+                    let mut w = ws.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let _ = w.write_all(batch.as_bytes());
+                })
+                .await
+                .is_err()
+                {
+                    break;
+                }
             }
         });
 
@@ -543,9 +551,17 @@ async fn handle_socket(
             while let Ok(data) = input_rx.try_recv() {
                 batch.push_str(&data);
             }
-            let mut w =
-                write_session.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            let _ = w.write_all(batch.as_bytes());
+            let ws = Arc::clone(&write_session);
+            // Move blocking I/O off the async runtime
+            if tokio::task::spawn_blocking(move || {
+                let mut w = ws.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                let _ = w.write_all(batch.as_bytes());
+            })
+            .await
+            .is_err()
+            {
+                break;
+            }
         }
     });
 
@@ -782,9 +798,17 @@ pub async fn handle_open_api_ws(socket: WebSocket, manager: Arc<SessionManager>,
             while let Ok(data) = pty_in_rx.try_recv() {
                 batch.push_str(&data);
             }
-            let mut w =
-                write_session.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            let _ = w.write_all(batch.as_bytes());
+            let ws = Arc::clone(&write_session);
+            // Move blocking I/O off the async runtime
+            if tokio::task::spawn_blocking(move || {
+                let mut w = ws.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                let _ = w.write_all(batch.as_bytes());
+            })
+            .await
+            .is_err()
+            {
+                break;
+            }
         }
     });
 
