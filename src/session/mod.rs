@@ -177,26 +177,16 @@ impl Session {
             self.flush_sync_buffer();
             return;
         }
-        // Snapshot senders under lock, then release before blocking_send.
-        // This avoids holding the mutex while waiting for slow consumers.
-        let senders: Vec<mpsc::Sender<String>> = {
-            let clients = self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            clients.clone()
-        };
+        let mut clients = self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Use try_send: if channel is full, skip this client for this message
+        // but don't remove it — the client will catch up on subsequent messages.
+        // This prevents PTY reader thread from blocking on slow consumers.
         let data = msg.to_string();
-        for tx in &senders {
-            // blocking_send applies backpressure: when the channel is full,
-            // the PTY reader thread pauses, causing the shell to slow down
-            // rather than silently dropping output.
-            let _ = tx.blocking_send(data.clone());
+        for tx in clients.iter() {
+            let _ = tx.try_send(data.clone());
         }
-        // Prune closed senders under lock. Using is_closed() avoids races
-        // from index-based removal when clients are concurrently added/removed.
-        {
-            let mut clients =
-                self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            clients.retain(|tx| !tx.is_closed());
-        }
+        // Only remove truly closed senders (disconnected clients)
+        clients.retain(|tx| !tx.is_closed());
     }
 
     /// Enable or disable synchronized output mode (DEC mode 2026).
@@ -224,33 +214,22 @@ impl Session {
             return;
         }
         let combined = data.join("");
-        // Snapshot senders under lock, then release before blocking_send.
-        let senders: Vec<mpsc::Sender<String>> = {
-            let clients = self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            clients.clone()
-        };
-        let chunks: Vec<String> = if combined.len() <= FLUSH_CHUNK_SIZE {
-            vec![combined]
+        let mut clients = self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if combined.len() <= FLUSH_CHUNK_SIZE {
+            // Use try_send: skip slow clients for this flush, don't block PTY reader
+            for tx in clients.iter() {
+                let _ = tx.try_send(combined.clone());
+            }
         } else {
-            combined
-                .as_bytes()
-                .chunks(FLUSH_CHUNK_SIZE)
-                .map(|chunk| String::from_utf8_lossy(chunk).into_owned())
-                .collect()
-        };
-        for tx in &senders {
-            for chunk in &chunks {
-                if tx.blocking_send(chunk.clone()).is_err() {
-                    break;
+            for chunk in combined.as_bytes().chunks(FLUSH_CHUNK_SIZE) {
+                let s = String::from_utf8_lossy(chunk).into_owned();
+                for tx in clients.iter() {
+                    let _ = tx.try_send(s.clone());
                 }
             }
         }
-        // Prune closed senders under lock.
-        {
-            let mut clients =
-                self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            clients.retain(|tx| !tx.is_closed());
-        }
+        // Only remove truly closed senders (disconnected clients)
+        clients.retain(|tx| !tx.is_closed());
     }
 
     pub fn has_clients(&self) -> bool {
