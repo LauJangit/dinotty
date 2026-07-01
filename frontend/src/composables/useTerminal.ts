@@ -124,6 +124,7 @@ export class TerminalInstance {
   private _reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private _onDataRegistered = false
   private _overlay: HTMLElement | null = null
+  private _sessionExited = false
   private _suppressTitleChange = false
   private _touchCleanup: (() => void) | null = null
   private _focusinCleanup: (() => void) | null = null
@@ -156,6 +157,7 @@ export class TerminalInstance {
   onPreviewLink: ((url: string, x?: number, y?: number) => void) | null = null
   onRawOutput: ((data: string) => void) | null = null
   onInput: ((data: string) => void) | null = null
+  onSessionExit: (() => void) | null = null
 
   constructor(paneId: string) {
     this.paneId = paneId
@@ -507,6 +509,7 @@ export class TerminalInstance {
   }
 
   sendData(data: string, force = false) {
+    if (this._sessionExited) return
     // Guard: only the active pane sends input (prevents WKWebView multi-focus duplication)
     if (!force && _activePaneId !== null && _activePaneId !== this.paneId) return
     if (this._transport) {
@@ -589,6 +592,8 @@ export class TerminalInstance {
         this._writeQueue = []
         this._writing = false
         this._doFitAndResize(true)
+      } else if (msg.type === 'session_exit') {
+        this._handleSessionExit()
       }
     })
 
@@ -650,6 +655,8 @@ export class TerminalInstance {
         this.onRawOutput?.(msg.data)
       } else if (msg.type === 'shell_info') {
         this.onShellInfo?.(msg.shell_type)
+      } else if (msg.type === 'session_exit') {
+        this._handleSessionExit()
       }
     }
 
@@ -681,6 +688,8 @@ export class TerminalInstance {
         this.onInput?.(data)
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
           this.ws.send(JSON.stringify({ type: 'input', data } as ClientMsg))
+        } else {
+          console.warn('[TerminalInput] WS not open, readyState:', this.ws?.readyState, 'pane:', this.paneId)
         }
       })
     }
@@ -709,16 +718,37 @@ export class TerminalInstance {
       return
     }
     this._writing = true
-    const chunk = this._writeQueue.shift()!
-    // Split large writes to prevent UI thread blocking.
-    // A single xterm.write() with hundreds of KB synchronously blocks rendering.
+
+    // Process up to SYNC_BATCH_LIMIT chunks per frame, then yield.
+    // This prevents the xterm.write() callback chain from monopolizing
+    // the main thread and starving keyboard input events.
+    const SYNC_BATCH_LIMIT = 4
+    let processed = 0
     const MAX_CHUNK = 32 * 1024
-    if (chunk.length > MAX_CHUNK) {
-      this._writeQueue.unshift(chunk.slice(MAX_CHUNK))
-      this.xterm.write(chunk.slice(0, MAX_CHUNK), () => this._processWriteQueue())
-    } else {
-      this.xterm.write(chunk, () => this._processWriteQueue())
+
+    const processNext = () => {
+      if (!this.xterm || this._writeQueue.length === 0 || processed >= SYNC_BATCH_LIMIT) {
+        if (this._writeQueue.length > 0) {
+          // More data to process — yield to the browser, then continue
+          requestAnimationFrame(() => this._processWriteQueue())
+        } else {
+          this._writing = false
+        }
+        return
+      }
+      processed++
+      const chunk = this._writeQueue.shift()!
+      // Split large writes to prevent UI thread blocking.
+      // A single xterm.write() with hundreds of KB synchronously blocks rendering.
+      if (chunk.length > MAX_CHUNK) {
+        this._writeQueue.unshift(chunk.slice(MAX_CHUNK))
+        this.xterm.write(chunk.slice(0, MAX_CHUNK), () => processNext())
+      } else {
+        this.xterm.write(chunk, () => processNext())
+      }
     }
+
+    processNext()
   }
 
   private _scheduleReconnect() {
@@ -755,6 +785,34 @@ export class TerminalInstance {
       this._overlay.remove()
       this._overlay = null
     }
+  }
+
+  private _handleSessionExit() {
+    if (this._sessionExited) return
+    this._sessionExited = true
+    this._showExitOverlay()
+    this.onSessionExit?.()
+  }
+
+  private _showExitOverlay() {
+    if (!this._wrapper || this._overlay) return
+    this._overlay = document.createElement('div')
+    this._overlay.className = 'reconnect-overlay'
+
+    const text = document.createElement('span')
+    text.textContent = 'Process exited'
+
+    const btn = document.createElement('button')
+    btn.className = 'reconnect-retry-btn'
+    btn.textContent = 'New Tab'
+    btn.addEventListener('click', () => {
+      window.location.reload()
+    })
+
+    this._overlay.appendChild(text)
+    this._overlay.appendChild(btn)
+    this._wrapper.style.position = 'relative'
+    this._wrapper.appendChild(this._overlay)
   }
 
   _refit() {

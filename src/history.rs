@@ -133,7 +133,8 @@ impl HistoryState {
             return;
         }
 
-        *self.inner.watcher.lock().expect("mutex poisoned") = Some(watcher);
+        *self.inner.watcher.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some(watcher);
 
         tokio::spawn(async move {
             while rx.recv().await.is_some() {

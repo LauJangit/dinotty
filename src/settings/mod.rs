@@ -56,6 +56,8 @@ pub struct Settings {
     pub ip_whitelist: Vec<String>,
     #[serde(default)]
     pub keybindings: std::collections::HashMap<String, KeyBinding>,
+    #[serde(default)]
+    pub log: LogConfig,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -69,6 +71,26 @@ pub struct KeyBinding {
 pub struct OpenApiConfig {
     #[serde(default)]
     pub enabled: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct LogConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub path: String,
+    #[serde(default = "default_log_max_size")]
+    pub max_size_mb: u64,
+}
+
+impl Default for LogConfig {
+    fn default() -> Self {
+        Self { enabled: true, path: String::new(), max_size_mb: 50 }
+    }
+}
+
+fn default_log_max_size() -> u64 {
+    50
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -466,6 +488,7 @@ impl Default for Settings {
             auth_token: String::new(),
             ip_whitelist: default_ip_whitelist(),
             keybindings: std::collections::HashMap::new(),
+            log: LogConfig::default(),
         }
     }
 }
@@ -541,8 +564,11 @@ pub fn create_settings_state() -> SettingsState {
 pub async fn get_settings(
     State(state): State<(Arc<SessionManager>, SettingsState)>,
 ) -> impl IntoResponse {
-    let settings = state.1.read().await;
-    Json(settings.clone())
+    let mut settings = state.1.read().await.clone();
+    if settings.log.path.is_empty() {
+        settings.log.path = log_file_path().to_string_lossy().to_string();
+    }
+    Json(settings)
 }
 
 pub async fn put_settings(
@@ -632,6 +658,67 @@ pub async fn get_background() -> impl IntoResponse {
         Err(_) => Response::builder()
             .status(StatusCode::INTERNAL_SERVER_ERROR)
             .body(Body::from("read error"))
+            .unwrap(),
+    }
+}
+
+#[must_use]
+pub fn log_dir() -> PathBuf {
+    config_dir().join("logs")
+}
+
+#[must_use]
+pub fn log_file_path() -> PathBuf {
+    log_dir().join("dinotty.log")
+}
+
+#[allow(clippy::unused_async, clippy::missing_panics_doc)]
+pub async fn get_log(
+    State(state): State<(Arc<SessionManager>, SettingsState)>,
+) -> impl IntoResponse {
+    let settings = state.1.read().await;
+    if !settings.log.enabled {
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+            .body(Body::from("日志保存未启用"))
+            .unwrap();
+    }
+
+    let path = if settings.log.path.is_empty() {
+        log_file_path()
+    } else {
+        PathBuf::from(&settings.log.path)
+    };
+
+    if !path.exists() {
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+            .body(Body::from("暂无日志"))
+            .unwrap();
+    }
+
+    // Read last 1MB of log to avoid overwhelming the browser
+    let read_size: usize = 1024 * 1024; // 1MB
+
+    match std::fs::read(&path) {
+        Ok(data) => {
+            let content = if data.len() > read_size {
+                let start = data.len() - read_size;
+                String::from_utf8_lossy(&data[start..]).into_owned()
+            } else {
+                String::from_utf8_lossy(&data).into_owned()
+            };
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+                .body(Body::from(content))
+                .unwrap()
+        }
+        Err(_) => Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body(Body::from("读取日志失败"))
             .unwrap(),
     }
 }

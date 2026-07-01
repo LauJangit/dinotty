@@ -331,12 +331,63 @@ async fn generate_qr_code(State(state): State<AppState>) -> impl IntoResponse {
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::new(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into()),
-        ))
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    // Load settings first to check log config
+    let initial_settings = settings::load_settings();
+
+    // Setup file logging if enabled
+    let _guard = if initial_settings.log.enabled {
+        let log_path = if initial_settings.log.path.is_empty() {
+            let dir = settings::log_dir();
+            std::fs::create_dir_all(&dir).expect("failed to create log directory");
+            settings::log_file_path()
+        } else {
+            let path = std::path::PathBuf::from(&initial_settings.log.path);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).expect("failed to create log directory");
+            }
+            path
+        };
+
+        // Rotate if log exceeds max size
+        let max_bytes = initial_settings.log.max_size_mb * 1024 * 1024;
+        if log_path.exists() {
+            if let Ok(metadata) = std::fs::metadata(&log_path) {
+                if metadata.len() > max_bytes {
+                    let backup_path = log_path.with_extension("log.1");
+                    let _ = std::fs::rename(&log_path, &backup_path);
+                }
+            }
+        }
+
+        // Use OpenOptions with append to respect exact log_path (including custom paths)
+        let file = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&log_path)
+            .expect("failed to create log file");
+
+        let (non_blocking, guard) = tracing_appender::non_blocking(file);
+
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::EnvFilter::new(
+                std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into()),
+            ))
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(tracing_subscriber::fmt::layer().with_writer(non_blocking))
+            .init();
+
+        tracing::info!("File logging enabled: {:?}", log_path);
+        Some(guard)
+    } else {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::EnvFilter::new(
+                std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into()),
+            ))
+            .with(tracing_subscriber::fmt::layer())
+            .init();
+
+        None
+    };
 
     let port = parse_port();
     let manager = Arc::new(SessionManager::new());
@@ -446,6 +497,7 @@ async fn main() {
                 "/api/settings/background",
                 post(settings::upload_background).get(settings::get_background),
             )
+            .route("/api/log", get(settings::get_log))
             .route("/api/workspace/resolve", get(workspace::workspace_resolve))
             .route("/api/workspace/list", get(workspace::workspace_list))
             .route("/api/workspace/meta", get(workspace::workspace_meta))

@@ -13,7 +13,7 @@ use std::{
     },
     time::Instant,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tracing::info;
 
 /// Force-flush `sync_buffer` when accumulated data exceeds this limit (256KB).
@@ -53,6 +53,8 @@ pub struct Session {
     pub sync_buffer: Mutex<Vec<String>>,
     /// Running byte count of `sync_buffer` to avoid O(n) sum on every broadcast
     pub sync_buffer_bytes: AtomicUsize,
+    /// Sender for debounced resize requests (None = no pending resize)
+    pub(crate) resize_tx: watch::Sender<Option<(u16, u16)>>,
 }
 
 impl Session {
@@ -98,6 +100,9 @@ impl Session {
     /// Returns an error if the PTY resize operation fails.
     pub fn resize(&self, cols: u16, rows: u16) -> Result<(), String> {
         use portable_pty::PtySize;
+        if self.is_exited() {
+            return Ok(());
+        }
         let m = self.master.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         m.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
             .map_err(|e| e.to_string())?;
@@ -108,6 +113,13 @@ impl Session {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .resize(cols as usize, rows as usize);
         Ok(())
+    }
+
+    /// Debounced resize: coalesces rapid calls (e.g. window drag) and applies
+    /// the latest size after a 25ms quiet period. Ensures the final resize is
+    /// always applied even if no further calls arrive.
+    pub fn resize_debounced(&self, cols: u16, rows: u16) {
+        let _ = self.resize_tx.send(Some((cols, rows)));
     }
 
     pub fn on_pty_output(&self, data: &[u8]) {
@@ -132,9 +144,9 @@ impl Session {
 
     pub fn add_client(&self) -> mpsc::Receiver<String> {
         // Bounded channel provides backpressure: if a client cannot keep up
-        // with PTY output, try_send() fails and the client is dropped rather
-        // than accumulating unbounded memory.
-        let (tx, rx) = mpsc::channel(1024);
+        // with PTY output, blocking_send() pauses the PTY reader thread,
+        // which naturally slows shell output rather than dropping data.
+        let (tx, rx) = mpsc::channel(10240);
         self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(tx);
         rx
     }
@@ -166,7 +178,11 @@ impl Session {
             return;
         }
         let mut clients = self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        clients.retain(|tx| tx.try_send(msg.to_string()).is_ok());
+        // blocking_send creates true backpressure: when the channel is full,
+        // the PTY reader thread pauses until the frontend catches up.
+        // This is safe because broadcast() runs in spawn_blocking (PTY reader thread).
+        let data = msg.to_string();
+        clients.retain(|tx| tx.blocking_send(data.clone()).is_ok());
     }
 
     /// Enable or disable synchronized output mode (DEC mode 2026).
@@ -196,15 +212,23 @@ impl Session {
         let combined = data.join("");
         let mut clients = self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if combined.len() <= FLUSH_CHUNK_SIZE {
-            clients.retain(|tx| tx.try_send(combined.clone()).is_ok());
+            clients.retain(|tx| tx.blocking_send(combined.clone()).is_ok());
         } else {
             for chunk in combined.as_bytes().chunks(FLUSH_CHUNK_SIZE) {
-                // SAFETY: chunks split on byte boundaries of valid UTF-8 may land
-                // mid-codepoint. Use from_utf8_lossy to avoid panics.
                 let s = String::from_utf8_lossy(chunk).into_owned();
-                clients.retain(|tx| tx.try_send(s.clone()).is_ok());
+                clients.retain(|tx| tx.blocking_send(s.clone()).is_ok());
             }
         }
+    }
+
+    /// Notify all connected clients that the session is exiting, then mark as exited.
+    /// Must be called from a blocking context (`spawn_blocking`) because it uses `blocking_send`.
+    pub fn notify_exit_and_mark_exited(&self, pane_id: &str) {
+        let exit_msg = serde_json::json!({"type": "session_exit", "pane_id": pane_id}).to_string();
+        let mut clients = self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        clients.retain(|tx| tx.blocking_send(exit_msg.clone()).is_ok());
+        drop(clients);
+        self.mark_exited();
     }
 
     pub fn has_clients(&self) -> bool {

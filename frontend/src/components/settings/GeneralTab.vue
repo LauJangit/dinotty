@@ -169,6 +169,58 @@
         {{ t('settings.confirmBeforeCloseTabHint') }}
       </p>
     </section>
+
+    <section class="settings-section">
+      <h3>{{ t('settings.log') }}</h3>
+      <div class="settings-row">
+        <label>{{ t('settings.log.enabled') }}</label>
+        <label class="toggle">
+          <input type="checkbox" v-model="settings.log.enabled" @change="saveSettings()" />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
+      <p class="settings-hint">{{ t('settings.log.hint') }}</p>
+
+      <template v-if="settings.log.enabled">
+        <div class="settings-row" style="margin-top: 12px">
+          <label>{{ t('settings.log.path') }}</label>
+          <input
+            v-model="settings.log.path"
+            class="shortcut-input"
+            :placeholder="t('settings.log.pathHint')"
+            @change="saveSettings()"
+          />
+        </div>
+        <div class="settings-row" style="margin-top: 8px">
+          <label>{{ t('settings.log.maxSize') }}</label>
+          <input
+            v-model.number="settings.log.max_size_mb"
+            type="number"
+            class="shortcut-input"
+            min="1"
+            max="500"
+            @change="saveSettings()"
+          />
+        </div>
+        <div style="margin-top: 12px">
+          <button class="icon-btn" @click="viewLog">{{ t('settings.log.view') }}</button>
+        </div>
+      </template>
+    </section>
+
+    <!-- Log Viewer Modal -->
+    <div v-if="logModalVisible" class="log-modal-overlay" @click.self="logModalVisible = false">
+      <div class="log-modal">
+        <div class="log-modal-header">
+          <h3>{{ t('settings.log.viewTitle') }}</h3>
+          <div class="log-modal-actions">
+            <button class="icon-btn" @click="refreshLog">{{ t('settings.log.refresh') }}</button>
+            <button class="icon-btn" @click="logModalVisible = false">{{ t('settings.log.close') }}</button>
+          </div>
+        </div>
+        <pre class="log-content">{{ logLoading ? t('settings.log.loading') : (logContent || t('settings.log.noLog')) }}</pre>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -192,6 +244,9 @@ const { settings, saveSettings } = useSettings()
 const { t } = useI18n()
 
 const accessUrl = ref('')
+const logModalVisible = ref(false)
+const logContent = ref('')
+const logLoading = ref(false)
 const copied = ref(false)
 const qrCanvasRef = ref<HTMLCanvasElement | null>(null)
 const qrCode = ref('')
@@ -363,6 +418,27 @@ function addIp() {
 function removeIp(idx: number) {
   settings.ip_whitelist.splice(idx, 1)
 }
+
+async function viewLog() {
+  logModalVisible.value = true
+  await refreshLog()
+}
+
+async function refreshLog() {
+  logLoading.value = true
+  try {
+    const res = await authFetch(apiUrl('/api/log'))
+    if (res.ok) {
+      logContent.value = await res.text()
+    } else {
+      logContent.value = t('settings.log.noLog')
+    }
+  } catch {
+    logContent.value = t('settings.log.noLog')
+  } finally {
+    logLoading.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -471,5 +547,62 @@ function removeIp(idx: number) {
 .qr-refresh-btn:hover {
   color: var(--text-primary, #fff);
   border-color: var(--text-secondary, #888);
+}
+
+.log-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.log-modal {
+  background: var(--bg, #1a1a1a);
+  border: 1px solid var(--border, #333);
+  border-radius: 12px;
+  width: 90vw;
+  max-width: 900px;
+  height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.log-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border, #333);
+}
+
+.log-modal-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-primary, #e8e8e8);
+}
+
+.log-modal-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.log-content {
+  flex: 1;
+  overflow: auto;
+  padding: 16px 20px;
+  margin: 0;
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary, #aaa);
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 </style>

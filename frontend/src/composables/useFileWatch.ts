@@ -25,6 +25,9 @@ export function useFileWatch(opts: FileWatchOptions): FileWatch {
   const socket = ref<WebSocket | null>(null)
   let pendingDirs = new Set<string>()
   let batchTimer: ReturnType<typeof setTimeout> | null = null
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  let reconnectDelay = 1000
+  let intentionalClose = false
 
   function absToRel(absPath: string): string | null {
     const cwd = (opts.cwdLabel.value || '').replace(/\\/g, '/')
@@ -55,6 +58,10 @@ export function useFileWatch(opts: FileWatchOptions): FileWatch {
     )
   }
 
+  function isDirExpanded(dir: string): boolean {
+    return dir === '' || opts.expanded.value.has(dir)
+  }
+
   function handleWatchEvent(event: { type: string; path?: string; kind?: string }) {
     const changedPath = (event.path || '').replace(/\\/g, '/')
     if (!changedPath) return
@@ -77,7 +84,7 @@ export function useFileWatch(opts: FileWatchOptions): FileWatch {
     }
 
     if (kind === 'created' || kind === 'deleted') {
-      if (!opts.expanded.value.has(parentDir)) {
+      if (!isDirExpanded(parentDir)) {
         const next = { ...opts.childCache.value }
         delete next[parentDir]
         opts.childCache.value = next
@@ -92,7 +99,7 @@ export function useFileWatch(opts: FileWatchOptions): FileWatch {
         pendingDirs.clear()
         batchTimer = null
         for (const dir of dirs) {
-          if (opts.expanded.value.has(dir)) {
+          if (isDirExpanded(dir)) {
             void refreshTreeDir(dir)
           }
         }
@@ -124,6 +131,11 @@ export function useFileWatch(opts: FileWatchOptions): FileWatch {
   }
 
   function disconnectTreeWatchSocket() {
+    intentionalClose = true
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
     if (socket.value) {
       socket.value.close()
       socket.value = null
@@ -135,9 +147,17 @@ export function useFileWatch(opts: FileWatchOptions): FileWatch {
     }
   }
 
-  async function connectTreeWatchSocket() {
-    disconnectTreeWatchSocket()
+  function scheduleReconnect() {
+    if (intentionalClose) return
+    if (reconnectTimer) return
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null
+      void doConnect()
+    }, reconnectDelay)
+    reconnectDelay = Math.min(reconnectDelay * 2, 30000)
+  }
 
+  async function doConnect() {
     const base = await getApiBase()
     const apiBase = base || window.location.origin
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -147,6 +167,10 @@ export function useFileWatch(opts: FileWatchOptions): FileWatch {
     try {
       const ws = new WebSocket(wsUrlWithToken(wsUrl))
       socket.value = ws
+
+      ws.onopen = () => {
+        reconnectDelay = 1000
+      }
 
       ws.onmessage = (event) => {
         try {
@@ -159,11 +183,31 @@ export function useFileWatch(opts: FileWatchOptions): FileWatch {
 
       ws.onclose = () => {
         socket.value = null
+        scheduleReconnect()
       }
       ws.onerror = () => {
         socket.value = null
       }
     } catch {}
+  }
+
+  async function connectTreeWatchSocket() {
+    intentionalClose = false
+    reconnectDelay = 1000
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+    if (socket.value) {
+      socket.value.close()
+      socket.value = null
+    }
+    if (batchTimer) {
+      clearTimeout(batchTimer)
+      batchTimer = null
+      pendingDirs.clear()
+    }
+    await doConnect()
   }
 
   return { connectTreeWatchSocket, disconnectTreeWatchSocket }

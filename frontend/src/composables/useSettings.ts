@@ -39,10 +39,17 @@ export interface SettingsData {
   auth_token?: string
   ip_whitelist: string[]
   keybindings: Record<string, { key: string; shift: boolean }>
+  log: LogConfig
 }
 
 export interface OpenApiConfig {
   enabled: boolean
+}
+
+export interface LogConfig {
+  enabled: boolean
+  path: string
+  max_size_mb: number
 }
 
 export interface NotificationConfig {
@@ -212,6 +219,11 @@ export const settings = reactive<SettingsData>({
   },
   ip_whitelist: ['127.0.0.1', '::1'],
   keybindings: {},
+  log: {
+    enabled: true,
+    path: '',
+    max_size_mb: 50,
+  },
 })
 
 let loaded = false

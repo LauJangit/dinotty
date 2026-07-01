@@ -404,19 +404,15 @@ async fn handle_socket(
         }
         info!("All initial messages sent to pane={}", pane_id);
 
-        let pane_id_fwd = pane_id.clone();
         let fwd_ws_out_tx = ws_out_tx.clone();
         let fwd = tokio::spawn(async move {
             while let Some(data) = rx.recv().await {
-                info!("Forwarder: pane={}, data_len={}", pane_id_fwd, data.len());
                 let msg = serde_json::to_string(&ServerMsg::Output { data: &data })
                     .expect("serialization is infallible");
                 if fwd_ws_out_tx.send(Message::Text(msg)).is_err() {
-                    error!("Forwarder: failed to send WS message for pane={}", pane_id_fwd);
                     break;
                 }
             }
-            info!("Forwarder: exited for pane={}", pane_id_fwd);
         });
 
         // Input channel: replaces old channel so only this connection writes to PTY
@@ -432,9 +428,17 @@ async fn handle_socket(
                 while let Ok(data) = input_rx.try_recv() {
                     batch.push_str(&data);
                 }
-                let mut w =
-                    write_session.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                let _ = w.write_all(batch.as_bytes());
+                let ws = Arc::clone(&write_session);
+                // Move blocking I/O off the async runtime
+                if tokio::task::spawn_blocking(move || {
+                    let mut w = ws.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let _ = w.write_all(batch.as_bytes());
+                })
+                .await
+                .is_err()
+                {
+                    break;
+                }
             }
         });
 
@@ -470,7 +474,7 @@ async fn handle_socket(
                         }
                     }
                     Ok(ClientMsg::Resize { cols, rows }) => {
-                        let _ = session.resize(cols, rows);
+                        session.resize_debounced(cols, rows);
                     }
                     Err(e) => error!("parse msg: {}", e),
                 },
@@ -515,19 +519,15 @@ async fn handle_socket(
     let _ = ws_out_tx.send(Message::Text(shell_info));
 
     // Forward PTY output to this WS client
-    let pane_id_fwd = pane_id.clone();
     let fwd_ws_out_tx = ws_out_tx.clone();
     let fwd = tokio::spawn(async move {
         while let Some(data) = rx.recv().await {
-            info!("Forwarder (new): pane={}, data_len={}", pane_id_fwd, data.len());
             let msg = serde_json::to_string(&ServerMsg::Output { data: &data })
                 .expect("serialization is infallible");
             if fwd_ws_out_tx.send(Message::Text(msg)).is_err() {
-                error!("Forwarder (new): failed to send WS message for pane={}", pane_id_fwd);
                 break;
             }
         }
-        info!("Forwarder (new): exited for pane={}", pane_id_fwd);
     });
 
     // Input channel: dedicated write task reads from channel → PTY writer
@@ -543,9 +543,17 @@ async fn handle_socket(
             while let Ok(data) = input_rx.try_recv() {
                 batch.push_str(&data);
             }
-            let mut w =
-                write_session.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            let _ = w.write_all(batch.as_bytes());
+            let ws = Arc::clone(&write_session);
+            // Move blocking I/O off the async runtime
+            if tokio::task::spawn_blocking(move || {
+                let mut w = ws.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                let _ = w.write_all(batch.as_bytes());
+            })
+            .await
+            .is_err()
+            {
+                break;
+            }
         }
     });
 
@@ -579,7 +587,7 @@ async fn handle_socket(
                     }
                 }
                 Ok(ClientMsg::Resize { cols, rows }) => {
-                    let _ = session.resize(cols, rows);
+                    session.resize_debounced(cols, rows);
                 }
                 Err(e) => error!("parse msg: {}", e),
             },
@@ -782,9 +790,17 @@ pub async fn handle_open_api_ws(socket: WebSocket, manager: Arc<SessionManager>,
             while let Ok(data) = pty_in_rx.try_recv() {
                 batch.push_str(&data);
             }
-            let mut w =
-                write_session.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            let _ = w.write_all(batch.as_bytes());
+            let ws = Arc::clone(&write_session);
+            // Move blocking I/O off the async runtime
+            if tokio::task::spawn_blocking(move || {
+                let mut w = ws.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                let _ = w.write_all(batch.as_bytes());
+            })
+            .await
+            .is_err()
+            {
+                break;
+            }
         }
     });
 
@@ -798,7 +814,7 @@ pub async fn handle_open_api_ws(socket: WebSocket, manager: Arc<SessionManager>,
                             let _ = pty_in_tx.send(data);
                         }
                         ClientMsg::Resize { cols, rows } => {
-                            let _ = session.resize(cols, rows);
+                            session.resize_debounced(cols, rows);
                         }
                     }
                 }

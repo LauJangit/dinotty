@@ -6,7 +6,7 @@ use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{error, info};
 
 /// Create a new PTY session and register it with the session manager.
 ///
@@ -71,6 +71,7 @@ pub fn create_session(
     let writer: Box<dyn Write + Send> = pair.master.take_writer().map_err(|e| e.to_string())?;
 
     let initial_cwd = home_for_cwd.canonicalize().unwrap_or_else(|_| home_for_cwd.clone());
+    let (resize_tx, resize_rx) = tokio::sync::watch::channel(None);
 
     let session = Arc::new(Session {
         writer: std::sync::Mutex::new(writer),
@@ -91,8 +92,31 @@ pub fn create_session(
         sync_active: std::sync::atomic::AtomicBool::new(false),
         sync_buffer: std::sync::Mutex::new(Vec::new()),
         sync_buffer_bytes: std::sync::atomic::AtomicUsize::new(0),
+        resize_tx,
     });
     manager.sessions.insert(pane_id.to_string(), Arc::clone(&session));
+
+    // Spawn resize debounce task: waits 25ms after last change, then applies
+    {
+        let session_weak = Arc::downgrade(&session);
+        tokio::spawn(async move {
+            let mut rx = resize_rx;
+            loop {
+                if rx.changed().await.is_err() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                let size = *rx.borrow_and_update();
+                if let Some((cols, rows)) = size {
+                    if let Some(session) = session_weak.upgrade() {
+                        let _ = session.resize(cols, rows);
+                    } else {
+                        break;
+                    }
+                }
+            }
+        });
+    }
 
     // Publish session created event
     manager.event_bus.publish(BusEvent::SessionCreated {
@@ -109,7 +133,14 @@ pub fn create_session(
         let mut utf8_tail: Vec<u8> = Vec::new();
         loop {
             match reader.read(&mut buf) {
-                Ok(0) | Err(_) => break,
+                Ok(0) => {
+                    info!("PTY reader: EOF, pane={}", pane_id_clone);
+                    break;
+                }
+                Err(e) => {
+                    error!("PTY reader: read error: {:?}, pane={}", e, pane_id_clone);
+                    break;
+                }
                 Ok(n) => {
                     let data = &buf[..n];
                     // Feed to virtual screen and check for command completion
@@ -189,7 +220,9 @@ pub fn create_session(
                 }
             }
         }
-        session_clone.mark_exited();
+        // Notify all connected clients before marking as exited,
+        // so the frontend knows the process is dead instead of seeing a frozen terminal.
+        session_clone.notify_exit_and_mark_exited(&pane_id_clone);
         if manager_clone.sessions.remove(&pane_id_clone).is_some() {
             // Publish session closed event
             manager_clone.event_bus.publish(BusEvent::SessionClosed {
