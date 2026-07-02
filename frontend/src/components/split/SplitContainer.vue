@@ -112,6 +112,7 @@
         :left-ratio-ref="makeRatioRef(idx)"
         :right-ratio-ref="makeRatioRef(idx + 1)"
         :container-el="containerRef!"
+        :offset-ratio="getOffsetRatio(idx)"
         @drag-end="emit('dividerDragEnd')"
       />
     </template>
@@ -178,6 +179,15 @@ function makeRatioRef(idx: number) {
       }
     },
   })
+}
+
+function getOffsetRatio(leftIdx: number) {
+  if (!split.value) return 0
+  let sum = 0
+  for (let i = 0; i < leftIdx; i++) {
+    sum += split.value.ratios[i] ?? 0
+  }
+  return sum
 }
 
 function getChildStyle(idx: number) {

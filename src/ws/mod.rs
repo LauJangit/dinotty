@@ -405,19 +405,23 @@ async fn handle_socket(
         info!("All initial messages sent to pane={}", pane_id);
 
         let fwd_ws_out_tx = ws_out_tx.clone();
+        let fwd_pane = pane_id.clone();
         let fwd = tokio::spawn(async move {
             while let Some(data) = rx.recv().await {
                 let msg = serde_json::to_string(&ServerMsg::Output { data: &data })
                     .expect("serialization is infallible");
                 if fwd_ws_out_tx.send(Message::Text(msg)).is_err() {
+                    info!("WS forwarder (reconnect): send failed, exiting pane={}", fwd_pane);
                     break;
                 }
             }
+            info!("WS forwarder (reconnect): channel closed, exiting pane={}", fwd_pane);
         });
 
         // Input channel: replaces old channel so only this connection writes to PTY
         let mut input_rx = session.replace_input_channel();
         let write_session = Arc::clone(&session);
+        let write_pane = pane_id.clone();
         tokio::spawn(async move {
             while let Some(first) = input_rx.recv().await {
                 if write_session.is_exited() {
@@ -429,17 +433,26 @@ async fn handle_socket(
                     batch.push_str(&data);
                 }
                 let ws = Arc::clone(&write_session);
+                let batch_len = batch.len();
                 // Move blocking I/O off the async runtime
-                if tokio::task::spawn_blocking(move || {
+                match tokio::task::spawn_blocking(move || {
                     let mut w = ws.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                    let _ = w.write_all(batch.as_bytes());
+                    w.write_all(batch.as_bytes())
                 })
                 .await
-                .is_err()
                 {
-                    break;
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        error!("PTY write error ({}B): {}, pane={}", batch_len, e, write_pane);
+                        break;
+                    }
+                    Err(e) => {
+                        error!("PTY write task panic: {}, pane={}", e, write_pane);
+                        break;
+                    }
                 }
             }
+            info!("PTY write task (reconnect) exited, pane={}", write_pane);
         });
 
         // Read loop
@@ -520,19 +533,23 @@ async fn handle_socket(
 
     // Forward PTY output to this WS client
     let fwd_ws_out_tx = ws_out_tx.clone();
+    let fwd_pane = pane_id.clone();
     let fwd = tokio::spawn(async move {
         while let Some(data) = rx.recv().await {
             let msg = serde_json::to_string(&ServerMsg::Output { data: &data })
                 .expect("serialization is infallible");
             if fwd_ws_out_tx.send(Message::Text(msg)).is_err() {
+                info!("WS forwarder: send failed, exiting pane={}", fwd_pane);
                 break;
             }
         }
+        info!("WS forwarder: channel closed, exiting pane={}", fwd_pane);
     });
 
     // Input channel: dedicated write task reads from channel → PTY writer
     let mut input_rx = session.replace_input_channel();
     let write_session = Arc::clone(&session);
+    let write_pane = pane_id.clone();
     tokio::spawn(async move {
         while let Some(first) = input_rx.recv().await {
             if write_session.is_exited() {
@@ -544,17 +561,26 @@ async fn handle_socket(
                 batch.push_str(&data);
             }
             let ws = Arc::clone(&write_session);
+            let batch_len = batch.len();
             // Move blocking I/O off the async runtime
-            if tokio::task::spawn_blocking(move || {
+            match tokio::task::spawn_blocking(move || {
                 let mut w = ws.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                let _ = w.write_all(batch.as_bytes());
+                w.write_all(batch.as_bytes())
             })
             .await
-            .is_err()
             {
-                break;
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    error!("PTY write error ({}B): {}, pane={}", batch_len, e, write_pane);
+                    break;
+                }
+                Err(e) => {
+                    error!("PTY write task panic: {}, pane={}", e, write_pane);
+                    break;
+                }
             }
         }
+        info!("PTY write task exited, pane={}", write_pane);
     });
 
     // WS read loop
@@ -766,21 +792,23 @@ pub async fn handle_open_api_ws(socket: WebSocket, manager: Arc<SessionManager>,
 
     // Forward broadcast output to WS
     let fwd_ws_out_tx = ws_out_tx.clone();
-    let pane_id_fwd = pane_id.clone();
+    let fwd_pane = pane_id.clone();
     let fwd = tokio::spawn(async move {
         while let Some(data) = rx.recv().await {
             let msg = serde_json::to_string(&ServerMsg::Output { data: &data })
                 .expect("serialization is infallible");
             if fwd_ws_out_tx.send(Message::Text(msg)).is_err() {
+                info!("WS forwarder (open_api): send failed, exiting pane={}", fwd_pane);
                 break;
             }
         }
-        let _ = pane_id_fwd; // keep for logging if needed
+        info!("WS forwarder (open_api): channel closed, exiting pane={}", fwd_pane);
     });
 
     // PTY write task: avoids blocking the WS read loop with synchronous I/O
     let (pty_in_tx, mut pty_in_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     let write_session = Arc::clone(&session);
+    let write_pane = pane_id.clone();
     tokio::spawn(async move {
         while let Some(first) = pty_in_rx.recv().await {
             if write_session.is_exited() {
@@ -791,17 +819,26 @@ pub async fn handle_open_api_ws(socket: WebSocket, manager: Arc<SessionManager>,
                 batch.push_str(&data);
             }
             let ws = Arc::clone(&write_session);
+            let batch_len = batch.len();
             // Move blocking I/O off the async runtime
-            if tokio::task::spawn_blocking(move || {
+            match tokio::task::spawn_blocking(move || {
                 let mut w = ws.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                let _ = w.write_all(batch.as_bytes());
+                w.write_all(batch.as_bytes())
             })
             .await
-            .is_err()
             {
-                break;
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    error!("PTY write error ({}B): {}, pane={}", batch_len, e, write_pane);
+                    break;
+                }
+                Err(e) => {
+                    error!("PTY write task panic: {}, pane={}", e, write_pane);
+                    break;
+                }
             }
         }
+        info!("PTY write task (open_api) exited, pane={}", write_pane);
     });
 
     // Read loop: accept Input and Resize messages

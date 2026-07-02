@@ -4,6 +4,7 @@ import { getApiBase, apiUrl, authFetch, hasAuthToken } from './apiBase'
 import ClaudeLogo from '../components/icons/ClaudeLogo.vue'
 import CodexLogo from '../components/icons/CodexLogo.vue'
 import OpencodeLogo from '../components/icons/OpencodeLogo.vue'
+import type { KeyBinding } from './useKeybindings'
 export interface SettingsData {
   theme: {
     preset: string
@@ -38,7 +39,7 @@ export interface SettingsData {
   open_api: OpenApiConfig
   auth_token?: string
   ip_whitelist: string[]
-  keybindings: Record<string, { key: string; shift: boolean }>
+  keybindings: Record<string, KeyBinding>
   log: LogConfig
 }
 

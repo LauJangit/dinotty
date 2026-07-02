@@ -15,6 +15,8 @@ const props = defineProps<{
   leftRatioRef: Ref<number>
   rightRatioRef: Ref<number>
   containerEl: HTMLElement
+  /** Cumulative ratio of all panes before the left pane (0 for the first divider) */
+  offsetRatio: number
 }>()
 
 const emit = defineEmits<{
@@ -59,8 +61,10 @@ function startDrag(e: MouseEvent | TouchEvent) {
     const pct = offset / total
 
     const sum = props.leftRatioRef.value + props.rightRatioRef.value
+    // Convert absolute container position to position within the two adjacent panes
+    const localPct = pct - props.offsetRatio
     const minRatio = 0.1
-    const newLeft = Math.max(minRatio, Math.min(sum - minRatio, pct))
+    const newLeft = Math.max(minRatio, Math.min(sum - minRatio, localPct))
 
     props.leftRatioRef.value = newLeft
     props.rightRatioRef.value = sum - newLeft

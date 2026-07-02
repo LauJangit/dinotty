@@ -1007,7 +1007,10 @@ const paletteCommands = computed<Command[]>(() => {
       icon: '◈',
       title: cmdDef?.title || cmd.id,
       subtitle: plugin?.manifest.name,
-      action: cmd.handler,
+      action: () => {
+        openPlugin(cmd.pluginId)
+        cmd.handler()
+      },
     })
   }
 

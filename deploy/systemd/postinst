@@ -1,0 +1,27 @@
+#!/bin/sh
+set -e
+
+# Create dinotty system user and group if they don't exist
+if ! getent group dinotty >/dev/null 2>&1; then
+    addgroup --system dinotty
+fi
+
+if ! getent passwd dinotty >/dev/null 2>&1; then
+    adduser --system --ingroup dinotty --no-create-home --home /var/lib/dinotty dinotty
+fi
+
+# Create data directory
+mkdir -p /var/lib/dinotty
+chown dinotty:dinotty /var/lib/dinotty
+
+# Create config directory and copy example if needed
+mkdir -p /etc/dinotty
+if [ ! -f /etc/dinotty/env ] && [ -f /etc/dinotty/env.example ]; then
+    cp /etc/dinotty/env.example /etc/dinotty/env
+    chown dinotty:dinotty /etc/dinotty/env
+fi
+
+# Reload systemd to pick up new unit file
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload
+fi

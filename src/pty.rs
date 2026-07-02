@@ -131,6 +131,30 @@ pub fn create_session(
         let mut reader = reader;
         let mut buf = [0u8; 4096];
         let mut utf8_tail: Vec<u8> = Vec::new();
+        let last_read_at = Arc::new(std::sync::Mutex::new(std::time::Instant::now()));
+        let watchdog_pane = pane_id_clone.clone();
+        let watchdog_session = Arc::clone(&session_clone);
+        let watchdog_read_ts = Arc::clone(&last_read_at);
+        // Watchdog: detect if PTY reader is stuck (no read for >30s)
+        let _watchdog = std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(10));
+            let idle = watchdog_read_ts
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .elapsed();
+            if idle > std::time::Duration::from_secs(30) {
+                let child_alive = !watchdog_session.is_exited();
+                tracing::warn!(
+                    "PTY reader watchdog: no read for {:.0}s, pane={}, child_alive={}",
+                    idle.as_secs(),
+                    watchdog_pane,
+                    child_alive
+                );
+            }
+            if watchdog_session.is_exited() {
+                break;
+            }
+        });
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => {
@@ -142,6 +166,8 @@ pub fn create_session(
                     break;
                 }
                 Ok(n) => {
+                    *last_read_at.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+                        std::time::Instant::now();
                     let data = &buf[..n];
                     // Feed to virtual screen and check for command completion
                     let (command_results, sync_events) = {

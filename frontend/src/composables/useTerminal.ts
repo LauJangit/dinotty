@@ -7,6 +7,7 @@ import type { ClientMsg, ServerMsg } from '../types/protocol'
 import { isTauri, createTransport, type Transport } from './useTransport'
 import { onThemeChange, saveSettings, settings, onTextChange } from './useSettings'
 import { wsUrlWithToken } from './apiBase'
+import { terminalKeyBindingDefs, useKeybindings, type KeyBinding } from './useKeybindings'
 
 export function isTouchDevice(): boolean {
   return 'ontouchstart' in window || navigator.maxTouchPoints > 0
@@ -89,6 +90,35 @@ export function isDuplicateOnData(
   if (prev === '') return false
   if (data !== prev) return false
   return now - prevAt < DEDUP_WINDOW_MS
+}
+
+export function terminalKeybindingMatches(e: KeyboardEvent, binding: KeyBinding): boolean {
+  return e.key.toLowerCase() === binding.key.toLowerCase()
+    && e.shiftKey === !!binding.shift
+    && e.metaKey === !!binding.meta
+    && e.ctrlKey === !!binding.ctrl
+    && e.altKey === !!binding.alt
+}
+
+export function handleTerminalShortcutKeydown(
+  e: KeyboardEvent,
+  sendData: (data: string) => void,
+): boolean {
+  const key = e.key.toLowerCase()
+  if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && (key === 'c' || key === 'v')) return false
+
+  const { getBinding } = useKeybindings()
+  for (const def of terminalKeyBindingDefs) {
+    const sequence = def.sequence
+    if (!sequence) continue
+    if (terminalKeybindingMatches(e, getBinding(def.id))) {
+      e.preventDefault()
+      e.stopPropagation()
+      sendData(sequence)
+      return true
+    }
+  }
+  return false
 }
 
 function setupGlobalTauriDragDrop() {
@@ -223,17 +253,25 @@ export class TerminalInstance {
     // Ctrl+Shift+C/V: Linux-style copy/paste (macOS uses Cmd+C/V natively)
     const xt = this.xterm
     xt.attachCustomKeyEventHandler((e: KeyboardEvent) => {
-      if (e.ctrlKey && e.shiftKey && e.type === 'keydown') {
-        if (e.key === 'C' && xt.hasSelection()) {
-          navigator.clipboard.writeText(xt.getSelection())
-          e.preventDefault()
-          return false
+      if (e.type === 'keydown') {
+        if (e.isComposing || (e as any).keyCode === 229 || e.key === 'Process') return true
+
+        if (e.ctrlKey && e.shiftKey) {
+          if (e.key === 'C' && xt.hasSelection()) {
+            navigator.clipboard.writeText(xt.getSelection())
+            e.preventDefault()
+            return false
+          }
+          if (e.key === 'V') {
+            navigator.clipboard.readText().then((text) => {
+              if (text) xt.paste(text)
+            }).catch(() => {})
+            e.preventDefault()
+            return false
+          }
         }
-        if (e.key === 'V') {
-          navigator.clipboard.readText().then((text) => {
-            if (text) xt.paste(text)
-          }).catch(() => {})
-          e.preventDefault()
+
+        if (handleTerminalShortcutKeydown(e, (data) => this.sendData(data))) {
           return false
         }
       }

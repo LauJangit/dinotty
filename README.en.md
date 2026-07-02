@@ -167,8 +167,8 @@ curl -LO https://github.com/xichan96/dinotty/releases/download/v0.14.1/dinotty-s
 
 ```bash
 # systemd
-systemctl start dinotty-server
-systemctl enable dinotty-server  # auto-start on boot
+systemctl start dinotty
+systemctl enable dinotty  # auto-start on boot
 
 # Docker container
 nohup dinotty-server &

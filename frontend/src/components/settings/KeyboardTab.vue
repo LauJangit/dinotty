@@ -2,30 +2,101 @@
   <div>
     <section class="settings-section">
       <h3>{{ t('keybinding.title') }}</h3>
-      <div v-for="def in defs" :key="def.id" class="settings-row kb-shortcut-row">
-        <label
-          ><span class="kb-icon">{{ def.icon }}</span> {{ t(def.titleKey) }}</label
+      <div class="kb-group">
+        <h4>{{ t('keybinding.appShortcuts') }}</h4>
+        <div
+          v-for="def in appDefs"
+          :key="def.id"
+          class="settings-row kb-shortcut-row"
+          :data-kb-id="def.id"
         >
-        <div class="kb-shortcut-ctrl">
-          <span v-if="kbRecording !== def.id" class="kb-keys">
-            <kbd v-for="(k, i) in formatBinding(getBinding(def.id))" :key="i">{{ k }}</kbd>
-          </span>
-          <span v-else class="kb-keys recording">{{ t('keybinding.pressKeys') }}</span>
-          <template v-if="!isReadOnly(def.id)">
-            <button v-if="kbRecording !== def.id" class="shortcut-add" @click="startKbRecord(def.id)">
+          <label
+            ><span class="kb-icon">{{ def.icon }}</span> {{ t(def.titleKey) }}</label
+          >
+          <div class="kb-shortcut-ctrl">
+            <span v-if="kbRecording !== def.id" class="kb-keys">
+              <kbd v-for="(k, i) in formatBinding(getBinding(def.id), def.kind ?? 'app')" :key="i">{{
+                k
+              }}</kbd>
+            </span>
+            <span v-else class="kb-keys recording">{{ t('keybinding.pressKeys') }}</span>
+            <template v-if="!isReadOnly(def.id)">
+              <button
+                v-if="kbRecording !== def.id"
+                class="shortcut-add"
+                data-kb-action="record"
+                @click="startKbRecord(def.id)"
+              >
+                {{ t('settings.record') }}
+              </button>
+              <button
+                v-else
+                class="shortcut-add kb-stop"
+                data-kb-action="stop"
+                @click="stopKbRecord()"
+              >
+                {{ t('settings.stop') }}
+              </button>
+              <button
+                v-if="settings.keybindings[def.id]"
+                class="shortcut-del"
+                data-kb-action="reset"
+                @click="resetKbBinding(def.id)"
+              >
+                {{ t('keybinding.reset') }}
+              </button>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <div class="kb-group">
+        <h4>{{ t('keybinding.terminalShortcuts') }}</h4>
+        <p class="settings-hint">{{ t('keybinding.terminalReservedHint') }}</p>
+        <div
+          v-for="def in terminalDefs"
+          :key="def.id"
+          class="settings-row kb-shortcut-row"
+          :data-kb-id="def.id"
+        >
+          <label
+            ><span class="kb-icon">{{ def.icon }}</span> {{ t(def.titleKey) }}</label
+          >
+          <div class="kb-shortcut-ctrl">
+            <span v-if="kbRecording !== def.id" class="kb-keys">
+              <kbd v-for="(k, i) in formatBinding(getBinding(def.id), def.kind ?? 'app')" :key="i">{{
+                k
+              }}</kbd>
+            </span>
+            <span v-else class="kb-keys recording">{{ t('keybinding.pressKeys') }}</span>
+            <button
+              v-if="kbRecording !== def.id"
+              class="shortcut-add"
+              data-kb-action="record"
+              @click="startKbRecord(def.id)"
+            >
               {{ t('settings.record') }}
             </button>
-            <button v-else class="shortcut-add kb-stop" @click="stopKbRecord()">
+            <button
+              v-else
+              class="shortcut-add kb-stop"
+              data-kb-action="stop"
+              @click="stopKbRecord()"
+            >
               {{ t('settings.stop') }}
             </button>
             <button
               v-if="settings.keybindings[def.id]"
               class="shortcut-del"
+              data-kb-action="reset"
               @click="resetKbBinding(def.id)"
             >
               {{ t('keybinding.reset') }}
             </button>
-          </template>
+          </div>
+          <p v-if="kbRecordError && kbRecording === def.id" class="kb-record-error">
+            {{ kbRecordError }}
+          </p>
         </div>
       </div>
     </section>
@@ -253,6 +324,8 @@ import { getApiBase, apiUrl, authFetch } from '../../composables/apiBase'
 const { settings, saveSettings } = useSettings()
 const { t } = useI18n()
 const { defs, getBinding, formatBinding, isReadOnly } = useKeybindings()
+const appDefs = computed(() => defs.filter((def) => (def.kind ?? 'app') === 'app'))
+const terminalDefs = computed(() => defs.filter((def) => def.kind === 'terminal'))
 
 const openApiPaneId = ref('')
 const openApiData = ref('')
@@ -269,16 +342,40 @@ getApiBase().then((b) => {
 
 // --- Keyboard shortcuts recording ---
 const kbRecording = ref<string | null>(null)
+const kbRecordError = ref('')
 let kbRecordHandler: ((e: KeyboardEvent) => void) | null = null
 
 function startKbRecord(id: string) {
+  const def = defs.find((d) => d.id === id)
+  const kind = def?.kind ?? 'app'
   kbRecording.value = id
+  kbRecordError.value = ''
   kbRecordHandler = (e: KeyboardEvent) => {
     const k = e.key
     if (k === 'Shift' || k === 'Control' || k === 'Alt' || k === 'Meta') return
     e.preventDefault()
     e.stopPropagation()
-    const binding: KeyBinding = { key: k.toLowerCase(), shift: e.shiftKey }
+    const key = k.toLowerCase()
+    if (
+      kind === 'terminal' &&
+      e.ctrlKey &&
+      e.shiftKey &&
+      !e.metaKey &&
+      !e.altKey &&
+      (key === 'c' || key === 'v')
+    ) {
+      kbRecordError.value = t('keybinding.terminalReservedError')
+      return
+    }
+    const binding: KeyBinding = kind === 'terminal'
+      ? {
+          key,
+          shift: e.shiftKey,
+          meta: e.metaKey,
+          ctrl: e.ctrlKey,
+          alt: e.altKey,
+        }
+      : { key, shift: e.shiftKey }
     settings.keybindings[id] = binding
     stopKbRecord()
   }
@@ -292,6 +389,7 @@ function startKbRecord(id: string) {
 
 function stopKbRecord() {
   kbRecording.value = null
+  kbRecordError.value = ''
   if (kbRecordHandler) {
     window.removeEventListener('keydown', kbRecordHandler, true)
     kbRecordHandler = null
@@ -869,6 +967,15 @@ function unescapeFromDisplay(s: string): string {
 .kb-shortcut-row {
   justify-content: space-between;
 }
+.kb-group + .kb-group {
+  margin-top: 12px;
+}
+.kb-group h4 {
+  margin: 10px 0 6px;
+  color: var(--fg-muted, #999);
+  font-size: 12px;
+  font-weight: 600;
+}
 .kb-shortcut-ctrl {
   display: flex;
   align-items: center;
@@ -907,5 +1014,11 @@ function unescapeFromDisplay(s: string): string {
 .kb-stop {
   color: #ef4444 !important;
   border-color: #ef4444 !important;
+}
+.kb-record-error {
+  flex-basis: 100%;
+  margin: 4px 0 0 30px;
+  color: #ef4444;
+  font-size: 12px;
 }
 </style>

@@ -3,6 +3,9 @@ import { settings } from './useSettings'
 export interface KeyBinding {
   key: string
   shift: boolean
+  meta?: boolean
+  ctrl?: boolean
+  alt?: boolean
 }
 
 export interface KeyBindingDef {
@@ -11,6 +14,8 @@ export interface KeyBindingDef {
   icon: string
   titleKey: string
   readonly?: boolean
+  kind?: 'app' | 'terminal'
+  sequence?: string
 }
 
 const defs: KeyBindingDef[] = [
@@ -117,7 +122,42 @@ const defs: KeyBindingDef[] = [
     icon: 'A0',
     titleKey: 'keybinding.fontSizeReset',
   },
+  {
+    id: 'term.newline',
+    defaultBinding: { key: 'enter', shift: true, meta: false },
+    icon: '↵',
+    titleKey: 'keybinding.term.newline',
+    kind: 'terminal',
+    sequence: '\x1b\r',
+  },
+  {
+    id: 'term.lineStart',
+    defaultBinding: { key: 'arrowleft', shift: false, meta: true },
+    icon: '←',
+    titleKey: 'keybinding.term.lineStart',
+    kind: 'terminal',
+    sequence: '\x01',
+  },
+  {
+    id: 'term.lineEnd',
+    defaultBinding: { key: 'arrowright', shift: false, meta: true },
+    icon: '→',
+    titleKey: 'keybinding.term.lineEnd',
+    kind: 'terminal',
+    sequence: '\x05',
+  },
+  {
+    id: 'term.deleteToLineStart',
+    defaultBinding: { key: 'backspace', shift: false, meta: true },
+    icon: '⌫',
+    titleKey: 'keybinding.term.deleteToLineStart',
+    kind: 'terminal',
+    sequence: '\x15',
+  },
 ]
+
+export const keyBindingDefs = defs
+export const terminalKeyBindingDefs = defs.filter((def) => def.kind === 'terminal')
 
 export function useKeybindings() {
   function getBinding(id: string): KeyBinding {
@@ -126,10 +166,26 @@ export function useKeybindings() {
     return settings.keybindings[id] ?? def.defaultBinding
   }
 
-  function formatBinding(binding: KeyBinding): string[] {
-    const parts: string[] = ['⌘']
+  function formatBinding(binding: KeyBinding, kind: 'app' | 'terminal' = 'app'): string[] {
+    if (kind === 'app') {
+      const parts: string[] = ['⌘']
+      if (binding.shift) parts.push('⇧')
+      parts.push(binding.key.toUpperCase())
+      return parts
+    }
+
+    const parts: string[] = []
+    if (binding.meta) parts.push('⌘')
+    if (binding.ctrl) parts.push('⌃')
+    if (binding.alt) parts.push('⌥')
     if (binding.shift) parts.push('⇧')
-    parts.push(binding.key.toUpperCase())
+    const keyLabels: Record<string, string> = {
+      enter: '⏎',
+      arrowleft: '←',
+      arrowright: '→',
+      backspace: '⌫',
+    }
+    parts.push(keyLabels[binding.key.toLowerCase()] ?? binding.key.toUpperCase())
     return parts
   }
 
@@ -143,7 +199,7 @@ export function useKeybindings() {
       return {
         ...def,
         binding,
-        display: formatBinding(binding),
+        display: formatBinding(binding, def.kind ?? 'app'),
       }
     })
   }
