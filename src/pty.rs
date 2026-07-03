@@ -72,6 +72,7 @@ pub fn create_session(
 
     let initial_cwd = home_for_cwd.canonicalize().unwrap_or_else(|_| home_for_cwd.clone());
     let (resize_tx, resize_rx) = tokio::sync::watch::channel(None);
+    let (output_tx, output_rx) = tokio::sync::mpsc::unbounded_channel();
 
     let session = Arc::new(Session {
         writer: std::sync::Mutex::new(writer),
@@ -93,10 +94,15 @@ pub fn create_session(
         sync_buffer: std::sync::Mutex::new(Vec::new()),
         sync_buffer_bytes: std::sync::atomic::AtomicUsize::new(0),
         resize_tx,
+        output_tx,
+        output_rx: std::sync::Mutex::new(Some(output_rx)),
+        pending_results: std::sync::Mutex::new(Vec::new()),
     });
     manager.sessions.insert(pane_id.to_string(), Arc::clone(&session));
 
-    // Spawn resize debounce task: waits 25ms after last change, then applies
+    // Spawn resize debounce task: waits 25ms after last change, then applies.
+    // The actual resize runs in spawn_blocking to avoid blocking the tokio worker
+    // thread when the screen mutex is held by the PTY reader's feed() call.
     {
         let session_weak = Arc::downgrade(&session);
         tokio::spawn(async move {
@@ -109,7 +115,10 @@ pub fn create_session(
                 let size = *rx.borrow_and_update();
                 if let Some((cols, rows)) = size {
                     if let Some(session) = session_weak.upgrade() {
-                        let _ = session.resize(cols, rows);
+                        let _ = tokio::task::spawn_blocking(move || {
+                            let _ = session.resize(cols, rows);
+                        })
+                        .await;
                     } else {
                         break;
                     }
@@ -127,151 +136,225 @@ pub fn create_session(
     let session_clone = Arc::clone(&session);
     let pane_id_clone = pane_id.to_string();
     let manager_clone = Arc::clone(manager);
+
+    // ── PTY reader: reads bytes, feeds VTE, extracts results, notifies ──
+    // Same architecture as mainstream terminals (Alacritty, Kitty, iTerm2):
+    // the reader thread parses directly into screen state. No intermediate channel.
+    // The broadcast task reads the latest screen state at its own pace.
+    let reader_session = Arc::clone(&session);
+    let reader_pane = pane_id.to_string();
+    let reader_manager = Arc::clone(manager);
     tokio::task::spawn_blocking(move || {
         let mut reader = reader;
-        let mut buf = [0u8; 4096];
-        let mut utf8_tail: Vec<u8> = Vec::new();
-        let last_read_at = Arc::new(std::sync::Mutex::new(std::time::Instant::now()));
-        let watchdog_pane = pane_id_clone.clone();
-        let watchdog_session = Arc::clone(&session_clone);
-        let watchdog_read_ts = Arc::clone(&last_read_at);
-        // Watchdog: detect if PTY reader is stuck (no read for >30s)
-        let _watchdog = std::thread::spawn(move || loop {
-            std::thread::sleep(std::time::Duration::from_secs(10));
-            let idle = watchdog_read_ts
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .elapsed();
-            if idle > std::time::Duration::from_secs(30) {
-                let child_alive = !watchdog_session.is_exited();
-                tracing::warn!(
-                    "PTY reader watchdog: no read for {:.0}s, pane={}, child_alive={}",
-                    idle.as_secs(),
-                    watchdog_pane,
-                    child_alive
-                );
-            }
-            if watchdog_session.is_exited() {
-                break;
-            }
-        });
+        let mut buf = vec![0u8; 65536]; // 64KB — fewer read() syscalls
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => {
-                    info!("PTY reader: EOF, pane={}", pane_id_clone);
+                    info!("PTY reader: EOF, pane={}", reader_pane);
                     break;
                 }
                 Err(e) => {
-                    error!("PTY reader: read error: {:?}, pane={}", e, pane_id_clone);
+                    error!("PTY reader: read error: {:?}, pane={}", e, reader_pane);
                     break;
                 }
                 Ok(n) => {
-                    *last_read_at.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
-                        std::time::Instant::now();
                     let data = &buf[..n];
-                    // Feed to virtual screen and check for command completion
-                    let (command_results, sync_events) = {
-                        let mut screen = session_clone
+
+                    // CWD sniffing (before lock, uses its own cwd_state lock)
+                    reader_session.on_pty_output(data);
+
+                    // Feed to virtual screen + extract command results + handle sync events
+                    {
+                        let mut screen = reader_session
                             .screen
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        screen.feed(data);
-                        let results = screen.drain_command_results();
-                        // Collect stdout for each result while still holding the lock
-                        let outputs: Vec<String> =
-                            (0..results.len()).map(|_| screen.take_command_output()).collect();
-                        let sync = screen.drain_sync_events();
-                        (results.into_iter().zip(outputs).collect::<Vec<_>>(), sync)
-                    };
-                    // Handle DEC mode 2026 synchronized output events
-                    for event in sync_events {
-                        match event {
-                            crate::vt_screen::SyncEvent::Start => {
-                                session_clone.set_sync_mode(true);
-                                // Start 1-second safety timeout
-                                let sc = Arc::clone(&session_clone);
-                                tokio::runtime::Handle::current().spawn(async move {
-                                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                                    if sc.sync_active.load(std::sync::atomic::Ordering::Relaxed) {
-                                        sc.set_sync_mode(false);
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            screen.feed(data);
+                            let results = screen.drain_command_results();
+                            let outputs: Vec<String> =
+                                (0..results.len()).map(|_| screen.take_command_output()).collect();
+                            let sync = screen.drain_sync_events();
+                            (results.into_iter().zip(outputs).collect::<Vec<_>>(), sync)
+                        }));
+                        match result {
+                            Ok((command_results, sync_events)) => {
+                                // Handle sync events immediately (while still holding lock
+                                // prevents race between sync start and broadcast task wakeup)
+                                for event in sync_events {
+                                    match event {
+                                        crate::vt_screen::SyncEvent::Start => {
+                                            reader_session.set_sync_mode(true);
+                                        }
+                                        crate::vt_screen::SyncEvent::Stop => {
+                                            reader_session.set_sync_mode(false);
+                                        }
                                     }
-                                });
+                                }
+                                // Queue command results for broadcast task
+                                if !command_results.is_empty() {
+                                    let mut pending = reader_session
+                                        .pending_results
+                                        .lock()
+                                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                                    for (result, stdout) in command_results {
+                                        pending.push(crate::session::PendingCommandResult {
+                                            exit_code: result.exit_code,
+                                            duration_ms: result.duration_ms,
+                                            stdout,
+                                            method: result.method,
+                                        });
+                                    }
+                                }
                             }
-                            crate::vt_screen::SyncEvent::Stop => {
-                                session_clone.set_sync_mode(false);
+                            Err(e) => {
+                                let msg = e
+                                    .downcast_ref::<String>()
+                                    .map(String::as_str)
+                                    .or_else(|| e.downcast_ref::<&str>().copied())
+                                    .unwrap_or("unknown");
+                                error!("feed() PANICKED: {}, {}B, pane={}", msg, n, reader_pane);
                             }
                         }
                     }
-                    // Publish command_finished events
-                    for (result, stdout) in command_results {
-                        manager_clone.event_bus.publish(BusEvent::CommandFinished {
-                            pane_id: pane_id_clone.clone(),
-                            command: String::new(), // Will be filled by agent API
-                            exit_code: result.exit_code,
-                            duration_ms: result.duration_ms,
-                            stdout,
-                            method: result.method.clone(),
-                        });
-                        manager_clone.broadcast_sync(&SyncMsg::CommandFinished {
-                            pane_id: pane_id_clone.clone(),
-                            command: String::new(),
-                            exit_code: result.exit_code,
-                            duration_ms: result.duration_ms,
-                            stdout: String::new(),
-                            method: result.method,
-                        });
-                    }
-                    session_clone.on_pty_output(data);
 
-                    utf8_tail.extend_from_slice(data);
-                    let valid_up_to = match std::str::from_utf8(&utf8_tail) {
-                        Ok(s) => {
-                            session_clone.broadcast(s);
-                            utf8_tail.clear();
-                            continue;
-                        }
-                        Err(e) => e.valid_up_to(),
-                    };
-                    if valid_up_to > 0 {
-                        let s = unsafe { std::str::from_utf8_unchecked(&utf8_tail[..valid_up_to]) };
-                        session_clone.broadcast(s);
-                    }
-                    utf8_tail.drain(..valid_up_to);
-                    // Keep only the trailing incomplete bytes (max 3 for UTF-8)
-                    if utf8_tail.len() > 3 {
-                        // Invalid sequence — flush as replacement and reset
-                        session_clone.broadcast("\u{FFFD}");
-                        utf8_tail.clear();
-                    }
+                    // Send raw data for xterm.js rendering
+                    let _ = reader_session.output_tx.send(data.to_vec());
                 }
             }
         }
-        // Notify all connected clients before marking as exited,
-        // so the frontend knows the process is dead instead of seeing a frozen terminal.
-        session_clone.notify_exit_and_mark_exited(&pane_id_clone);
-        if manager_clone.sessions.remove(&pane_id_clone).is_some() {
-            // Publish session closed event
-            manager_clone.event_bus.publish(BusEvent::SessionClosed {
-                pane_id: pane_id_clone.clone(),
-                exit_code: None,
-            });
-            // Find the parent tab and clean up its layout; for single-pane tabs
-            // this returns the tab-level pane_id so we broadcast the correct ID.
-            let tab_pane_id = manager_clone
-                .on_pty_exited(&pane_id_clone)
-                .unwrap_or_else(|| pane_id_clone.clone());
-            manager_clone.broadcast_sync(&SyncMsg::TabClosed { pane_id: tab_pane_id });
+        error!("PTY reader exiting, running cleanup, pane={}", reader_pane);
+        reader_session.notify_exit_and_mark_exited(&reader_pane);
+        if reader_manager.sessions.remove(&reader_pane).is_some() {
+            reader_manager
+                .event_bus
+                .publish(BusEvent::SessionClosed { pane_id: reader_pane.clone(), exit_code: None });
+            let tab_pane_id =
+                reader_manager.on_pty_exited(&reader_pane).unwrap_or_else(|| reader_pane.clone());
+            reader_manager.broadcast_sync(&SyncMsg::TabClosed { pane_id: tab_pane_id });
         }
-        info!("PTY exited, session removed: pane={}", pane_id_clone);
-        let cb = session_clone
+        info!("PTY exited, session removed: pane={}", reader_pane);
+        let cb = reader_session
             .tauri_on_exit
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
         if let Some(f) = cb {
-            f(pane_id_clone);
+            f(reader_pane);
         }
     });
+
+    // ── Broadcast task: forwards raw PTY data + handles commands ──
+    // Reads raw PTY bytes from the output channel and broadcasts to clients
+    // (WS / Tauri forwarders). Also handles sync timeout and command events
+    // that were extracted by the PTY reader during feed().
+    //
+    // The PTY reader does inline feed() (like mainstream terminals), so VTE
+    // parsing and screen updates happen immediately. This task only needs to
+    // forward the raw bytes for xterm.js rendering.
+    {
+        let bcast_session = Arc::clone(&session_clone);
+        let bcast_manager = Arc::clone(&manager_clone);
+        let bcast_pane = pane_id_clone.clone();
+        tokio::spawn(async move {
+            info!("Broadcast task started, pane={}", bcast_pane);
+            let Some(mut output_rx) = bcast_session
+                .output_rx
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take()
+            else {
+                error!("Broadcast task: output_rx already taken, pane={}", bcast_pane);
+                return;
+            };
+
+            let sync_timeout = std::time::Duration::from_millis(500);
+            let mut sync_started_at: Option<std::time::Instant> = None;
+            let mut utf8_tail: Vec<u8> = Vec::new();
+
+            while let Some(first) = output_rx.recv().await {
+                if bcast_session.is_exited() {
+                    break;
+                }
+
+                // Drain all pending chunks to reduce broadcast frequency.
+                // When the task is behind, this coalesces multiple chunks into
+                // one batch — intermediate states are still forwarded to preserve
+                // escape sequence integrity for xterm.js.
+                let mut batch = first;
+                while let Ok(data) = output_rx.try_recv() {
+                    batch.extend_from_slice(&data);
+                }
+
+                // Sync safety timeout
+                if bcast_session.sync_active.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Some(started) = sync_started_at {
+                        if started.elapsed() > sync_timeout {
+                            tracing::warn!(
+                                "Sync mode timeout ({}ms), force-flushing, pane={}",
+                                started.elapsed().as_millis(),
+                                bcast_pane
+                            );
+                            bcast_session.set_sync_mode(false);
+                            sync_started_at = None;
+                        }
+                    } else {
+                        sync_started_at = Some(std::time::Instant::now());
+                    }
+                } else {
+                    sync_started_at = None;
+                }
+
+                // Drain pending command results
+                let results: Vec<crate::session::PendingCommandResult> = {
+                    let mut pending = bcast_session
+                        .pending_results
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    std::mem::take(&mut *pending)
+                };
+                for result in results {
+                    bcast_manager.event_bus.publish(BusEvent::CommandFinished {
+                        pane_id: bcast_pane.clone(),
+                        command: String::new(),
+                        exit_code: result.exit_code,
+                        duration_ms: result.duration_ms,
+                        stdout: result.stdout,
+                        method: result.method.clone(),
+                    });
+                    bcast_manager.broadcast_sync(&SyncMsg::CommandFinished {
+                        pane_id: bcast_pane.clone(),
+                        command: String::new(),
+                        exit_code: result.exit_code,
+                        duration_ms: result.duration_ms,
+                        stdout: String::new(),
+                        method: result.method,
+                    });
+                }
+
+                // UTF-8 handling + broadcast to clients
+                utf8_tail.extend_from_slice(&batch);
+                let valid_up_to = match std::str::from_utf8(&utf8_tail) {
+                    Ok(s) => {
+                        bcast_session.broadcast(s);
+                        utf8_tail.clear();
+                        continue;
+                    }
+                    Err(e) => e.valid_up_to(),
+                };
+                if valid_up_to > 0 {
+                    let s = unsafe { std::str::from_utf8_unchecked(&utf8_tail[..valid_up_to]) };
+                    bcast_session.broadcast(s);
+                }
+                utf8_tail.drain(..valid_up_to);
+                if utf8_tail.len() > 3 {
+                    bcast_session.broadcast("\u{FFFD}");
+                    utf8_tail.clear();
+                }
+            }
+            info!("Broadcast task exited, pane={}", bcast_pane);
+        });
+    }
 
     Ok((session, shell_type))
 }

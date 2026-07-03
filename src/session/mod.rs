@@ -32,6 +32,13 @@ pub struct CwdState {
     pub sniff_buf: Vec<u8>,
 }
 
+pub struct PendingCommandResult {
+    pub exit_code: i32,
+    pub duration_ms: u64,
+    pub stdout: String,
+    pub method: String,
+}
+
 pub struct Session {
     pub writer: Mutex<Box<dyn Write + Send>>,
     pub master: Mutex<Box<dyn MasterPty + Send>>,
@@ -55,6 +62,13 @@ pub struct Session {
     pub sync_buffer_bytes: AtomicUsize,
     /// Sender for debounced resize requests (None = no pending resize)
     pub(crate) resize_tx: watch::Sender<Option<(u16, u16)>>,
+    /// Raw PTY output channel: reader sends raw bytes here for xterm.js rendering.
+    /// Unbounded so the PTY reader never blocks on send.
+    pub output_tx: mpsc::UnboundedSender<Vec<u8>>,
+    /// Receiver side, taken once by the broadcast task.
+    pub output_rx: Mutex<Option<mpsc::UnboundedReceiver<Vec<u8>>>>,
+    /// Command results extracted during `feed()`, consumed by the broadcast task.
+    pub pending_results: Mutex<Vec<PendingCommandResult>>,
 }
 
 impl Session {

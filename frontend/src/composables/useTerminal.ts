@@ -1018,173 +1018,152 @@ export class TerminalInstance {
   }
 
   private _setupTouchScroll(wrapper: HTMLElement) {
-    const attachHandlers = (viewport: HTMLElement) => {
-      // Prevent native browser scroll on the viewport from conflicting with our
-      // custom touch-to-wheel translation.
-      wrapper.style.touchAction = 'none'
+    // Prevent native browser scroll on the wrapper from conflicting with our
+    // custom touch-to-wheel translation.
+    wrapper.style.touchAction = 'none'
 
-      let startX = 0
-      let startY = 0
-      let lastY = 0
-      let lastTime = 0
-      let accumulatedDeltaY = 0
-      let velocity = 0
-      let momentumId = 0
-      let mode: 'undecided' | 'scroll' | 'select' = 'undecided'
-      let scrollEventFired = false
-      const THRESHOLD = 10
-      const SCROLL_THRESHOLD = 12 // Lower threshold for more responsive feel
+    let startX = 0
+    let startY = 0
+    let lastY = 0
+    let lastTime = 0
+    let accumulatedDeltaY = 0
+    let velocity = 0
+    let momentumId = 0
+    let mode: 'undecided' | 'scroll' | 'select' = 'undecided'
+    let scrollEventFired = false
+    const THRESHOLD = 10
+    const SCROLL_THRESHOLD = 12 // Lower threshold for more responsive feel
 
-      const clearMomentum = () => {
-        if (momentumId) {
-          cancelAnimationFrame(momentumId)
-          momentumId = 0
-        }
-      }
-
-      const onTouchStart = (e: TouchEvent) => {
-        clearMomentum()
-        this.touchMoved = false
-        scrollEventFired = false
-        startX = e.touches[0].clientX
-        startY = e.touches[0].clientY
-        lastY = startY
-        lastTime = Date.now()
-        accumulatedDeltaY = 0
-        velocity = 0
-        mode = 'undecided'
-      }
-      const onTouchMove = (e: TouchEvent) => {
-        if (this.inTouchSelection) return
-        const cx = e.touches[0].clientX
-        const cy = e.touches[0].clientY
-        const now = Date.now()
-        if (mode === 'undecided') {
-          const dx = Math.abs(cx - startX)
-          const dy = Math.abs(cy - startY)
-          if (dy > THRESHOLD || dx > THRESHOLD) {
-            mode = dy > dx ? 'scroll' : 'select'
-            if (mode === 'scroll') this.touchMoved = true
-          } else {
-            return
-          }
-        }
-        if (mode === 'scroll') {
-          e.preventDefault() // suppress native scroll — safe because passive: false
-          // Fire terminal-scroll on first scroll movement to collapse virtual keyboard
-          if (!scrollEventFired) {
-            scrollEventFired = true
-            viewport.dispatchEvent(new CustomEvent('terminal-scroll', { bubbles: true }))
-          }
-          const deltaY = lastY - cy
-          const dt = now - lastTime || 1
-          velocity = deltaY / dt // px/ms
-          accumulatedDeltaY += deltaY
-
-          if (this.xterm && Math.abs(accumulatedDeltaY) >= SCROLL_THRESHOLD) {
-            this._sendWheelEvent(viewport, accumulatedDeltaY, cx, cy)
-            accumulatedDeltaY = 0
-          }
-        }
-        lastY = cy
-        lastTime = now
-      }
-
-      const onTouchEnd = () => {
-        if (mode !== 'scroll') return
-        // Flush remaining delta
-        if (this.xterm && Math.abs(accumulatedDeltaY) > 2) {
-          this._sendWheelEvent(viewport, accumulatedDeltaY, lastY, lastY)
-        }
-        accumulatedDeltaY = 0
-
-        // Momentum: keep sending wheel events with decaying velocity
-        if (this.xterm && Math.abs(velocity) > 0.15) {
-          const friction = 0.92
-          let v = velocity
-          const step = () => {
-            v *= friction
-            if (Math.abs(v) < 0.05) return
-            const delta = v * 16 // ~1 frame at 60fps
-            this._sendWheelEvent(viewport, delta, lastY, lastY)
-            momentumId = requestAnimationFrame(step)
-          }
-          momentumId = requestAnimationFrame(step)
-        }
-
-        // Notify that a scroll gesture ended — used to dismiss the virtual keyboard.
-        // Dispatch on viewport so it bubbles through xterm's DOM to #tab-content.
-        viewport.dispatchEvent(new CustomEvent('terminal-scroll', { bubbles: true }))
-      }
-
-      // Attach directly to the viewport (.xterm-viewport) — this intercepts
-      // touch events before iOS Safari's native scroll handler on the
-      // overflow-y:scroll element can consume them.
-      viewport.addEventListener('touchstart', onTouchStart, { passive: true })
-      viewport.addEventListener('touchmove', onTouchMove, { passive: false })
-      viewport.addEventListener('touchend', onTouchEnd, { passive: true })
-      // Wheel listener: collapse virtual keyboard on trackpad/mouse scroll
-      const onWheel = () => {
-        viewport.dispatchEvent(new CustomEvent('terminal-scroll', { bubbles: true }))
-      }
-      viewport.addEventListener('wheel', onWheel, { passive: true })
-      this._touchCleanup = () => {
-        clearMomentum()
-        viewport.removeEventListener('touchstart', onTouchStart)
-        viewport.removeEventListener('touchmove', onTouchMove)
-        viewport.removeEventListener('touchend', onTouchEnd)
-        viewport.removeEventListener('wheel', onWheel)
+    const clearMomentum = () => {
+      if (momentumId) {
+        cancelAnimationFrame(momentumId)
+        momentumId = 0
       }
     }
 
-    // Retry until xterm renders its DOM — single rAF is unreliable on slower
-    // devices / Safari where the renderer may need an extra frame.
-    let retries = 0
-    const tryAttach = () => {
-      requestAnimationFrame(() => {
-        const viewport = wrapper.querySelector('.xterm-viewport') as HTMLElement | null
-        if (viewport) {
-          attachHandlers(viewport)
+    const onTouchStart = (e: TouchEvent) => {
+      clearMomentum()
+      this.touchMoved = false
+      scrollEventFired = false
+      startX = e.touches[0].clientX
+      startY = e.touches[0].clientY
+      lastY = startY
+      lastTime = Date.now()
+      accumulatedDeltaY = 0
+      velocity = 0
+      mode = 'undecided'
+    }
+    const onTouchMove = (e: TouchEvent) => {
+      if (this.inTouchSelection) return
+      const cx = e.touches[0].clientX
+      const cy = e.touches[0].clientY
+      const now = Date.now()
+      if (mode === 'undecided') {
+        const dx = Math.abs(cx - startX)
+        const dy = Math.abs(cy - startY)
+        if (dy > THRESHOLD || dx > THRESHOLD) {
+          mode = dy > dx ? 'scroll' : 'select'
+          if (mode === 'scroll') this.touchMoved = true
+        } else {
           return
         }
-        if (++retries < 30) tryAttach() // ~500ms at 60fps, then give up
-      })
+      }
+      if (mode === 'scroll') {
+        e.preventDefault() // suppress native scroll — safe because passive: false
+        // Fire terminal-scroll on first scroll movement to collapse virtual keyboard
+        if (!scrollEventFired) {
+          scrollEventFired = true
+          wrapper.dispatchEvent(new CustomEvent('terminal-scroll', { bubbles: true }))
+        }
+        const deltaY = lastY - cy
+        const dt = now - lastTime || 1
+        velocity = deltaY / dt // px/ms
+        accumulatedDeltaY += deltaY
+
+        if (this.xterm && Math.abs(accumulatedDeltaY) >= SCROLL_THRESHOLD) {
+          this._sendWheelEvent(wrapper, accumulatedDeltaY, cx, cy)
+          accumulatedDeltaY = 0
+        }
+      }
+      lastY = cy
+      lastTime = now
     }
-    tryAttach()
+
+    const onTouchEnd = () => {
+      if (mode !== 'scroll') return
+      // Flush remaining delta
+      if (this.xterm && Math.abs(accumulatedDeltaY) > 2) {
+        this._sendWheelEvent(wrapper, accumulatedDeltaY, lastY, lastY)
+      }
+      accumulatedDeltaY = 0
+
+      // Momentum: keep sending wheel events with decaying velocity
+      if (this.xterm && Math.abs(velocity) > 0.15) {
+        const friction = 0.92
+        let v = velocity
+        const step = () => {
+          v *= friction
+          if (Math.abs(v) < 0.05) return
+          const delta = v * 16 // ~1 frame at 60fps
+          this._sendWheelEvent(wrapper, delta, lastY, lastY)
+          momentumId = requestAnimationFrame(step)
+        }
+        momentumId = requestAnimationFrame(step)
+      }
+
+      // Notify that a scroll gesture ended — used to dismiss the virtual keyboard.
+      wrapper.dispatchEvent(new CustomEvent('terminal-scroll', { bubbles: true }))
+    }
+
+    // Attach to the wrapper element, NOT .xterm-viewport. The xterm.js canvas
+    // (.xterm-screen) sits on top of .xterm-viewport in the DOM and intercepts
+    // all touch events — handlers on the viewport never fire. The wrapper
+    // receives touch events first (before the canvas) and already has
+    // touch-action: none set.
+    wrapper.addEventListener('touchstart', onTouchStart, { passive: true })
+    wrapper.addEventListener('touchmove', onTouchMove, { passive: false })
+    wrapper.addEventListener('touchend', onTouchEnd, { passive: true })
+    // Wheel listener: collapse virtual keyboard on trackpad/mouse scroll
+    const onWheel = () => {
+      wrapper.dispatchEvent(new CustomEvent('terminal-scroll', { bubbles: true }))
+    }
+    wrapper.addEventListener('wheel', onWheel, { passive: true })
+    this._touchCleanup = () => {
+      clearMomentum()
+      wrapper.removeEventListener('touchstart', onTouchStart)
+      wrapper.removeEventListener('touchmove', onTouchMove)
+      wrapper.removeEventListener('touchend', onTouchEnd)
+      wrapper.removeEventListener('wheel', onWheel)
+    }
   }
 
   private _sendWheelEvent(_target: HTMLElement, deltaY: number, clientX: number, clientY: number) {
     if (!this.xterm || deltaY === 0) return
 
-    if (this.isMouseModeEnabled()) {
-      // App has mouse tracking active (e.g. Codex, Claude Code TUI):
-      // let xterm convert the wheel event into escape sequences for the app.
-      // Do NOT call scrollLines() — that shifts xterm's viewport into the main-screen
-      // scrollback while the app is rendering on the alternate screen, causing a
-      // garbled display when both effects are applied simultaneously.
-      // Dispatch on the xterm element so the event reaches xterm's internal listeners.
-      const xtermEl = this.xterm.element
-      if (xtermEl) {
-        xtermEl.dispatchEvent(
-          new WheelEvent('wheel', {
-            deltaY,
-            deltaX: 0,
-            deltaZ: 0,
-            deltaMode: 0,
-            bubbles: true,
-            cancelable: true,
-            clientX,
-            clientY,
-          })
-        )
-      }
-    } else {
-      // No mouse tracking: scroll xterm's viewport directly (normal shell / less / man).
-      const el = this.xterm.element
-      const lineHeight =
-        this.xterm.rows && el?.clientHeight ? el.clientHeight / this.xterm.rows : 20
-      const lines = Math.round(deltaY / lineHeight)
-      if (lines !== 0) this.xterm.scrollLines(lines)
+    // Always dispatch a synthetic WheelEvent on the xterm element and let xterm.js
+    // handle it through its own event pipeline. This matches how real desktop wheel
+    // events are processed:
+    //   - Mouse tracking active: xterm.js sends mouse report escape sequences to PTY
+    //   - No scrollback (alt screen): xterm.js converts to Up/Down arrow sequences
+    //   - Normal shell with scrollback: xterm.js scrolls the viewport
+    // Previously the no-mouse-tracking path called scrollLines() directly, which only
+    // moves xterm's internal viewport — it never sends data to the PTY. On the alt
+    // screen (no scrollback) this was a no-op, so TUI apps like opencode never
+    // received scroll input on mobile.
+    const xtermEl = this.xterm.element
+    if (xtermEl) {
+      xtermEl.dispatchEvent(
+        new WheelEvent('wheel', {
+          deltaY,
+          deltaX: 0,
+          deltaZ: 0,
+          deltaMode: 0,
+          bubbles: true,
+          cancelable: true,
+          clientX,
+          clientY,
+        })
+      )
     }
   }
 
