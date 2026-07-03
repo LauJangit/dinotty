@@ -30,16 +30,68 @@ fn spawn_tauri_output_forwarder(
     session: Arc<dinotty_server::session::Session>,
 ) {
     let mut rx = session.add_client();
-    let app2 = app.clone();
-    let pid = pane_id.clone();
+    // Use a dedicated OS thread instead of tokio async task.
+    // app.emit() may block when the WKWebView IPC queue is full — if this
+    // happened on a tokio worker thread it would freeze the entire runtime,
+    // killing all terminals and the embedded Axum server.
+    std::thread::Builder::new()
+        .name(format!("fwd-{}", pane_id))
+        .spawn(move || {
+            while let Some(first) = rx.blocking_recv() {
+                let mut batch = first;
+                while let Ok(data) = rx.try_recv() {
+                    batch.push_str(&data);
+                }
+                if app
+                    .emit("pty-output", PtyOutput { pane_id: pane_id.clone(), data: batch })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .ok();
+}
+
+/// Spawn a dedicated write task for the session that reads from the input channel
+/// and writes to the PTY. This avoids the thread-leak problem where each `pty_write`
+/// command spawned a `spawn_blocking` with a timeout — if `write_all` blocked (PTY
+/// input buffer full), the timeout fired but the thread was never reclaimed.
+fn spawn_tauri_write_task(session: Arc<dinotty_server::session::Session>, pane_id: String) {
+    let mut input_rx = session.replace_input_channel();
+    let write_session = Arc::clone(&session);
+    let write_pane = pane_id.clone();
     tauri::async_runtime::spawn(async move {
-        while let Some(first) = rx.recv().await {
+        while let Some(first) = input_rx.recv().await {
+            if write_session.is_exited() {
+                break;
+            }
+            // Batch: drain all pending messages to minimize lock acquisitions
             let mut batch = first;
-            while let Ok(data) = rx.try_recv() {
+            while let Ok(data) = input_rx.try_recv() {
                 batch.push_str(&data);
             }
-            let _ = app2.emit("pty-output", PtyOutput { pane_id: pid.clone(), data: batch });
+            let ws = Arc::clone(&write_session);
+            let batch_len = batch.len();
+            match tokio::task::spawn_blocking(move || {
+                use std::io::Write;
+                let mut w = ws.writer.lock().unwrap_or_else(|e| e.into_inner());
+                w.write_all(batch.as_bytes())
+            })
+            .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    tracing::error!("PTY write error ({}B): {}, pane={}", batch_len, e, write_pane);
+                    break;
+                }
+                Err(e) => {
+                    tracing::error!("PTY write task panic: {}, pane={}", e, write_pane);
+                    break;
+                }
+            }
         }
+        tracing::info!("PTY write task exited, pane={}", write_pane);
     });
 }
 
@@ -81,6 +133,8 @@ fn pty_spawn(
         session.clear_clients();
         emit_join_sync(&app, &pane_id, &session);
         spawn_tauri_output_forwarder(app.clone(), pane_id.clone(), Arc::clone(&session));
+        // Set up channel-based write task (replaces old input channel, if any)
+        spawn_tauri_write_task(Arc::clone(&session), pane_id.clone());
         return Ok(session.shell_type.clone());
     }
 
@@ -88,6 +142,7 @@ fn pty_spawn(
         pty::create_session(&manager, &pane_id, Some(Arc::clone(&exit_cb)), None)?;
 
     spawn_tauri_output_forwarder(app.clone(), pane_id.clone(), Arc::clone(&session));
+    spawn_tauri_write_task(Arc::clone(&session), pane_id.clone());
 
     Ok(shell_type)
 }
@@ -102,16 +157,15 @@ async fn pty_write(
     if session.is_exited() {
         return Err("session exited".into());
     }
-    let result = tokio::task::spawn_blocking(move || {
-        use std::io::Write;
-        let mut w = session.writer.lock().unwrap_or_else(|e| e.into_inner());
-        w.write_all(data.as_bytes())
-    });
-    match tokio::time::timeout(std::time::Duration::from_secs(5), result).await {
-        Ok(Ok(Ok(()))) => Ok(()),
-        Ok(Ok(Err(e))) => Err(e.to_string()),
-        Ok(Err(e)) => Err(format!("task join error: {e}")),
-        Err(_) => Err("write timeout".into()),
+    // Send through the input channel — the dedicated write task handles the actual
+    // PTY write. This avoids the old pattern of spawn_blocking + timeout which leaked
+    // a thread per call when write_all blocked (PTY input buffer full).
+    let tx = session.input_tx.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(tx) = tx.as_ref() {
+        tx.send(data).map_err(|_| "input channel closed".to_string())?;
+        Ok(())
+    } else {
+        Err("input channel not initialized".to_string())
     }
 }
 
@@ -124,7 +178,10 @@ fn pty_resize(
 ) -> Result<(), String> {
     let sessions = &state.sessions;
     let session = sessions.get(&pane_id).ok_or("session not found")?;
-    session.resize(cols, rows)
+    // Use debounced resize to coalesce rapid resize events (e.g. window drag)
+    // and avoid blocking the Tauri command thread on the screen mutex.
+    session.resize_debounced(cols, rows);
+    Ok(())
 }
 
 #[tauri::command]
