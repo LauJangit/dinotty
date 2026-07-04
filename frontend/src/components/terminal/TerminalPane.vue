@@ -91,6 +91,11 @@ const handleEndX = ref(0)
 const handleEndY = ref(0)
 let selAnchorRow = 0
 let selAnchorCol = 0
+// Long-pressed word range — keeps the whole word selected regardless of drag
+// direction (DT8 #2). selWordRow < 0 means "no active word selection".
+let selWordRow = -1
+let selWordStartCol = -1
+let selWordEndCol = -1
 let dragHandle: 'start' | 'end' | null = null
 let selectionTouched = false
 
@@ -285,6 +290,11 @@ function calcSelectionLength(startCol: number, startRow: number, endCol: number,
   return Math.max(1, len)
 }
 
+// True if buffer position (r1,c1) is strictly before (r2,c2).
+function beforePos(r1: number, c1: number, r2: number, c2: number): boolean {
+  return r1 < r2 || (r1 === r2 && c1 < c2)
+}
+
 function updateSelectionTo(clientX: number, clientY: number) {
   const xt = terminal?.xterm
   if (!xt) return
@@ -292,13 +302,29 @@ function updateSelectionTo(clientX: number, clientY: number) {
   if (!pos) return
   const endRow = xt.buffer.active.viewportY + pos.row
   const endCol = pos.col
-  const sr = terminal!.selStartRow
-  const sc = terminal!.selStartCol
-  if (endRow < sr || (endRow === sr && endCol < sc)) {
-    xt.select(endCol, endRow, calcSelectionLength(endCol, endRow, sc, sr))
-  } else {
-    xt.select(sc, sr, calcSelectionLength(sc, sr, endCol, endRow))
+  // Always keep the originally long-pressed word fully selected, regardless of
+  // drag direction: span from the earlier of {drag point, word start} to the
+  // later of {drag point, word end}. Leftward drag used to anchor at the word
+  // start and drop the word body (DT8 #2).
+  let loR = endRow
+  let loC = endCol
+  let hiR = endRow
+  let hiC = endCol
+  if (selWordRow >= 0) {
+    if (beforePos(selWordRow, selWordStartCol, loR, loC)) {
+      loR = selWordRow
+      loC = selWordStartCol
+    }
+    if (beforePos(hiR, hiC, selWordRow, selWordEndCol)) {
+      hiR = selWordRow
+      hiC = selWordEndCol
+    }
   }
+  xt.select(loC, loR, calcSelectionLength(loC, loR, hiC, hiR))
+  // Keep selStart pointing at the selection's low point so the handle-drag
+  // 'end' anchor stays consistent after a leftward drag.
+  terminal!.selStartRow = loR
+  terminal!.selStartCol = loC
 }
 
 function bufferToPixel(col: number, bufferRow: number): { x: number; y: number } {
@@ -331,14 +357,13 @@ function onTouchStart(e: TouchEvent) {
   if (handlesVisible.value) return // selection mode active, don't start new long-press
   if (longPressTimer) clearTimeout(longPressTimer)
   longPressFired = false
+  selWordRow = -1
   touchScrolling = false
   terminal.touchMoved = false
   const touch = e.touches[0]
   longPressStartX = touch.clientX
   longPressStartY = touch.clientY
   longPressTimer = setTimeout(() => {
-    longPressFired = true
-
     const xt = terminal?.xterm
     if (!xt) return
     const geom = getScreenCellGeometry(xt)
@@ -354,6 +379,10 @@ function onTouchStart(e: TouchEvent) {
     terminal!.selStartCol = wordPos.startCol
     selAnchorRow = wordPos.bufferRow
     selAnchorCol = wordPos.startCol
+    selWordRow = wordPos.bufferRow
+    selWordStartCol = wordPos.startCol
+    selWordEndCol = wordPos.endCol
+    longPressFired = true // set only after a word is actually selected (DT8 #5)
     selectionTouched = false
 
     // Show handles at selection boundaries
@@ -396,7 +425,7 @@ function buildColumnMaps(line: NonNullable<ReturnType<Terminal['buffer']['active
   return { colToStrIdx, strIdxToCol }
 }
 
-function selectWordAtTouch(clientX: number, clientY: number, geom: ScreenCellGeometry): { bufferRow: number; startCol: number } | null {
+function selectWordAtTouch(clientX: number, clientY: number, geom: ScreenCellGeometry): { bufferRow: number; startCol: number; endCol: number } | null {
   const xterm = terminal?.xterm
   if (!xterm) {
     debugTouchSelect('select:null-xterm', {})
@@ -454,6 +483,7 @@ function selectWordAtTouch(clientX: number, clientY: number, geom: ScreenCellGeo
       if (startCol == null || lastCol == null) return null
       const lastWidth = line.getCell(lastCol)?.getWidth() ?? 1
       const columnLength = lastCol - startCol + Math.max(lastWidth, 1)
+      const endCol = startCol + columnLength - 1
       xterm.select(startCol, bufferRow, columnLength)
       debugTouchSelect('select:success', {
         ...geometryFacts,
@@ -461,7 +491,7 @@ function selectWordAtTouch(clientX: number, clientY: number, geom: ScreenCellGeo
         startCol,
         length: columnLength,
       })
-      return { bufferRow, startCol }
+      return { bufferRow, startCol, endCol }
     }
   }
   debugTouchSelect('select:no-word', { ...geometryFacts, bufferRow })
@@ -611,9 +641,8 @@ function onTouchEnd(e: TouchEvent) {
     return
   }
   if (longPressFired) {
-    if (terminal?.inTouchSelection) {
-      e.preventDefault()
-    }
+    // A long-press that entered selection mode is handled in the branch above;
+    // reaching here means it did not — just clear the flag (DT8 #5).
     longPressFired = false
   }
   if (longPressTimer) {

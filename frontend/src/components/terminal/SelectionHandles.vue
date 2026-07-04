@@ -24,7 +24,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onUnmounted } from 'vue'
 
 const props = defineProps<{
   visible: boolean
@@ -95,6 +95,16 @@ function onEnd(e?: Event) {
   window.removeEventListener('touchcancel', onEnd)
   emit('dragEnd', e?.type === 'touchcancel')
 }
+
+// Safety net: if the component unmounts mid-drag, onEnd may never fire — remove
+// any window listeners so their closures don't leak or emit into a dead parent (DT8 #4).
+onUnmounted(() => {
+  window.removeEventListener('mousemove', onMove)
+  window.removeEventListener('mouseup', onEnd)
+  window.removeEventListener('touchmove', onMove)
+  window.removeEventListener('touchend', onEnd)
+  window.removeEventListener('touchcancel', onEnd)
+})
 </script>
 
 <style scoped>
