@@ -379,6 +379,11 @@
 .reconnect-retry-btn:hover {
   background: rgba(255, 255, 255, 0.2);
 }
+.reconnect-host-info {
+  font-size: 12px;
+  opacity: 0.6;
+  font-family: var(--font-mono);
+}
 
 /* Custom preedit overlay for IME composition */
 .preedit-overlay {

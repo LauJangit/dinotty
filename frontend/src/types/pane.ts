@@ -6,6 +6,7 @@ export interface LeafPane {
   type: 'leaf'
   paneId: string
   title: string
+  shell_type?: string // "ssh" for SSH tabs, shell name for local tabs
   ratio: number
   zoomed: boolean
 }

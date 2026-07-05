@@ -36,6 +36,22 @@ export function useSyncWebSocket(opts: {
   let suppressSync = false
   let syncReconnectDelay = 1000
 
+  // Grace period: tabs created within the last 5s are protected from tab_list pruning.
+  // This prevents a race where tab_list arrives before the REST-driven tab_created.
+  const recentlyCreated = new Map<string, number>()
+  const GRACE_MS = 5000
+
+  function markRecentlyCreated(tabId: string) {
+    recentlyCreated.set(tabId, Date.now())
+  }
+
+  function pruneStaleEntries() {
+    const now = Date.now()
+    for (const [id, ts] of recentlyCreated) {
+      if (now - ts > GRACE_MS) recentlyCreated.delete(id)
+    }
+  }
+
   function sendSync(msg: SyncClientMsg) {
     if (syncWs && syncWs.readyState === WebSocket.OPEN && !suppressSync) {
       syncWs.send(JSON.stringify(msg))
@@ -44,6 +60,17 @@ export function useSyncWebSocket(opts: {
 
   function sendLayoutSync(tabPaneId: string, layout: any, activePaneIdVal: string) {
     sendSync({ type: 'update_layout', pane_id: tabPaneId, layout, active_pane_id: activePaneIdVal })
+  }
+
+  // SSH keyboard-interactive auth callback
+  let onSshAuthPrompt: ((paneId: string, prompts: Array<{ prompt: string; echo: boolean }>) => void) | null = null
+
+  function setSshAuthPromptHandler(handler: (paneId: string, prompts: Array<{ prompt: string; echo: boolean }>) => void) {
+    onSshAuthPrompt = handler
+  }
+
+  function sendSshAuthResponse(paneId: string, responses: string[]) {
+    sendSync({ type: 'ssh_auth_response', pane_id: paneId, responses })
   }
 
   function getSavedTab(paneId: string): any {
@@ -180,8 +207,11 @@ export function useSyncWebSocket(opts: {
         const serverLeafIds = new Set(
           msg.tabs.flatMap((t) => (t.layout ? getAllLeaves(t.layout).map((l) => l.paneId) : []))
         )
+        pruneStaleEntries()
         tabs.value = tabs.value.filter((t) => {
           if (t.type === 'plugin') return true
+          // Protect recently-created tabs from being pruned (race with REST response)
+          if (recentlyCreated.has(t.paneId)) return true
           return (
             serverTabIds.has(t.paneId) ||
             getAllLeaves(t.layout).some((l) => serverLeafIds.has(l.paneId))
@@ -244,6 +274,7 @@ export function useSyncWebSocket(opts: {
             previewUrl: '',
             previewKind: 'web',
           })
+          markRecentlyCreated(msg.tab_id)
           activePaneId.value = msg.tab_id
           persist()
           nextTick(() => focusActive())
@@ -349,6 +380,10 @@ export function useSyncWebSocket(opts: {
         }
       } else if (msg.type === 'plugin_changed') {
         handlePluginChanged(msg.plugin_id, msg.change)
+      } else if (msg.type === 'ssh_auth_prompt') {
+        // SSH keyboard-interactive auth prompt from backend
+        // Emit event for the SSH auth dialog to handle
+        onSshAuthPrompt?.(msg.pane_id, msg.prompts)
       }
     }
 
@@ -382,6 +417,9 @@ export function useSyncWebSocket(opts: {
     connectSyncWS,
     closeWs,
     isConnected,
+    markRecentlyCreated,
+    setSshAuthPromptHandler,
+    sendSshAuthResponse,
     get suppressSync() {
       return suppressSync
     },

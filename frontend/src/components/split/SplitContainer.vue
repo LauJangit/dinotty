@@ -72,11 +72,13 @@
     <TerminalPane
       :ref="(el: any) => emit('register', leaf!.paneId, el)"
       :pane-id="leaf.paneId"
+      :ssh-host="leaf.shell_type === 'ssh' ? leaf.title : undefined"
       @title-change="(title: string) => emit('titleChange', leaf!.paneId, title)"
       @input="(data: string) => emit('input', leaf!.paneId, data)"
       @file-click="(path: string) => emit('fileClick', path)"
       @preview-link="(url: string) => emit('previewLink', leaf!.paneId, url)"
       @link-activate="emit('linkActivate')"
+      @reconnect="emit('reconnect', leaf!.paneId)"
     />
   </div>
 
@@ -105,6 +107,7 @@
         @link-activate="emit('linkActivate')"
         @reorder="(src: string, tgt: string, pos: DropPosition) => emit('reorder', src, tgt, pos)"
         @divider-drag-end="emit('dividerDragEnd')"
+        @reconnect="(id: string) => emit('reconnect', id)"
       />
       <SplitDivider
         v-if="idx < split.children.length - 1"
@@ -148,6 +151,7 @@ const emit = defineEmits<{
   linkActivate: []
   reorder: [sourcePaneId: string, targetPaneId: string, position: DropPosition]
   dividerDragEnd: []
+  reconnect: [paneId: string]
 }>()
 
 const { t } = useI18n()

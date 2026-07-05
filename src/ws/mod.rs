@@ -10,12 +10,9 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use std::{
-    io::Write,
-    sync::{
-        atomic::{AtomicU32, Ordering},
-        Arc,
-    },
+use std::sync::{
+    atomic::{AtomicU32, Ordering},
+    Arc,
 };
 
 use tracing::{error, info};
@@ -62,14 +59,32 @@ pub enum SyncClientMsg {
         layout: serde_json::Value,
         active_pane_id: String,
     },
+    /// 前端返回 keyboard-interactive 认证响应
+    SshAuthResponse {
+        pane_id: String,
+        responses: Vec<String>,
+    },
 }
 
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMsg<'a> {
-    Output { data: &'a str },
-    ShellInfo { shell_type: &'a str },
-    Reconnected { cols: u16, rows: u16 },
+    Output {
+        data: &'a str,
+    },
+    ShellInfo {
+        shell_type: &'a str,
+    },
+    Reconnected {
+        cols: u16,
+        rows: u16,
+    },
+    SessionExit,
+    /// SSH keyboard-interactive 认证提示
+    SshAuthPrompt {
+        pane_id: String,
+        prompts: Vec<crate::session::SshAuthPrompt>,
+    },
 }
 
 #[allow(clippy::unused_async)]
@@ -159,6 +174,58 @@ async fn handle_sync_socket(socket: WebSocket, manager: Arc<SessionManager>) {
             if fwd_ws_out_tx.send(Message::Text(data)).is_err() {
                 break;
             }
+        }
+    });
+
+    // Monitor SSH keyboard-interactive auth prompts and forward to frontend
+    let auth_mgr = Arc::clone(&manager);
+    let auth_ws_out = ws_out_tx.clone();
+    tokio::spawn(async move {
+        let mut known_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            let current_keys: std::collections::HashSet<String> =
+                auth_mgr.pending_ssh_auth.iter().map(|r| r.key().clone()).collect();
+            for key in &current_keys {
+                if !known_keys.contains(key) {
+                    known_keys.insert(key.clone());
+                    let mgr = Arc::clone(&auth_mgr);
+                    let ws_out = auth_ws_out.clone();
+                    let pane_id = key.clone();
+                    tokio::spawn(async move {
+                        loop {
+                            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                            if !mgr.pending_ssh_auth.contains_key(&pane_id) {
+                                break;
+                            }
+                            let prompt_data = {
+                                let Some(auth) = mgr.pending_ssh_auth.get(&pane_id) else {
+                                    break;
+                                };
+                                let mut rx = auth.prompts_rx.lock().await;
+                                match rx.try_recv() {
+                                    Ok(data) => Some(data),
+                                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => None,
+                                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                                        break
+                                    }
+                                }
+                            };
+                            if let Some(prompts) = prompt_data {
+                                let msg = serde_json::json!({
+                                    "type": "ssh_auth_prompt",
+                                    "pane_id": pane_id,
+                                    "prompts": prompts,
+                                });
+                                if ws_out.send(Message::Text(msg.to_string())).is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+            known_keys.retain(|k| current_keys.contains(k));
         }
     });
 
@@ -288,6 +355,12 @@ async fn handle_sync_socket(socket: WebSocket, manager: Arc<SessionManager>) {
                                 &SyncMsg::LayoutUpdated { pane_id, layout, active_pane_id },
                                 &client_id,
                             );
+                        }
+                        SyncClientMsg::SshAuthResponse { pane_id, responses } => {
+                            // 将用户输入的 responses 转发给 SSH handler
+                            if let Some(auth) = manager.pending_ssh_auth.get(&pane_id) {
+                                let _ = auth.responses_tx.send(responses);
+                            }
                         }
                     }
                 }
@@ -422,6 +495,7 @@ async fn handle_socket(
         let mut input_rx = session.replace_input_channel();
         let write_session = Arc::clone(&session);
         let write_pane = pane_id.clone();
+        let is_ssh = write_session.is_ssh();
         tokio::spawn(async move {
             while let Some(first) = input_rx.recv().await {
                 if write_session.is_exited() {
@@ -432,22 +506,19 @@ async fn handle_socket(
                 while let Ok(data) = input_rx.try_recv() {
                     batch.push_str(&data);
                 }
-                let ws = Arc::clone(&write_session);
                 let batch_len = batch.len();
-                // Move blocking I/O off the async runtime
-                match tokio::task::spawn_blocking(move || {
-                    let mut w = ws.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                    w.write_all(batch.as_bytes())
-                })
-                .await
-                {
-                    Ok(Ok(())) => {}
-                    Ok(Err(e)) => {
-                        error!("PTY write error ({}B): {}, pane={}", batch_len, e, write_pane);
-                        break;
-                    }
+                let result = if is_ssh {
+                    write_session.write_input_async(batch.as_bytes()).await
+                } else {
+                    let ws = Arc::clone(&write_session);
+                    tokio::task::spawn_blocking(move || ws.write_input_sync(batch.as_bytes()))
+                        .await
+                        .unwrap_or_else(|e| Err(e.to_string()))
+                };
+                match result {
+                    Ok(()) => {}
                     Err(e) => {
-                        error!("PTY write task panic: {}, pane={}", e, write_pane);
+                        error!("PTY write error ({}B): {}, pane={}", batch_len, e, write_pane);
                         break;
                     }
                 }
@@ -515,7 +586,19 @@ async fn handle_socket(
     }
 
     // ── New session ──
-    info!("No existing session found for pane={}, creating new PTY session (this is unexpected for new tabs!)", pane_id);
+    // If the pane belongs to a registered tab (e.g. SSH) but the session is gone,
+    // the session must have exited. Don't silently create a local PTY.
+    if manager.is_pane_in_any_tab(&pane_id) {
+        info!("Pane {} belongs to a tab but session is gone — sending session_exit", pane_id);
+        let msg =
+            serde_json::to_string(&ServerMsg::SessionExit).expect("serialization is infallible");
+        let _ = ws_out_tx.send(Message::Text(msg));
+        // Keep the connection alive briefly so the client receives the message
+        if let Some(Ok(_)) = ws_rx.next().await {}
+        return;
+    }
+
+    info!("No existing session found for pane={}, creating new PTY session", pane_id);
     let (session, shell_type) = match crate::pty::create_session(&manager, &pane_id, None, None) {
         Ok(x) => x,
         Err(e) => {
@@ -550,6 +633,7 @@ async fn handle_socket(
     let mut input_rx = session.replace_input_channel();
     let write_session = Arc::clone(&session);
     let write_pane = pane_id.clone();
+    let is_ssh = write_session.is_ssh();
     tokio::spawn(async move {
         while let Some(first) = input_rx.recv().await {
             if write_session.is_exited() {
@@ -560,22 +644,19 @@ async fn handle_socket(
             while let Ok(data) = input_rx.try_recv() {
                 batch.push_str(&data);
             }
-            let ws = Arc::clone(&write_session);
             let batch_len = batch.len();
-            // Move blocking I/O off the async runtime
-            match tokio::task::spawn_blocking(move || {
-                let mut w = ws.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                w.write_all(batch.as_bytes())
-            })
-            .await
-            {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => {
-                    error!("PTY write error ({}B): {}, pane={}", batch_len, e, write_pane);
-                    break;
-                }
+            let result = if is_ssh {
+                write_session.write_input_async(batch.as_bytes()).await
+            } else {
+                let ws = Arc::clone(&write_session);
+                tokio::task::spawn_blocking(move || ws.write_input_sync(batch.as_bytes()))
+                    .await
+                    .unwrap_or_else(|e| Err(e.to_string()))
+            };
+            match result {
+                Ok(()) => {}
                 Err(e) => {
-                    error!("PTY write task panic: {}, pane={}", e, write_pane);
+                    error!("PTY write error ({}B): {}, pane={}", batch_len, e, write_pane);
                     break;
                 }
             }
@@ -745,8 +826,7 @@ pub async fn post_input(
 
     match manager.sessions.get(&pane_id) {
         Some(session) => {
-            let mut w = session.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            let _ = w.write_all(req.data.as_bytes());
+            let _ = session.write_input_async(req.data.as_bytes()).await;
             (StatusCode::OK, Json(serde_json::json!({ "ok": true })))
         }
         None => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "pane not found" }))),
@@ -809,6 +889,7 @@ pub async fn handle_open_api_ws(socket: WebSocket, manager: Arc<SessionManager>,
     let (pty_in_tx, mut pty_in_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     let write_session = Arc::clone(&session);
     let write_pane = pane_id.clone();
+    let is_ssh = write_session.is_ssh();
     tokio::spawn(async move {
         while let Some(first) = pty_in_rx.recv().await {
             if write_session.is_exited() {
@@ -818,22 +899,19 @@ pub async fn handle_open_api_ws(socket: WebSocket, manager: Arc<SessionManager>,
             while let Ok(data) = pty_in_rx.try_recv() {
                 batch.push_str(&data);
             }
-            let ws = Arc::clone(&write_session);
             let batch_len = batch.len();
-            // Move blocking I/O off the async runtime
-            match tokio::task::spawn_blocking(move || {
-                let mut w = ws.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                w.write_all(batch.as_bytes())
-            })
-            .await
-            {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => {
-                    error!("PTY write error ({}B): {}, pane={}", batch_len, e, write_pane);
-                    break;
-                }
+            let result = if is_ssh {
+                write_session.write_input_async(batch.as_bytes()).await
+            } else {
+                let ws = Arc::clone(&write_session);
+                tokio::task::spawn_blocking(move || ws.write_input_sync(batch.as_bytes()))
+                    .await
+                    .unwrap_or_else(|e| Err(e.to_string()))
+            };
+            match result {
+                Ok(()) => {}
                 Err(e) => {
-                    error!("PTY write task panic: {}, pane={}", e, write_pane);
+                    error!("PTY write error ({}B): {}, pane={}", batch_len, e, write_pane);
                     break;
                 }
             }

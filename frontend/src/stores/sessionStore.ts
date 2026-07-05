@@ -25,6 +25,7 @@ export const useSessionStore = defineStore('session', () => {
           : t.title,
       index: i + 1,
       type: t.type,
+      shellType: t.type === 'terminal' ? findLeaf(t.layout, t.activePaneId)?.shell_type : undefined,
     }))
   )
 

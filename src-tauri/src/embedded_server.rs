@@ -323,6 +323,9 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
         .route("/ws/history", get(history::ws_history_handler))
         // Tab/Pane management
         .route("/api/tabs", get(tabs::list_tabs).post(tabs::create_tab))
+        // SSH tab routes (must be before :tab_id routes)
+        .route("/api/tabs/ssh/quick", post(tabs::create_ssh_quick_tab))
+        .route("/api/tabs/ssh", post(tabs::create_ssh_tab))
         .route("/api/tabs/:tab_id", delete(tabs::close_tab))
         .route("/api/tabs/:tab_id/pane", post(tabs::split_pane))
         .route("/api/tabs/:tab_id/pane/:pane_id", delete(tabs::close_pane))
@@ -334,6 +337,7 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
             "/api/settings/background",
             post(settings::upload_background).get(settings::get_background),
         )
+        .route("/api/log", get(settings::get_log))
         .route("/api/workspace/resolve", get(workspace::workspace_resolve))
         .route("/api/workspace/list", get(workspace::workspace_list))
         .route("/api/workspace/meta", get(workspace::workspace_meta))

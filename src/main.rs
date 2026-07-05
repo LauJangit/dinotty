@@ -485,6 +485,9 @@ async fn main() {
             .route("/ws/api/sessions/:pane_id/stream", get(openapi::session_stream))
             // Tab/Pane management
             .route("/api/tabs", get(tabs::list_tabs).post(tabs::create_tab))
+            // SSH tab routes (must be before :tab_id routes)
+            .route("/api/tabs/ssh/quick", post(tabs::create_ssh_quick_tab))
+            .route("/api/tabs/ssh", post(tabs::create_ssh_tab))
             .route("/api/tabs/:tab_id", delete(tabs::close_tab))
             .route("/api/tabs/:tab_id/pane", post(tabs::split_pane))
             .route("/api/tabs/:tab_id/pane/:pane_id", delete(tabs::close_pane))

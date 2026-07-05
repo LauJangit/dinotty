@@ -22,6 +22,7 @@
         @touchend.prevent="onTabTouchEnd($event, tab.paneId)"
       >
         <span class="tab-index">{{ tab.index }}</span>
+        <Server v-if="tab.shellType === 'ssh'" :size="12" class="tab-ssh-icon" />
         <input
           v-if="editingPaneId === tab.paneId"
           ref="editInputRef"
@@ -106,6 +107,15 @@
           </div>
           <div v-if="broadcastActive" class="new-menu-status">{{ t('split.broadcastActive') }}</div>
         </template>
+        <div class="new-menu-sep" />
+        <div
+          class="new-menu-item"
+          @click="emitAction('ssh-connect')"
+          @touchend.prevent="emitAction('ssh-connect')"
+        >
+          <Globe :size="14" class="new-menu-icon" />
+          <span class="new-menu-label">{{ t('palette.sshConnect') }}</span>
+        </div>
       </div>
     </div>
     <div v-if="plugins.length > 0" class="tab-bar-plugin-wrap" ref="pluginWrapRef">
@@ -143,7 +153,7 @@
 
 <script setup lang="ts">
 import { ref, watch, onBeforeUnmount, nextTick } from 'vue'
-import { X, Terminal, Puzzle, Columns2, Rows2, Radio, LayoutDashboard } from 'lucide-vue-next'
+import { X, Terminal, Puzzle, Columns2, Rows2, Radio, LayoutDashboard, Globe, Server } from 'lucide-vue-next'
 import { useI18n } from '../../composables/useI18n'
 import { useKeybindings } from '../../composables/useKeybindings'
 
@@ -159,6 +169,7 @@ export interface TabInfo {
   title: string
   index: number
   type: 'terminal' | 'plugin'
+  shellType?: string // "ssh" for SSH tabs
 }
 
 export interface PluginInfo {
@@ -195,7 +206,7 @@ withDefaults(
 const emit = defineEmits<{
   activate: [paneId: string]
   close: [paneId: string]
-  action: [type: 'new-tab' | 'split-h' | 'split-v' | 'broadcast']
+  action: [type: 'new-tab' | 'split-h' | 'split-v' | 'broadcast' | 'ssh-connect']
   reorder: [fromId: string, toId: string]
   'open-plugin': [pluginId: string]
   rename: [paneId: string, title: string]
@@ -251,7 +262,7 @@ const pluginWrapRef = ref<HTMLElement>()
 const newMenuOpen = ref(false)
 const newMenuWrapRef = ref<HTMLElement>()
 
-function emitAction(type: 'new-tab' | 'split-h' | 'split-v' | 'broadcast') {
+function emitAction(type: 'new-tab' | 'split-h' | 'split-v' | 'broadcast' | 'ssh-connect') {
   emit('action', type)
   newMenuOpen.value = false
 }
@@ -409,6 +420,11 @@ onBeforeUnmount(() => {
   text-align: center;
   flex-shrink: 0;
   opacity: 0.7;
+}
+.tab-ssh-icon {
+  flex-shrink: 0;
+  color: var(--accent, #4d7fff);
+  opacity: 0.8;
 }
 .tab-title-input {
   background: var(--bg-input, #2a2a2a);

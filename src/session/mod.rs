@@ -1,5 +1,6 @@
 #![allow(clippy::too_many_lines)]
 use crate::event_bus::EventBus;
+use crate::settings::SshAuthMethod;
 use crate::vt_screen::VirtualScreen;
 use dashmap::DashMap;
 use portable_pty::{Child, MasterPty};
@@ -15,6 +16,28 @@ use std::{
 };
 use tokio::sync::{mpsc, watch};
 use tracing::info;
+
+/// SSH 会话参数，用于分屏时复用连接信息
+#[derive(Clone, Debug)]
+pub struct SshSessionParams {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub auth_method: SshAuthMethod,
+    pub default_command: Option<String>,
+}
+
+/// Session 的传输后端
+pub enum SessionBackend {
+    /// 本地 PTY
+    Local {
+        writer: Box<dyn Write + Send>,
+        master: Box<dyn MasterPty + Send>,
+        child: Box<dyn Child + Send + Sync>,
+    },
+    /// SSH 远程连接
+    Ssh { channel: russh::Channel<russh::client::Msg> },
+}
 
 /// Force-flush `sync_buffer` when accumulated data exceeds this limit (256KB).
 /// Prevents massive single payloads that freeze the frontend UI thread.
@@ -40,9 +63,10 @@ pub struct PendingCommandResult {
 }
 
 pub struct Session {
-    pub writer: Mutex<Box<dyn Write + Send>>,
-    pub master: Mutex<Box<dyn MasterPty + Send>>,
-    pub child: Mutex<Box<dyn Child + Send + Sync>>,
+    /// 传输后端（本地 PTY 或 SSH）
+    pub backend: tokio::sync::Mutex<SessionBackend>,
+    /// SSH 会话参数（分屏时复用），None 表示本地会话
+    pub ssh_params: Option<SshSessionParams>,
     pub screen: Mutex<VirtualScreen>,
     pub clients: Mutex<Vec<mpsc::Sender<String>>>,
     pub input_tx: Mutex<Option<mpsc::UnboundedSender<String>>>,
@@ -76,25 +100,57 @@ impl Session {
     /// After this, the PTY reader task's `reader.read()` will return Err/Ok(0),
     /// causing it to exit and drop its `Arc<Session>`, which triggers `Drop`.
     pub fn kill_child(&self) {
-        let mut child = self.child.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let pid = child.process_id();
-        // Kill the entire process group on Unix (child is session leader from setsid)
-        #[cfg(unix)]
-        if let Some(pid) = pid {
-            #[allow(clippy::cast_possible_wrap)]
-            let process_group = pid as i32;
-            unsafe {
-                libc::killpg(process_group, libc::SIGTERM);
+        self.kill_backend_sync();
+    }
+
+    /// 同步清理后端（用于 `kill_child` 和 Drop）
+    fn kill_backend_sync(&self) {
+        let Ok(mut backend) = self.backend.try_lock() else {
+            // 锁被持有（SSH async 操作中），跳过同步清理
+            // SSH reader task 会在连接关闭时自行清理
+            return;
+        };
+        match &mut *backend {
+            SessionBackend::Local { child, .. } => {
+                let pid = child.process_id();
+                #[cfg(unix)]
+                if let Some(pid) = pid {
+                    #[allow(clippy::cast_possible_wrap)]
+                    let process_group = pid as i32;
+                    unsafe {
+                        libc::killpg(process_group, libc::SIGTERM);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    unsafe {
+                        libc::killpg(process_group, libc::SIGKILL);
+                    }
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+                self.mark_exited();
+                info!("Session child killed: pid={:?}", pid);
             }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            unsafe {
-                libc::killpg(process_group, libc::SIGKILL);
+            SessionBackend::Ssh { .. } => {
+                // SSH channel 在 russh Channel drop 时自动关闭
+                self.mark_exited();
+                info!("SSH session marked as exited");
             }
         }
-        let _ = child.kill();
-        let _ = child.wait();
-        self.mark_exited();
-        info!("Session child killed: pid={:?}", pid);
+    }
+
+    /// 异步清理 SSH channel
+    pub async fn kill_backend_async(&self) {
+        let mut backend = self.backend.lock().await;
+        if let SessionBackend::Ssh { channel } = &mut *backend {
+            let _ = channel.close().await;
+            self.mark_exited();
+            info!("SSH channel closed");
+        }
+    }
+
+    /// 是否为 SSH 会话
+    pub fn is_ssh(&self) -> bool {
+        self.ssh_params.is_some()
     }
 
     /// Check if the child process has exited.
@@ -107,25 +163,98 @@ impl Session {
         *self.exited.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = true;
     }
 
+    /// 同步写入输入数据（仅支持 Local backend）
+    /// 用于现有的同步调用点，SSH backend 应使用 `write_input_async`
+    ///
+    /// # Errors
+    /// Returns an error if the backend lock is held or the write fails.
+    pub fn write_input_sync(&self, data: &[u8]) -> Result<(), String> {
+        let Ok(mut backend) = self.backend.try_lock() else {
+            return Err("backend lock held".into());
+        };
+        match &mut *backend {
+            SessionBackend::Local { writer, .. } => {
+                writer.write_all(data).map_err(|e| e.to_string())?;
+                writer.flush().map_err(|e| e.to_string())?;
+                Ok(())
+            }
+            SessionBackend::Ssh { .. } => Err("use write_input_async for SSH sessions".into()),
+        }
+    }
+
     /// Resize the PTY and virtual screen. Consolidates three mutex acquisitions
     /// that were previously duplicated across Tauri and WS call sites.
     ///
     /// # Errors
     /// Returns an error if the PTY resize operation fails.
     pub fn resize(&self, cols: u16, rows: u16) -> Result<(), String> {
-        use portable_pty::PtySize;
         if self.is_exited() {
             return Ok(());
         }
-        let m = self.master.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        m.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
-            .map_err(|e| e.to_string())?;
-        drop(m);
+        if let Ok(mut backend) = self.backend.try_lock() {
+            if let SessionBackend::Local { master, .. } = &mut *backend {
+                use portable_pty::PtySize;
+                master
+                    .resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+                    .map_err(|e| e.to_string())?;
+            }
+        }
         *self.size.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = (cols, rows);
         self.screen
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .resize(cols as usize, rows as usize);
+        Ok(())
+    }
+
+    /// 异步 resize，支持 SSH channel
+    ///
+    /// # Errors
+    /// Returns an error if the resize operation fails.
+    pub async fn resize_async(&self, cols: u16, rows: u16) -> Result<(), String> {
+        if self.is_exited() {
+            return Ok(());
+        }
+        let mut backend = self.backend.lock().await;
+        match &mut *backend {
+            SessionBackend::Local { master, .. } => {
+                use portable_pty::PtySize;
+                master
+                    .resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+                    .map_err(|e| e.to_string())?;
+            }
+            SessionBackend::Ssh { channel } => {
+                channel
+                    .window_change(u32::from(cols), u32::from(rows), 0, 0)
+                    .await
+                    .map_err(|e| format!("SSH resize failed: {e}"))?;
+            }
+        }
+        drop(backend);
+        *self.size.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = (cols, rows);
+        self.screen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .resize(cols as usize, rows as usize);
+        Ok(())
+    }
+
+    /// 异步写入输入数据到后端
+    ///
+    /// # Errors
+    /// Returns an error if the write operation fails.
+    pub async fn write_input_async(&self, data: &[u8]) -> Result<(), String> {
+        let mut backend = self.backend.lock().await;
+        match &mut *backend {
+            SessionBackend::Local { writer, .. } => {
+                writer.write_all(data).map_err(|e| e.to_string())?;
+                writer.flush().map_err(|e| e.to_string())?;
+            }
+            SessionBackend::Ssh { channel } => {
+                let cursor = std::io::Cursor::new(data.to_vec());
+                channel.data(cursor).await.map_err(|e| format!("SSH write failed: {e}"))?;
+            }
+        }
         Ok(())
     }
 
@@ -259,24 +388,7 @@ impl Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
-        let mut child = self.child.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let pid = child.process_id();
-        #[cfg(unix)]
-        if let Some(pid) = pid {
-            #[allow(clippy::cast_possible_wrap)]
-            let process_group = pid as i32;
-            unsafe {
-                libc::killpg(process_group, libc::SIGTERM);
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            unsafe {
-                libc::killpg(process_group, libc::SIGKILL);
-            }
-        }
-        let _ = child.kill();
-        let _ = child.wait();
-        *self.exited.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = true;
-        info!("Session dropped, child reaped: pid={:?}", pid);
+        self.kill_backend_sync();
     }
 }
 
@@ -525,11 +637,48 @@ pub struct SyncClient {
     pub tx: mpsc::UnboundedSender<String>,
 }
 
+/// Recursively check if a JSON layout tree contains a leaf with the given `pane_id`.
+fn layout_has_pane(layout: &serde_json::Value, pane_id: &str) -> bool {
+    if let Some(pid) = layout.get("paneId").and_then(|v| v.as_str()) {
+        if pid == pane_id {
+            return true;
+        }
+    }
+    if let Some(children) = layout.get("children").and_then(|v| v.as_array()) {
+        for child in children {
+            if layout_has_pane(child, pane_id) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// SSH keyboard-interactive auth prompt
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct SshAuthPrompt {
+    pub prompt: String,
+    pub echo: bool,
+}
+
+/// Pending SSH keyboard-interactive auth state
+///
+/// Channel flow:
+/// - SSH handler → `prompts_tx` → `prompts_rx` → sync WS → frontend
+/// - frontend → sync WS → `responses_tx` → `responses_rx` → SSH handler
+pub struct PendingSshAuth {
+    pub prompts_tx: mpsc::UnboundedSender<Vec<SshAuthPrompt>>,
+    pub prompts_rx: tokio::sync::Mutex<mpsc::UnboundedReceiver<Vec<SshAuthPrompt>>>,
+    pub responses_tx: mpsc::UnboundedSender<Vec<String>>,
+    pub responses_rx: tokio::sync::Mutex<mpsc::UnboundedReceiver<Vec<String>>>,
+}
+
 pub struct SessionManager {
     pub sessions: DashMap<String, Arc<Session>>,
     pub sync_clients: Arc<Mutex<Vec<SyncClient>>>,
     pub active_pane_id: Arc<Mutex<Option<String>>>,
     pub tab_layouts: DashMap<String, serde_json::Value>,
+    pub pending_ssh_auth: DashMap<String, PendingSshAuth>,
     pub tab_order: Mutex<Vec<String>>,
     pub event_bus: EventBus,
 }
@@ -601,6 +750,7 @@ impl SessionManager {
             active_pane_id: Arc::new(Mutex::new(None)),
             tab_layouts: DashMap::new(),
             tab_order: Mutex::new(Vec::new()),
+            pending_ssh_auth: DashMap::new(),
             event_bus: EventBus::new(),
         }
     }
@@ -620,6 +770,19 @@ impl SessionManager {
         self.tab_layouts.remove(tab_id);
         let mut order = self.tab_order.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         order.retain(|id| id != tab_id);
+    }
+
+    /// Check if a `pane_id` belongs to any registered tab layout.
+    /// Used to prevent creating fallback PTY sessions for SSH panes.
+    pub fn is_pane_in_any_tab(&self, pane_id: &str) -> bool {
+        for entry in &self.tab_layouts {
+            if let Some(layout) = entry.value().get("layout") {
+                if layout_has_pane(layout, pane_id) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// # Panics

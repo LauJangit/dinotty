@@ -105,6 +105,12 @@ const defs: KeyBindingDef[] = [
     titleKey: 'keybinding.missionControl',
   },
   {
+    id: 'sshConnect',
+    defaultBinding: { key: 't', shift: true },
+    icon: '⌘⇧T',
+    titleKey: 'keybinding.sshConnect',
+  },
+  {
     id: 'fontSizeUp',
     defaultBinding: { key: '=', shift: true },
     icon: 'A+',

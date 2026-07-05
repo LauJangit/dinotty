@@ -51,6 +51,7 @@ import SelectionHandles from './SelectionHandles.vue'
 
 const props = defineProps<{
   paneId: string
+  sshHost?: string // "user@host:port" for SSH tabs
 }>()
 
 const emit = defineEmits<{
@@ -62,6 +63,7 @@ const emit = defineEmits<{
   previewLink: [url: string]
   linkActivate: []
   input: [data: string]
+  reconnect: []
 }>()
 
 const wrapperRef = ref<HTMLElement>()
@@ -751,11 +753,13 @@ function onHandleDragEnd(canceled = false) {
 
 onMounted(() => {
   terminal = new TerminalInstance(props.paneId)
+  if (props.sshHost) terminal.sshHost = props.sshHost
   terminal.onTitleChange = (tv) => emit('titleChange', tv)
   terminal.onShellInfo = (s) => emit('shellInfo', s)
   terminal.onConnect = () => emit('connect')
   terminal.onDisconnect = () => emit('disconnect')
   terminal.onInput = (data) => emit('input', data)
+  terminal.onReconnect = () => emit('reconnect')
   terminal.onFileClick = (path, x, y) => {
     emit('linkActivate')
     linkType.value = 'file'

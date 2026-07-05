@@ -155,6 +155,8 @@ export class TerminalInstance {
   private _onDataRegistered = false
   private _overlay: HTMLElement | null = null
   private _sessionExited = false
+  private _shellType: string | null = null
+  sshHost: string | null = null // "user@host:port" for SSH tabs
   private _suppressTitleChange = false
   private _touchCleanup: (() => void) | null = null
   private _focusinCleanup: (() => void) | null = null
@@ -188,6 +190,7 @@ export class TerminalInstance {
   onRawOutput: ((data: string) => void) | null = null
   onInput: ((data: string) => void) | null = null
   onSessionExit: (() => void) | null = null
+  onReconnect: (() => void) | null = null
 
   constructor(paneId: string) {
     this.paneId = paneId
@@ -622,6 +625,7 @@ export class TerminalInstance {
         this._enqueueWrite(msg.data)
         this.onRawOutput?.(msg.data)
       } else if (msg.type === 'shell_info') {
+        this._shellType = msg.shell_type
         this.onShellInfo?.(msg.shell_type)
       } else if (msg.type === 'reconnected') {
         this._suppressTitleChange = true
@@ -692,6 +696,7 @@ export class TerminalInstance {
         this._enqueueWrite(msg.data)
         this.onRawOutput?.(msg.data)
       } else if (msg.type === 'shell_info') {
+        this._shellType = msg.shell_type
         this.onShellInfo?.(msg.shell_type)
       } else if (msg.type === 'session_exit') {
         this._handleSessionExit()
@@ -837,17 +842,32 @@ export class TerminalInstance {
     this._overlay = document.createElement('div')
     this._overlay.className = 'reconnect-overlay'
 
+    const isSsh = this._shellType === 'ssh'
+
     const text = document.createElement('span')
-    text.textContent = 'Process exited'
+    text.textContent = isSsh ? 'Connection Lost' : 'Process exited'
+
+    if (isSsh && this.sshHost) {
+      const hostInfo = document.createElement('span')
+      hostInfo.className = 'reconnect-host-info'
+      hostInfo.textContent = this.sshHost
+      this._overlay.appendChild(text)
+      this._overlay.appendChild(hostInfo)
+    } else {
+      this._overlay.appendChild(text)
+    }
 
     const btn = document.createElement('button')
     btn.className = 'reconnect-retry-btn'
-    btn.textContent = 'New Tab'
+    btn.textContent = isSsh ? 'Reconnect' : 'New Tab'
     btn.addEventListener('click', () => {
-      window.location.reload()
+      if (isSsh && this.onReconnect) {
+        this.onReconnect()
+      } else {
+        window.location.reload()
+      }
     })
 
-    this._overlay.appendChild(text)
     this._overlay.appendChild(btn)
     this._wrapper.style.position = 'relative'
     this._wrapper.appendChild(this._overlay)
