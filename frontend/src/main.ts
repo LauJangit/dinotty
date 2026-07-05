@@ -21,6 +21,11 @@ const toastOptions: PluginOptions = {
   icon: true,
 }
 
+// Register service worker for PWA installability
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {})
+}
+
 const app = createApp(App)
 app.use(createPinia())
 app.use(Toast, toastOptions)
