@@ -55,6 +55,8 @@ pub struct Settings {
     #[serde(default)]
     pub upload_file_cap_mb: u64,
     #[serde(default)]
+    pub toolbar_quick_keys: Vec<ActionKey>,
+    #[serde(default)]
     pub keyboard_sound: bool,
     #[serde(default)]
     pub show_virtual_keyboard: bool,
@@ -869,6 +871,7 @@ impl Default for Settings {
             recent_files: vec![],
             recent_urls: vec![],
             action_keyboard: None,
+            toolbar_quick_keys: vec![],
             upload_dir: default_upload_dir(),
             default_base_dir: None,
             default_workspace_root: None,

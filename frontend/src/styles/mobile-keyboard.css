@@ -520,13 +520,30 @@
 }
 
 .mkb-path-chip {
-  flex: 0 1 120px;
+  flex: 0 1 112px;
   min-width: 0;
   width: auto;
   padding: 0 8px;
   gap: 4px;
   font-size: 12px;
   overflow: hidden;
+}
+
+.mkb-toolbar-quick-strip {
+  display: flex;
+  flex: 1 1 184px;
+  flex-wrap: nowrap;
+  gap: 4px;
+  min-width: 0;
+  max-width: 184px;
+  overflow: hidden;
+}
+
+.mkb-toolbar-quick-strip .mkb-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 12px;
+  text-overflow: ellipsis;
 }
 
 .mkb-path-label {
