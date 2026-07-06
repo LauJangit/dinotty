@@ -135,7 +135,7 @@
               >
                 <Pencil :size="12" />
               </button>
-              <button class="bookmark-del" @click="removeBookmark(bm.id)">
+              <button v-if="!editId" class="bookmark-del" @click="removeBookmark(bm.id)">
                 <X :size="12" />
               </button>
             </template>
