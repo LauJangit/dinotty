@@ -32,55 +32,13 @@ export function setActivePaneId(paneId: string | null) {
 // require a double press.)
 export const DEDUP_WINDOW_MS = 2
 
+const IME_SYM_PAIR_MS = 400
+
 /**
  * Determine whether an incoming onData payload should be dropped because
  * it is a WKWebView multi-focus replay of the previous event. Exported
  * for unit testing.
  */
-/**
- * Standalone composition guard for unit testing.
- * Mirrors the logic inside TerminalInstance.setupCompositionGuard.
- */
-export function createCompositionGuard(sendData: (data: string) => void) {
-  let isComposing = false
-  let compositionJustEnded = false
-  let compositionData = ''
-  let safetyTimer: ReturnType<typeof setTimeout> | null = null
-
-  return {
-    onCompositionStart() {
-      isComposing = true
-      if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null }
-      safetyTimer = setTimeout(() => {
-        isComposing = false
-        safetyTimer = null
-      }, 1000)
-    },
-    onCompositionEnd(event: CompositionEvent) {
-      if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null }
-      isComposing = false
-      compositionJustEnded = true
-      compositionData = ''
-      if (event.data) sendData(event.data)
-      setTimeout(() => {
-        compositionJustEnded = false
-        compositionData = ''
-      }, 50)
-    },
-    guard(): boolean {
-      if (isComposing) return false
-      if (!compositionJustEnded) return true
-      return false
-    },
-    cleanup() {
-      if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null }
-      isComposing = false
-      compositionJustEnded = false
-      compositionData = ''
-    },
-  }
-}
-
 export function isDuplicateOnData(
   data: string,
   prev: string,
@@ -90,6 +48,52 @@ export function isDuplicateOnData(
   if (prev === '') return false
   if (data !== prev) return false
   return now - prevAt < DEDUP_WINDOW_MS
+}
+
+// Contiguous codepoint ranges of Shift+key punctuation that macOS Chinese IME can emit.
+// Covers the WHOLE finite alphabet by block, not a per-key whitelist:
+//   ASCII punct · General Punctuation (— – ' ' " " …) · CJK Symbols & Punctuation (、。《》「」『』【】〈〉)
+//   · Fullwidth Forms punct subranges. Excludes fullwidth letters/digits and U+3000 ideographic space.
+const SHIFT_SYMBOL_RANGES: ReadonlyArray<readonly [number, number]> = [
+  [0x21, 0x2F], [0x3A, 0x40], [0x5B, 0x60], [0x7B, 0x7E],
+  [0x2010, 0x2027], [0x3001, 0x301F],
+  [0xFF01, 0xFF0F], [0xFF1A, 0xFF20], [0xFF3B, 0xFF40], [0xFF5B, 0xFF5E],
+]
+// Standalone Shift+key punctuation outside any range: ¥(U+00A5 macOS pinyin shift+4) ·(U+00B7) ￥(U+FFE5).
+const SHIFT_SYMBOL_SINGLETONS = new Set([0x00A5, 0x00B7, 0xFFE5])
+
+// Single char produced by Shift+key that is a symbol/punctuation (NOT a letter/digit/space).
+// Excludes pinyin preedit letters (n,i,h,...) and digits, so the rescue can never touch CJK composition.
+function isShiftSymbolChar(data: string): boolean {
+  // Doubled CJK punctuation emitted by one keypress: —— (U+2014×2) / …… (U+2026×2)
+  if (data.length === 2) {
+    const d = data.charCodeAt(0)
+    return d === data.charCodeAt(1) && (d === 0x2014 || d === 0x2026)
+  }
+  if (data.length !== 1) return false
+  const cp = data.charCodeAt(0)
+  return SHIFT_SYMBOL_RANGES.some(([lo, hi]) => cp >= lo && cp <= hi) || SHIFT_SYMBOL_SINGLETONS.has(cp)
+}
+function stripImeConfirmSpace(data: string): string {
+  // Candidate-confirm space leaks as <sym><space> (incl. ——/…… + space); strip the trailing ws.
+  if (data.length >= 2 && /\s/.test(data[data.length - 1]) && isShiftSymbolChar(data.slice(0, -1))) {
+    return data.slice(0, -1)
+  }
+  return data
+}
+
+export { isShiftSymbolChar, stripImeConfirmSpace }
+
+export function isSinglePrintableAscii(data: string): boolean {
+  return data.length === 1 && data.charCodeAt(0) >= 0x20 && data.charCodeAt(0) <= 0x7e
+}
+
+export function isSinglePrintableGrapheme(data: string, allowSpace = false): boolean {
+  if (data.length !== 1) return false
+  const cp = data.charCodeAt(0)
+  if (cp === 0x20) return allowSpace
+  if (cp < 0x20 || cp === 0x7f) return false
+  return cp <= 0x7e || (cp >= 0xff01 && cp <= 0xff5e)
 }
 
 export function terminalKeybindingMatches(e: KeyboardEvent, binding: KeyBinding): boolean {
@@ -161,7 +165,6 @@ export class TerminalInstance {
   private _touchCleanup: (() => void) | null = null
   private _focusinCleanup: (() => void) | null = null
   private _compositionCleanup: (() => void) | null = null
-  private _compositionGuard: ((data: string) => boolean) | null = null
   private _resizeObserver: ResizeObserver | null = null
   private _themeUnsub: (() => void) | null = null
   private _textUnsub: (() => void) | null = null
@@ -171,6 +174,7 @@ export class TerminalInstance {
   private _resizeDebounce: number = 0
   private _lastInputData = ''
   private _lastInputTime = 0
+  private _symCredits: Array<{ data: string, src: 0 | 1, at: number }> = []
   private _writeQueue: string[] = []
   private _writing = false
   touchMoved = false
@@ -315,94 +319,17 @@ export class TerminalInstance {
       textarea.inputMode = 'none'
       textarea.setAttribute('virtualkeyboardpolicy', 'manual')
     }
-    // Composition guard: only needed on Tauri (WKWebView) where xterm.js's
-    // native IME handling is broken. On web, xterm.js handles IME natively.
     if (textarea && isTauri()) {
-      let isComposing = false
-      let compositionJustEnded = false
-      let safetyTimer: ReturnType<typeof setTimeout> | null = null
-
-      // Hide xterm.js built-in composition view on Tauri (has known positioning
-      // bugs in WKWebView). On web it must stay visible for native IME handling.
-      const compositionView = wrapper.querySelector('.composition-view') as HTMLElement | null
-      if (compositionView) compositionView.style.display = 'none'
-
-      // Preedit overlay for IME composition display
-      const preeditOverlay = document.createElement('div')
-      preeditOverlay.className = 'preedit-overlay'
-      preeditOverlay.style.display = 'none'
-      wrapper.appendChild(preeditOverlay)
-
-      const updatePreeditPosition = () => {
-        if (!this.xterm) return
-        const core = (this.xterm as any)._core
-        const dims = core?._renderService?.dimensions
-        if (!dims?.css?.cell?.width || !dims.css.cell.height) return
-        const buffer = this.xterm.buffer.active
-        const x = buffer.cursorX * dims.css.cell.width
-        const y = buffer.cursorY * dims.css.cell.height
-        preeditOverlay.style.left = `${x}px`
-        preeditOverlay.style.top = `${y}px`
+      const onImeInput = (e: InputEvent) => {
+        if (e.inputType !== 'insertText') return
+        const data = stripImeConfirmSpace(e.data || '')
+        if (!isShiftSymbolChar(data)) return
+        if (this._resolveSym(data, 0, performance.now())) this._emitInput(data)
       }
-
-      const onCompositionStart = () => {
-        isComposing = true
-        preeditOverlay.textContent = ''
-        preeditOverlay.style.display = 'none'
-        if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null }
-        // Safety: if compositionend never fires (WebKit Bug 224932), reset after 1s
-        safetyTimer = setTimeout(() => {
-          isComposing = false
-          safetyTimer = null
-          preeditOverlay.style.display = 'none'
-        }, 1000)
-      }
-      const onCompositionUpdate = (e: CompositionEvent) => {
-        const text = e.data || ''
-        if (!text) {
-          preeditOverlay.style.display = 'none'
-          return
-        }
-        preeditOverlay.textContent = text
-        preeditOverlay.style.display = ''
-        updatePreeditPosition()
-      }
-      const onCompositionEnd = (e: CompositionEvent) => {
-        if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null }
-        isComposing = false
-        compositionJustEnded = true
-        preeditOverlay.style.display = 'none'
-        // Send committed text directly — xterm.js may fire onData before this
-        // handler (its compositionend listener was registered first), and the
-        // guard would block it because isComposing is still true at that point.
-        const text = e.data
-        if (text) {
-          this.onInput?.(text)
-          if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify({ type: 'input', data: text } as ClientMsg))
-          }
-          this._transport?.send({ type: 'input', data: text })
-        }
-        setTimeout(() => {
-          compositionJustEnded = false
-        }, 50)
-      }
-      textarea.addEventListener('compositionstart', onCompositionStart)
-      textarea.addEventListener('compositionupdate', onCompositionUpdate)
-      textarea.addEventListener('compositionend', onCompositionEnd)
+      textarea.addEventListener('input', onImeInput as EventListener)
       this._compositionCleanup = () => {
-        if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null }
-        textarea.removeEventListener('compositionstart', onCompositionStart)
-        textarea.removeEventListener('compositionupdate', onCompositionUpdate)
-        textarea.removeEventListener('compositionend', onCompositionEnd)
-        preeditOverlay.remove()
-      }
-      this._compositionGuard = (data: string): boolean => {
-        if (isComposing) return false
-        if (!compositionJustEnded) return true
-        // Block all onData during post-composition window — committed text
-        // was already sent directly in onCompositionEnd.
-        return false
+        textarea.removeEventListener('input', onImeInput as EventListener)
+        this._symCredits = []
       }
     }
 
@@ -560,6 +487,36 @@ export class TerminalInstance {
     }
   }
 
+  private _resolveSym(data: string, src: 0 | 1, now: number): boolean {
+    if (this._symCredits.length) this._symCredits = this._symCredits.filter(c => now - c.at < IME_SYM_PAIR_MS)
+    const i = this._symCredits.findIndex(c => c.data === data && c.src !== src)
+    if (i >= 0) { this._symCredits.splice(i, 1); return false }
+    this._symCredits.push({ data, src, at: now })
+    return true
+  }
+
+  private _handleXtermData(rawData: string) {
+    const tauri = isTauri()
+    const data = tauri ? stripImeConfirmSpace(rawData) : rawData
+    if (!data) return
+    const now = performance.now()
+    if (isDuplicateOnData(data, this._lastInputData, this._lastInputTime, now)) return
+    this._lastInputData = data
+    this._lastInputTime = now
+    if (tauri && isShiftSymbolChar(data)) {
+      if (!this._resolveSym(data, 1, now)) return
+    }
+    this._emitInput(data)
+  }
+
+  private _emitInput(data: string): boolean {
+    if (this._sessionExited) return false
+    if (_activePaneId !== null && _activePaneId !== this.paneId) return false
+    this.onInput?.(data)
+    this.sendData(data)
+    return true
+  }
+
   getSelection(): string {
     return this.xterm?.getSelection() ?? ''
   }
@@ -645,18 +602,7 @@ export class TerminalInstance {
 
     if (!this._onDataRegistered) {
       this._onDataRegistered = true
-      this.xterm!.onData((data) => {
-        if (this._compositionGuard && !this._compositionGuard(data)) return
-        // Guard: only the active pane sends input (prevents WKWebView multi-focus duplication)
-        if (_activePaneId !== null && _activePaneId !== this.paneId) return
-        // Deduplicate: WKWebView may fire onData twice for the same keystroke
-        const now = performance.now()
-        if (isDuplicateOnData(data, this._lastInputData, this._lastInputTime, now)) return
-        this._lastInputData = data
-        this._lastInputTime = now
-        this.onInput?.(data)
-        this._transport?.send({ type: 'input', data })
-      })
+      this.xterm!.onData((d) => this._handleXtermData(d))
     }
   }
 
@@ -719,22 +665,7 @@ export class TerminalInstance {
 
     if (!this._onDataRegistered) {
       this._onDataRegistered = true
-      this.xterm!.onData((data) => {
-        if (this._compositionGuard && !this._compositionGuard(data)) return
-        // Guard: only the active pane sends input (prevents WKWebView multi-focus duplication)
-        if (_activePaneId !== null && _activePaneId !== this.paneId) return
-        // Deduplicate: WKWebView may fire onData twice for the same keystroke
-        const now = performance.now()
-        if (isDuplicateOnData(data, this._lastInputData, this._lastInputTime, now)) return
-        this._lastInputData = data
-        this._lastInputTime = now
-        this.onInput?.(data)
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-          this.ws.send(JSON.stringify({ type: 'input', data } as ClientMsg))
-        } else {
-          console.warn('[TerminalInput] WS not open, readyState:', this.ws?.readyState, 'pane:', this.paneId)
-        }
-      })
+      this.xterm!.onData((d) => this._handleXtermData(d))
     }
   }
 
