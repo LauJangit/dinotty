@@ -87,6 +87,8 @@
 - **分屏与多 Tab** — 可拖拽分屏、多 Tab 管理，服务端主导的 Pane 生命周期
 - **广播模式** — 一个 pane 输入，多个 pane 同步执行，免费
 - **命令收藏** — 右键终端文本直接收藏，分组管理，一键执行
+- **SSH 远程连接** — 内建 SSH 客户端，支持密码/密钥认证，远程会话与本地体验一致
+- **远程文件管理（SFTP）** — SSH 连接下自动启用 SFTP，文件浏览、编辑、上传、下载全覆盖
 - **服务器列表** — 管理多台远程服务器，快速切换连接
 - **响应式布局** — 竖屏上下排列，横屏左右并排；触控优化的按钮与面板缩放
 - **可自定义快捷键盘** — 为手机补齐 Ctrl/Esc/功能键，支持任意转义序列
@@ -114,6 +116,7 @@
 | 广播模式 | ✅ | ❌ | ❌ | ❌ |
 | 命令收藏 | ✅ | ❌ | ❌ | ❌ |
 | 插件系统 | ✅ | ❌ | ❌ | ❌ |
+| SSH 远程连接 + SFTP | ✅ | ❌ | ❌ | ❌ |
 | Token 认证 | ✅ | ✅ | ❌ | ✅ |
 
 其他 Web 终端只是 WebSocket 到 PTY 的透传管道。Dinotty 在服务端运行**完整的虚拟终端仿真器**，使得会话恢复、屏幕快照成为可能，结合内建文件/网页浏览器，提供自包含的 Coding Agent 工作环境。
@@ -126,7 +129,7 @@
 | 技术方案 | 服务端 VTE + Web UI | Anthropic 云 + 本地 | OpenAI 云 | CLI 代理包装 | CLI 代理包装 | 原生 App | 服务端进程 |
 | Web 访问 | ✅ | ✅ claude.ai/code | ✅ chatgpt.com/codex | ✅ | ✅ PWA | ❌ | ❌ |
 | 原生 App | Tauri（可选） | iOS + Android | ❌ | iOS + Android | ❌（PWA） | 全平台 | ❌ |
-| 通用终端 | ✅ 任意命令 | ❌ 仅 AI Agent | ❌ 仅 AI Agent | ❌ 仅 AI Agent | ❌ 仅 AI Agent | ✅ SSH | ✅ |
+| 通用终端 | ✅ 本地 + SSH | ❌ 仅 AI Agent | ❌ 仅 AI Agent | ❌ 仅 AI Agent | ❌ 仅 AI Agent | ✅ SSH | ✅ |
 | Coding Agent 适配 | ✅ 文件浏览/预览/通知 | ✅ 内建 | ✅ 内建 | ✅ 语音/审批 | ✅ 语音/工作区 | ❌ | ❌ |
 | 分屏 | ✅ 原生拖拽 | ❌ | ❌ | ❌ | ❌ | ❌ | ⚠️ tmux 命令 |
 | 广播模式 | ✅ 免费 | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
@@ -208,7 +211,7 @@ cd frontend && npx vue-tsc --noEmit
 
 | 层级 | 技术 |
 |------|------|
-| 后端 | Rust, Axum 0.7, Tokio, portable-pty, vte |
+| 后端 | Rust, Axum 0.7, Tokio, portable-pty, vte, russh, russh-sftp |
 | 前端 | Vue 3, TypeScript, Vite, xterm.js 5 |
 | 桌面端 | Tauri |
 

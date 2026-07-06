@@ -87,6 +87,8 @@ Terminal-based coding agents (Claude Code, opencode, Codex, OpenClaw, etc.) are 
 - **Split pane & multi-tab** — draggable split, multi-tab management with server-led pane lifecycle
 - **Broadcast mode** — input in one pane, execute in all panes simultaneously, free
 - **Command bookmarks** — right-click terminal text to bookmark, group management, one-click execution
+- **SSH remote connection** — built-in SSH client with password/key auth, remote sessions feel just like local
+- **Remote file management (SFTP)** — auto-enabled over SSH connections, full file browse/edit/upload/download
 - **Server list** — manage multiple remote servers, quick switch connections
 - **Responsive layout** — portrait stacks vertically, landscape side-by-side; touch-optimized buttons & pane resizing
 - **Customizable shortcut keyboard** — add Ctrl/Esc/function keys for mobile, supports arbitrary escape sequences
@@ -114,6 +116,7 @@ Terminal-based coding agents (Claude Code, opencode, Codex, OpenClaw, etc.) are 
 | Broadcast mode | ✅ | ❌ | ❌ | ❌ |
 | Command bookmarks | ✅ | ❌ | ❌ | ❌ |
 | Plugin system | ✅ | ❌ | ❌ | ❌ |
+| SSH remote + SFTP | ✅ | ❌ | ❌ | ❌ |
 | Token auth | ✅ | ✅ | ❌ | ✅ |
 
 Other web terminals are thin WebSocket-to-PTY pipes. Dinotty runs a **full virtual terminal emulator on the server**, enabling session recovery and screen snapshots. Combined with the built-in file/web browser, it provides a self-contained environment where coding agents work and users verify results.
@@ -126,7 +129,7 @@ Other web terminals are thin WebSocket-to-PTY pipes. Dinotty runs a **full virtu
 | Approach | Server-side VTE + Web UI | Anthropic cloud + local | OpenAI cloud | CLI proxy wrapper | CLI proxy wrapper | Native app | Server-side process |
 | Web access | ✅ | ✅ claude.ai/code | ✅ chatgpt.com/codex | ✅ | ✅ PWA | ❌ | ❌ |
 | Native app | Tauri (optional) | iOS + Android | ❌ | iOS + Android | ❌ (PWA) | All platforms | ❌ |
-| General terminal | ✅ Any command | ❌ AI agents only | ❌ AI agents only | ❌ AI agents only | ❌ AI agents only | ✅ SSH | ✅ |
+| General terminal | ✅ Local + SSH | ❌ AI agents only | ❌ AI agents only | ❌ AI agents only | ❌ AI agents only | ✅ SSH | ✅ |
 | Coding agent support | ✅ File browser/preview/notify | ✅ Built-in | ✅ Built-in | ✅ Voice/approve | ✅ Voice/workspace | ❌ | ❌ |
 | Split screen | ✅ Native drag | ❌ | ❌ | ❌ | ❌ | ❌ | ⚠️ tmux commands |
 | Broadcast mode | ✅ Free | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
@@ -208,7 +211,7 @@ cd frontend && npx vue-tsc --noEmit
 
 | Layer | Technology |
 |-------|-----------|
-| Backend | Rust, Axum 0.7, Tokio, portable-pty, vte |
+| Backend | Rust, Axum 0.7, Tokio, portable-pty, vte, russh, russh-sftp |
 | Frontend | Vue 3, TypeScript, Vite, xterm.js 5 |
 | Desktop | Tauri |
 
