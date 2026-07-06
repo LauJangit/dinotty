@@ -123,7 +123,7 @@ pub async fn close_tab(
 
 // ─── POST /api/tabs/{tab_id}/pane ──────────────────────────────────
 
-#[allow(clippy::unused_async)]
+#[allow(clippy::unused_async, clippy::too_many_lines)]
 pub async fn split_pane(
     State(manager): State<Arc<SessionManager>>,
     Path(tab_id): Path<String>,
@@ -161,14 +161,29 @@ pub async fn split_pane(
 
     let new_pane_id = uuid::Uuid::new_v4().to_string();
 
-    // Inherit CWD from source pane
-    let source_cwd = manager
-        .sessions
-        .get(&req.pane_id)
-        .and_then(|s| s.cwd_state.lock().ok().map(|state| state.cwd.clone()));
+    // Check if source pane is an SSH session
+    let ssh_params = manager.sessions.get(&req.pane_id).and_then(|s| s.ssh_params.clone());
 
-    // Create PTY for new pane
-    let (_session, _shell_type) =
+    // Create session for new pane (SSH or local PTY)
+    let (_session, _shell_type) = if let Some(params) = ssh_params {
+        // Source is an SSH session — create a new SSH connection to the same host
+        match ssh::create_ssh_session(&manager, &new_pane_id, params, None).await {
+            Ok(x) => x,
+            Err(e) => {
+                tracing::error!("Failed to create SSH session for split: {}", e);
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": e })),
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        // Local PTY — inherit CWD from source pane
+        let source_cwd = manager
+            .sessions
+            .get(&req.pane_id)
+            .and_then(|s| s.cwd_state.lock().ok().map(|state| state.cwd.clone()));
         match pty::create_session(&manager, &new_pane_id, None, source_cwd) {
             Ok(x) => x,
             Err(e) => {
@@ -179,12 +194,30 @@ pub async fn split_pane(
                 )
                     .into_response();
             }
-        };
+        }
+    };
 
     // Update layout tree
-    let Some(new_layout) =
-        session::insert_pane_into_layout(&layout, &req.pane_id, &req.direction, &new_pane_id)
-    else {
+    let is_ssh = manager.sessions.get(&new_pane_id).is_some_and(|s| s.is_ssh());
+    let new_layout =
+        if let Some(session) = is_ssh.then(|| manager.sessions.get(&new_pane_id)).flatten() {
+            let title = format!(
+                "{}@{}",
+                session.ssh_params.as_ref().map_or("ssh", |p| p.username.as_str()),
+                session.ssh_params.as_ref().map_or("", |p| p.host.as_str()),
+            );
+            session::insert_pane_into_layout_with_info(
+                &layout,
+                &req.pane_id,
+                &req.direction,
+                &new_pane_id,
+                &title,
+                "ssh",
+            )
+        } else {
+            session::insert_pane_into_layout(&layout, &req.pane_id, &req.direction, &new_pane_id)
+        };
+    let Some(new_layout) = new_layout else {
         // Clean up PTY if layout update fails
         manager.kill_and_remove(&new_pane_id);
         return (

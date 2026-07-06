@@ -35,8 +35,18 @@ pub enum SessionBackend {
         master: Box<dyn MasterPty + Send>,
         child: Box<dyn Child + Send + Sync>,
     },
-    /// SSH 远程连接
-    Ssh { channel: russh::Channel<russh::client::Msg> },
+    /// SSH 远程连接 — channel 已移至 reader task，此处仅保留标记
+    Ssh,
+}
+
+/// Commands sent from Session methods to the SSH reader/writer task.
+pub enum SshCmd {
+    /// Write input data to the SSH channel
+    Input(Vec<u8>),
+    /// Resize the SSH channel
+    Resize(u16, u16),
+    /// Close the SSH channel
+    Close,
 }
 
 /// Force-flush `sync_buffer` when accumulated data exceeds this limit (256KB).
@@ -86,6 +96,16 @@ pub struct Session {
     pub sync_buffer_bytes: AtomicUsize,
     /// Sender for debounced resize requests (None = no pending resize)
     pub(crate) resize_tx: watch::Sender<Option<(u16, u16)>>,
+    /// Channel to send commands (input/resize/close) to the SSH reader task.
+    /// None for local sessions.
+    pub ssh_cmd_tx: Mutex<Option<mpsc::UnboundedSender<SshCmd>>>,
+    /// SSH client handle for opening new channels (SFTP, exec).
+    /// Type-erased to avoid circular deps. Actual type: `russh::client::Handle<ssh::SshClientHandler>`
+    /// Uses `tokio::sync::Mutex` so the guard can be held across `.await` points.
+    pub ssh_handle: tokio::sync::Mutex<Option<Box<dyn std::any::Any + Send + Sync>>>,
+    /// Cached SFTP session for workspace operations. Created lazily.
+    /// Actual type: `Arc<russh_sftp::client::SftpSession>`
+    pub sftp_session: Mutex<Option<Box<dyn std::any::Any + Send + Sync>>>,
     /// Raw PTY output channel: reader sends raw bytes here for xterm.js rendering.
     /// Unbounded so the PTY reader never blocks on send.
     pub output_tx: mpsc::UnboundedSender<Vec<u8>>,
@@ -130,8 +150,16 @@ impl Session {
                 self.mark_exited();
                 info!("Session child killed: pid={:?}", pid);
             }
-            SessionBackend::Ssh { .. } => {
-                // SSH channel 在 russh Channel drop 时自动关闭
+            SessionBackend::Ssh => {
+                // SSH channel is owned by the reader task; signal it to close
+                if let Some(tx) = self
+                    .ssh_cmd_tx
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .as_ref()
+                {
+                    let _ = tx.send(SshCmd::Close);
+                }
                 self.mark_exited();
                 info!("SSH session marked as exited");
             }
@@ -139,12 +167,13 @@ impl Session {
     }
 
     /// 异步清理 SSH channel
-    pub async fn kill_backend_async(&self) {
-        let mut backend = self.backend.lock().await;
-        if let SessionBackend::Ssh { channel } = &mut *backend {
-            let _ = channel.close().await;
+    pub fn kill_backend_async(&self) {
+        if let Some(tx) =
+            self.ssh_cmd_tx.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref()
+        {
+            let _ = tx.send(SshCmd::Close);
             self.mark_exited();
-            info!("SSH channel closed");
+            info!("SSH close command sent");
         }
     }
 
@@ -178,7 +207,7 @@ impl Session {
                 writer.flush().map_err(|e| e.to_string())?;
                 Ok(())
             }
-            SessionBackend::Ssh { .. } => Err("use write_input_async for SSH sessions".into()),
+            SessionBackend::Ssh => Err("use write_input_async for SSH sessions".into()),
         }
     }
 
@@ -215,22 +244,22 @@ impl Session {
         if self.is_exited() {
             return Ok(());
         }
-        let mut backend = self.backend.lock().await;
-        match &mut *backend {
-            SessionBackend::Local { master, .. } => {
+        // SSH: send resize command to reader task (owns the channel)
+        if self.is_ssh() {
+            if let Some(tx) =
+                self.ssh_cmd_tx.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref()
+            {
+                let _ = tx.send(SshCmd::Resize(cols, rows));
+            }
+        } else {
+            let mut backend = self.backend.lock().await;
+            if let SessionBackend::Local { master, .. } = &mut *backend {
                 use portable_pty::PtySize;
                 master
                     .resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
                     .map_err(|e| e.to_string())?;
             }
-            SessionBackend::Ssh { channel } => {
-                channel
-                    .window_change(u32::from(cols), u32::from(rows), 0, 0)
-                    .await
-                    .map_err(|e| format!("SSH resize failed: {e}"))?;
-            }
         }
-        drop(backend);
         *self.size.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = (cols, rows);
         self.screen
             .lock()
@@ -244,16 +273,21 @@ impl Session {
     /// # Errors
     /// Returns an error if the write operation fails.
     pub async fn write_input_async(&self, data: &[u8]) -> Result<(), String> {
+        // SSH: send input to reader task (owns the channel)
+        if self.is_ssh() {
+            if let Some(tx) =
+                self.ssh_cmd_tx.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref()
+            {
+                tx.send(SshCmd::Input(data.to_vec()))
+                    .map_err(|_| "SSH cmd channel closed".to_string())?;
+                return Ok(());
+            }
+            return Err("SSH session not initialized".into());
+        }
         let mut backend = self.backend.lock().await;
-        match &mut *backend {
-            SessionBackend::Local { writer, .. } => {
-                writer.write_all(data).map_err(|e| e.to_string())?;
-                writer.flush().map_err(|e| e.to_string())?;
-            }
-            SessionBackend::Ssh { channel } => {
-                let cursor = std::io::Cursor::new(data.to_vec());
-                channel.data(cursor).await.map_err(|e| format!("SSH write failed: {e}"))?;
-            }
+        if let SessionBackend::Local { writer, .. } = &mut *backend {
+            writer.write_all(data).map_err(|e| e.to_string())?;
+            writer.flush().map_err(|e| e.to_string())?;
         }
         Ok(())
     }
@@ -481,7 +515,7 @@ pub fn remove_pane_from_layout(
                         .unwrap_or_else(|| unreachable!("just assigned as array"))
                         .len();
                     #[allow(clippy::cast_precision_loss)]
-                    let ratio = 1.0 / n as f64;
+                    let ratio = 1.0 / f64::from(u32::try_from(n).unwrap_or(1));
                     result["ratios"] = serde_json::Value::Array(
                         (0..n).map(|_| serde_json::Value::from(ratio)).collect(),
                     );
@@ -519,19 +553,53 @@ pub fn insert_pane_into_layout(
     direction: &str,
     new_pane_id: &str,
 ) -> Option<serde_json::Value> {
+    insert_pane_into_layout_inner(layout, target_pane_id, direction, new_pane_id, None, None)
+}
+
+/// Like `insert_pane_into_layout` but allows specifying `title` and `shell_type` for the new leaf.
+#[must_use]
+pub fn insert_pane_into_layout_with_info(
+    layout: &serde_json::Value,
+    target_pane_id: &str,
+    direction: &str,
+    new_pane_id: &str,
+    title: &str,
+    shell_type: &str,
+) -> Option<serde_json::Value> {
+    insert_pane_into_layout_inner(
+        layout,
+        target_pane_id,
+        direction,
+        new_pane_id,
+        Some(title),
+        Some(shell_type),
+    )
+}
+
+fn insert_pane_into_layout_inner(
+    layout: &serde_json::Value,
+    target_pane_id: &str,
+    direction: &str,
+    new_pane_id: &str,
+    title: Option<&str>,
+    shell_type: Option<&str>,
+) -> Option<serde_json::Value> {
     let node_type = layout.get("type")?.as_str()?;
     match node_type {
         "leaf" => {
             let pane_id = layout.get("paneId")?.as_str()?;
             if pane_id == target_pane_id {
                 // Found the target — wrap in a new split node
-                let new_leaf = serde_json::json!({
+                let mut new_leaf = serde_json::json!({
                     "type": "leaf",
                     "paneId": new_pane_id,
-                    "title": "Terminal",
+                    "title": title.unwrap_or("Terminal"),
                     "ratio": 1,
                     "zoomed": false,
                 });
+                if let Some(st) = shell_type {
+                    new_leaf["shell_type"] = serde_json::json!(st);
+                }
                 let existing_leaf = layout.clone();
                 let split_id = uuid::Uuid::new_v4().to_string();
                 Some(serde_json::json!({
@@ -551,9 +619,14 @@ pub fn insert_pane_into_layout(
             let mut new_children: Vec<serde_json::Value> = Vec::new();
             let mut found = false;
             for child in children {
-                if let Some(updated) =
-                    insert_pane_into_layout(child, target_pane_id, direction, new_pane_id)
-                {
+                if let Some(updated) = insert_pane_into_layout_inner(
+                    child,
+                    target_pane_id,
+                    direction,
+                    new_pane_id,
+                    title,
+                    shell_type,
+                ) {
                     let changed = found || updated != *child;
                     if changed {
                         found = true;
@@ -580,7 +653,7 @@ pub fn insert_pane_into_layout(
             let mut result = layout.clone();
             // Redistribute ratios equally among all children after insertion
             let n = new_children.len();
-            let ratio = 1.0 / n as f64;
+            let ratio = 1.0 / f64::from(u32::try_from(n).unwrap_or(1));
             for child in &mut new_children {
                 if let Some(obj) = child.as_object_mut() {
                     obj.insert("ratio".to_string(), serde_json::json!(ratio));

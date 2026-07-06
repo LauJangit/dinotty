@@ -110,6 +110,7 @@
             :kind="tab.previewKind"
             :web-url="tab.previewUrl"
             :panel-position="resolvedPosition"
+            :remote="isRemote"
             @close="closePreview(tab.paneId)"
             @update:address="
               (v: string) => {
@@ -791,12 +792,21 @@ function closePreview(tabId: string) {
   }
 }
 
+const isRemote = computed(() => {
+  const tabId = activePaneId.value
+  if (!tabId) return false
+  const tab = tabs.value.find((t) => t.paneId === tabId)
+  if (!tab || tab.type !== 'terminal') return false
+  return findLeaf(tab.layout, tab.activePaneId)?.shell_type === 'ssh'
+})
+
 function openPreview() {
   const tabId = activePaneId.value
   if (!tabId) return
   const tab = tabs.value.find((t) => t.paneId === tabId)
   if (!tab || tab.type !== 'terminal') return
-  if (!tab.previewAddress.trim()) {
+  const isSsh = findLeaf(tab.layout, tab.activePaneId)?.shell_type === 'ssh'
+  if (isSsh || !tab.previewAddress.trim()) {
     tab.previewKind = 'files'
   }
   tab.previewVisible = true

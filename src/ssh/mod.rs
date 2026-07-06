@@ -1,9 +1,10 @@
 pub mod host_key;
+pub mod sftp;
 
 use crate::event_bus::BusEvent;
 use crate::session::{
     CwdState, PendingSshAuth, Session, SessionBackend, SessionManager, SessionStatus,
-    SshAuthPrompt, SshSessionParams, SyncMsg,
+    SshAuthPrompt, SshCmd, SshSessionParams, SyncMsg,
 };
 use crate::settings::SshAuthMethod;
 use crate::vt_screen::VirtualScreen;
@@ -35,7 +36,7 @@ impl Default for SshTimeouts {
 }
 
 /// SSH 客户端 Handler
-struct SshClientHandler {
+pub(crate) struct SshClientHandler {
     verifier: host_key::HostKeyVerifier,
     host: String,
     port: u16,
@@ -249,13 +250,48 @@ pub async fn create_ssh_session(
 
     info!("SSH channel opened for {}", pane_id);
 
-    // 7. 构造 Session
-    let initial_cwd = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+    // 7. 查询远程 home 目录
+    let remote_home = {
+        let mut ch = session
+            .channel_open_session()
+            .await
+            .map_err(|e| format!("Failed to open exec channel for home query: {e}"))?;
+        ch.exec(true, b"echo $HOME")
+            .await
+            .map_err(|e| format!("Failed to exec echo $HOME: {e}"))?;
+        let mut home_out = Vec::new();
+        let deadline = tokio::time::Instant::now() + timeouts.command_exec;
+        loop {
+            match tokio::time::timeout_at(deadline, ch.wait()).await {
+                Ok(Some(russh::ChannelMsg::Data { data })) => home_out.extend_from_slice(&data),
+                Ok(
+                    Some(
+                        russh::ChannelMsg::ExitStatus { .. }
+                        | russh::ChannelMsg::Eof
+                        | russh::ChannelMsg::Close,
+                    )
+                    | None,
+                )
+                | Err(_) => break,
+                _ => {}
+            }
+        }
+        let home_str = String::from_utf8_lossy(&home_out).trim().to_string();
+        if home_str.is_empty() || !home_str.starts_with('/') {
+            dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"))
+        } else {
+            PathBuf::from(home_str)
+        }
+    };
+    info!("Remote home for {}: {}", pane_id, remote_home.display());
+
+    // 8. 构造 Session
     let (resize_tx, resize_rx) = watch::channel(None);
     let (output_tx, output_rx) = mpsc::unbounded_channel();
+    let (ssh_cmd_tx, ssh_cmd_rx) = mpsc::unbounded_channel();
 
     let session_arc = Arc::new(Session {
-        backend: tokio::sync::Mutex::new(SessionBackend::Ssh { channel }),
+        backend: tokio::sync::Mutex::new(SessionBackend::Ssh),
         ssh_params: Some(params.clone()),
         screen: std::sync::Mutex::new(VirtualScreen::new(80, 24)),
         clients: std::sync::Mutex::new(Vec::new()),
@@ -265,28 +301,34 @@ pub async fn create_ssh_session(
         exited: std::sync::Mutex::new(false),
         shell_type: "ssh".to_string(),
         tauri_on_exit: std::sync::Mutex::new(tauri_on_exit),
-        cwd_state: std::sync::Mutex::new(CwdState { cwd: initial_cwd, sniff_buf: Vec::new() }),
+        cwd_state: std::sync::Mutex::new(CwdState { cwd: remote_home, sniff_buf: Vec::new() }),
         sync_active: std::sync::atomic::AtomicBool::new(false),
         sync_buffer: std::sync::Mutex::new(Vec::new()),
         sync_buffer_bytes: std::sync::atomic::AtomicUsize::new(0),
         resize_tx,
+        ssh_cmd_tx: std::sync::Mutex::new(Some(ssh_cmd_tx)),
+        ssh_handle: tokio::sync::Mutex::new(None),
+        sftp_session: std::sync::Mutex::new(None),
         output_tx,
         output_rx: std::sync::Mutex::new(Some(output_rx)),
         pending_results: std::sync::Mutex::new(Vec::new()),
     });
 
-    // 8. 插入 SessionManager
+    // 9. 存储 SSH client handle（用于后续打开 SFTP/exec channel）
+    *session_arc.ssh_handle.lock().await = Some(Box::new(session));
+
+    // 10. 插入 SessionManager
     manager.sessions.insert(pane_id.to_string(), Arc::clone(&session_arc));
 
-    // 9. 启动 SSH reader task
+    // 11. 启动 SSH reader/writer task（拥有 channel，通过 select! 处理读写）
     let read_session = Arc::clone(&session_arc);
     let read_pane_id = pane_id.to_string();
     let read_manager = Arc::clone(manager);
     tokio::spawn(async move {
-        ssh_reader_task(read_session, read_pane_id, read_manager).await;
+        ssh_reader_task(read_session, channel, ssh_cmd_rx, read_pane_id, read_manager).await;
     });
 
-    // 10. 启动 broadcast task
+    // 12. 启动 broadcast task
     let broadcast_session = Arc::clone(&session_arc);
     let broadcast_manager = Arc::clone(manager);
     let broadcast_pane_id = pane_id.to_string();
@@ -294,14 +336,14 @@ pub async fn create_ssh_session(
         crate::pty::broadcast_task(broadcast_session, broadcast_pane_id, broadcast_manager).await;
     });
 
-    // 11. 启动 resize debounce task
+    // 13. 启动 resize debounce task
     let resize_session = Arc::clone(&session_arc);
     let resize_pane_id = pane_id.to_string();
     tokio::spawn(async move {
         resize_debounce_task(resize_session, resize_rx, resize_pane_id).await;
     });
 
-    // 12. 发布事件
+    // 14. 发布事件
     manager.event_bus.publish(BusEvent::SessionCreated {
         pane_id: pane_id.to_string(),
         shell_type: "ssh".to_string(),
@@ -394,48 +436,64 @@ async fn try_keyboard_interactive_auth(
 }
 
 /// SSH reader task: 从 SSH channel 读取数据并广播
-async fn ssh_reader_task(session: Arc<Session>, pane_id: String, manager: Arc<SessionManager>) {
+async fn ssh_reader_task(
+    session: Arc<Session>,
+    mut channel: russh::Channel<russh::client::Msg>,
+    mut ssh_cmd_rx: mpsc::UnboundedReceiver<SshCmd>,
+    pane_id: String,
+    manager: Arc<SessionManager>,
+) {
     loop {
-        // 获取 channel 消息
-        let msg = {
-            let mut backend = session.backend.lock().await;
-            match &mut *backend {
-                SessionBackend::Ssh { channel } => {
-                    // 使用 wait() 方法接收 ChannelMsg
-                    channel.wait().await
+        tokio::select! {
+            // 从 SSH channel 读取服务端数据
+            msg = channel.wait() => {
+                match msg {
+                    Some(russh::ChannelMsg::Data { data }) => {
+                        let bytes = data.to_vec();
+                        {
+                            let mut screen =
+                                session.screen.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                            screen.feed(&bytes);
+                        }
+                        let _ = session.output_tx.send(bytes);
+                    }
+                    Some(russh::ChannelMsg::ExtendedData { data, .. }) => {
+                        let bytes = data.to_vec();
+                        let _ = session.output_tx.send(bytes);
+                    }
+                    Some(russh::ChannelMsg::Eof | russh::ChannelMsg::Close) | None => {
+                        break;
+                    }
+                    _ => {}
                 }
-                SessionBackend::Local { .. } => break,
             }
-        };
-
-        match msg {
-            Some(russh::ChannelMsg::Data { data }) => {
-                let bytes = data.to_vec();
-                // VTE 解析
-                {
-                    let mut screen =
-                        session.screen.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                    screen.feed(&bytes);
+            // 处理来自 Session 方法的命令（输入、resize、关闭）
+            cmd = ssh_cmd_rx.recv() => {
+                match cmd {
+                    Some(SshCmd::Input(data)) => {
+                        let cursor = std::io::Cursor::new(data);
+                        if let Err(e) = channel.data(cursor).await {
+                            error!("SSH write failed: {e}, pane={}", pane_id);
+                            break;
+                        }
+                    }
+                    Some(SshCmd::Resize(cols, rows)) => {
+                        if let Err(e) = channel.window_change(u32::from(cols), u32::from(rows), 0, 0).await {
+                            error!("SSH resize failed: {e}, pane={}", pane_id);
+                        }
+                    }
+                    Some(SshCmd::Close) | None => {
+                        let _ = channel.close().await;
+                        break;
+                    }
                 }
-
-                // 通过 output_tx 发送到 broadcast_task 统一广播
-                // （不要直接调 session.broadcast，否则会和 broadcast_task 重复）
-                let _ = session.output_tx.send(bytes);
-            }
-            Some(russh::ChannelMsg::ExtendedData { data, .. }) => {
-                let bytes = data.to_vec();
-                let _ = session.output_tx.send(bytes);
-            }
-            Some(russh::ChannelMsg::Eof | russh::ChannelMsg::Close) | None => {
-                break;
-            }
-            _ => {
-                // 忽略其他消息
             }
         }
     }
 
-    // 清理
+    // 清理：清除 ssh_cmd_tx 以防止后续发送
+    *session.ssh_cmd_tx.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+
     session.notify_exit_and_mark_exited(&pane_id);
     manager.sessions.remove(&pane_id);
     manager
