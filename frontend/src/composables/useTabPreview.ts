@@ -205,6 +205,25 @@ function capturePaneLayout(
 /** Cache for plugin preview images to avoid re-capturing */
 const pluginPreviewCache = new Map<string, string>()
 
+/** Per-pane timestamp of last preview capture for throttling */
+const pluginPreviewLastCapture = new Map<string, number>()
+
+/** Minimum interval (ms) between preview captures for the same pane */
+const PREVIEW_THROTTLE_MS = 1000
+
+/** Visually-relevant CSS properties for preview capture (avoids iterating ~300 computed props) */
+const PREVIEW_STYLE_PROPS = [
+  'display', 'position', 'top', 'left', 'right', 'bottom',
+  'width', 'height', 'min-width', 'min-height', 'max-width', 'max-height',
+  'margin', 'padding', 'border', 'border-radius',
+  'background', 'background-color', 'color', 'opacity',
+  'font', 'font-size', 'font-weight', 'font-family', 'line-height',
+  'text-align', 'text-decoration', 'white-space', 'overflow',
+  'flex', 'flex-direction', 'flex-wrap', 'justify-content', 'align-items', 'gap',
+  'grid', 'grid-template-columns', 'grid-template-rows',
+  'box-shadow', 'outline',
+]
+
 /** Capture a plugin DOM element as a preview image using native Canvas API */
 function capturePluginPreview(paneId: string): Promise<string | null> {
   try {
@@ -214,13 +233,12 @@ function capturePluginPreview(paneId: string): Promise<string | null> {
     const rect = el.getBoundingClientRect()
     if (rect.width === 0 || rect.height === 0) return Promise.resolve(null)
 
-    // Clone the element and inline computed styles for foreignObject
+    // Clone the element and inline only visually-relevant computed styles for foreignObject
     const clone = el.cloneNode(true) as HTMLElement
     const inlineStyles = (source: Element, target: Element) => {
       const computed = window.getComputedStyle(source)
       let cssText = ''
-      for (let i = 0; i < computed.length; i++) {
-        const prop = computed[i]
+      for (const prop of PREVIEW_STYLE_PROPS) {
         cssText += `${prop}:${computed.getPropertyValue(prop)};`
       }
       ;(target as HTMLElement).style.cssText = cssText
@@ -268,6 +286,10 @@ function capturePluginPreview(paneId: string): Promise<string | null> {
 
 /** Refresh the cached preview for a plugin tab (call when tab becomes active) */
 export async function refreshPluginPreview(paneId: string): Promise<void> {
+  const now = Date.now()
+  const last = pluginPreviewLastCapture.get(paneId) ?? 0
+  if (now - last < PREVIEW_THROTTLE_MS) return
+  pluginPreviewLastCapture.set(paneId, now)
   const preview = await capturePluginPreview(paneId)
   if (preview) {
     pluginPreviewCache.set(paneId, preview)

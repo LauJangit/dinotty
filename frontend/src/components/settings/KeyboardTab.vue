@@ -2,6 +2,13 @@
   <div>
     <section class="settings-section">
       <h3>{{ t('keybinding.title') }}</h3>
+      <div v-if="isWindowsClient" class="settings-row">
+        <label>{{ t('keybinding.windowsAltAsCmd') }}</label>
+        <label class="toggle">
+          <input type="checkbox" v-model="settings.windowsAltAsCmd" @change="saveSettings()" />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
       <div class="kb-group">
         <h4>{{ t('keybinding.appShortcuts') }}</h4>
         <div
@@ -320,6 +327,7 @@ import type { ActionKey } from '../../composables/useSettings'
 import type { KeyBinding } from '../../composables/useKeybindings'
 import { actionKeyToKeyDef } from '../../utils/actionKeyDef'
 import { getApiBase, apiUrl, authFetch } from '../../composables/apiBase'
+import { isWindowsClient } from '../../utils/clientPlatform'
 
 const { settings, saveSettings } = useSettings()
 const { t } = useI18n()

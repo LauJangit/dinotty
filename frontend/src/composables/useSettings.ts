@@ -4,6 +4,7 @@ import { getApiBase, apiUrl, authFetch, hasAuthToken } from './apiBase'
 import ClaudeLogo from '../components/icons/ClaudeLogo.vue'
 import CodexLogo from '../components/icons/CodexLogo.vue'
 import OpencodeLogo from '../components/icons/OpencodeLogo.vue'
+import { isWindowsClient } from '../utils/clientPlatform'
 import type { KeyBinding } from './useKeybindings'
 export interface SettingsData {
   theme: {
@@ -31,6 +32,7 @@ export interface SettingsData {
   keyboard_sound: boolean
   show_virtual_keyboard: boolean
   confirm_before_close_tab: boolean
+  windowsAltAsCmd: boolean
   locale: string
   panel_position: 'auto' | 'right' | 'left' | 'top' | 'bottom'
   port?: number | null
@@ -200,6 +202,7 @@ export const settings = reactive<SettingsData>({
   keyboard_sound: false,
   show_virtual_keyboard: false,
   confirm_before_close_tab: true,
+  windowsAltAsCmd: isWindowsClient,
   locale: 'zh',
   panel_position: 'auto',
   monitor: {

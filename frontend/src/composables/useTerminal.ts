@@ -8,6 +8,7 @@ import { isTauri, createTransport, type Transport } from './useTransport'
 import { onThemeChange, saveSettings, settings, onTextChange } from './useSettings'
 import { wsUrlWithToken } from './apiBase'
 import { terminalKeyBindingDefs, useKeybindings, type KeyBinding } from './useKeybindings'
+import { isWindowsClient } from '../utils/clientPlatform'
 
 export function isTouchDevice(): boolean {
   return 'ontouchstart' in window || navigator.maxTouchPoints > 0
@@ -96,17 +97,20 @@ export function isSinglePrintableGrapheme(data: string, allowSpace = false): boo
   return cp <= 0x7e || (cp >= 0xff01 && cp <= 0xff5e)
 }
 
-export function terminalKeybindingMatches(e: KeyboardEvent, binding: KeyBinding): boolean {
+export function terminalKeybindingMatches(e: KeyboardEvent, binding: KeyBinding, virtualMeta = false): boolean {
+  const effMeta = e.metaKey || virtualMeta
+  const effAlt = virtualMeta ? false : e.altKey
   return e.key.toLowerCase() === binding.key.toLowerCase()
     && e.shiftKey === !!binding.shift
-    && e.metaKey === !!binding.meta
+    && effMeta === !!binding.meta
     && e.ctrlKey === !!binding.ctrl
-    && e.altKey === !!binding.alt
+    && effAlt === !!binding.alt
 }
 
 export function handleTerminalShortcutKeydown(
   e: KeyboardEvent,
   sendData: (data: string) => void,
+  virtualMeta = false,
 ): boolean {
   const key = e.key.toLowerCase()
   if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && (key === 'c' || key === 'v')) return false
@@ -115,7 +119,7 @@ export function handleTerminalShortcutKeydown(
   for (const def of terminalKeyBindingDefs) {
     const sequence = def.sequence
     if (!sequence) continue
-    if (terminalKeybindingMatches(e, getBinding(def.id))) {
+    if (terminalKeybindingMatches(e, getBinding(def.id), virtualMeta)) {
       e.preventDefault()
       e.stopPropagation()
       sendData(sequence)
@@ -259,6 +263,7 @@ export class TerminalInstance {
 
     // Ctrl+Shift+C/V: Linux-style copy/paste (macOS uses Cmd+C/V natively)
     const xt = this.xterm
+    const { isAppShortcut } = useKeybindings()
     xt.attachCustomKeyEventHandler((e: KeyboardEvent) => {
       if (e.type === 'keydown') {
         if (e.isComposing || (e as any).keyCode === 229 || e.key === 'Process') return true
@@ -278,9 +283,27 @@ export class TerminalInstance {
           }
         }
 
-        if (handleTerminalShortcutKeydown(e, (data) => this.sendData(data))) {
-          return false
+        const virtualMeta = settings.windowsAltAsCmd && isWindowsClient && e.altKey && !e.ctrlKey
+        if (virtualMeta && !e.shiftKey) {
+          if (e.code === 'KeyC' && xt.hasSelection()) {
+            navigator.clipboard.writeText(xt.getSelection())
+            e.preventDefault()
+            e.stopPropagation()
+            return false
+          }
+          if (e.code === 'KeyV') {
+            navigator.clipboard.readText().then((text) => {
+              if (text) xt.paste(text)
+            }).catch(() => {})
+            e.preventDefault()
+            e.stopPropagation()
+            return false
+          }
         }
+
+        if (handleTerminalShortcutKeydown(e, (data) => this.sendData(data), virtualMeta)) return false
+
+        if (virtualMeta && isAppShortcut(e)) return false
       }
       return true
     })

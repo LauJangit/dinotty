@@ -240,10 +240,11 @@ import {
 import { isTauri, tauriInvoke } from './composables/useTransport'
 import { isTouchDevice, setActivePaneId } from './composables/useTerminal'
 import { useI18n } from './composables/useI18n'
-import { useKeybindings } from './composables/useKeybindings'
+import { keyEventMatchesBinding, useKeybindings } from './composables/useKeybindings'
 import { useSplitPane } from './composables/useSplitPane'
 import { useSyncWebSocket } from './composables/useSyncWebSocket'
 import { isWebPreviewInput } from './utils/previewRouting'
+import { isWindowsClient } from './utils/clientPlatform'
 import { initMonitorHistory } from './composables/useMonitor'
 import NotificationPanel from './components/notification/NotificationPanel.vue'
 import { useNotification } from './composables/useNotification'
@@ -618,10 +619,6 @@ async function activateTab(tabId: string) {
     } catch (e) {
       console.error('Failed to activate pane:', e)
     }
-  }
-  // Capture plugin preview when switching to a plugin tab
-  if (tab?.type === 'plugin') {
-    nextTick(() => refreshPluginPreview(tab.paneId))
   }
   persist()
   nextTick(() => focusActive())
@@ -1126,7 +1123,9 @@ const paletteCommands = computed<Command[]>(() => {
 
 function onGlobalKeydown(e: KeyboardEvent) {
   const cmd = e.metaKey || e.ctrlKey
-  if (!cmd) return
+  const altAsCmd = appSettings.windowsAltAsCmd && isWindowsClient
+  const appCmd = (cmd || (altAsCmd && e.altKey)) && !(altAsCmd && e.ctrlKey && e.altKey)
+  if (!appCmd) return
 
   const keyActions: Record<string, () => void> = {
     togglePalette: () => paletteRef.value?.toggle(),
@@ -1164,27 +1163,7 @@ function onGlobalKeydown(e: KeyboardEvent) {
 
   for (const [id, action] of Object.entries(keyActions)) {
     const binding = getBinding(id)
-    let matched = false
-    if (binding.key.length === 1) {
-      // Single-char keys: prefer e.code (physical key) to handle Shift correctly.
-      // e.key reports the produced char ('+' for Shift+=), but binding stores '='.
-      const codeToKey: Record<string, string> = {
-        Equal: '=', Minus: '-',
-        BracketLeft: '[', BracketRight: ']', Backslash: '\\',
-        Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/',
-        Backquote: '`',
-      }
-      let physicalKey = ''
-      if (e.code.startsWith('Key')) physicalKey = e.code.slice(3).toLowerCase()
-      else if (e.code.startsWith('Digit')) physicalKey = e.code.slice(5)
-      else physicalKey = codeToKey[e.code] ?? ''
-      matched = physicalKey === binding.key.toLowerCase()
-        ? e.shiftKey === binding.shift
-        : e.key.toLowerCase() === binding.key.toLowerCase() && e.shiftKey === binding.shift
-    } else {
-      matched = e.key === binding.key && e.shiftKey === binding.shift
-    }
-    if (matched) {
+    if (keyEventMatchesBinding(e, binding)) {
       e.preventDefault()
       action()
       return
@@ -1192,7 +1171,7 @@ function onGlobalKeydown(e: KeyboardEvent) {
   }
 
   // Cmd+Option+Arrow: focus neighbor pane (spatial navigation)
-  if (e.altKey && !e.shiftKey) {
+  if (cmd && e.altKey && !e.shiftKey) {
     const dirMap: Record<string, 'left' | 'right' | 'up' | 'down'> = {
       ArrowLeft: 'left',
       ArrowRight: 'right',
@@ -1207,7 +1186,7 @@ function onGlobalKeydown(e: KeyboardEvent) {
   }
 
   // Cmd+Option+Shift+Arrow: keyboard resize
-  if (e.altKey && e.shiftKey) {
+  if (cmd && e.altKey && e.shiftKey) {
     const dirMap: Record<string, 'left' | 'right' | 'up' | 'down'> = {
       ArrowLeft: 'left',
       ArrowRight: 'right',

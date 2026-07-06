@@ -16,6 +16,7 @@ use zeroize::Zeroize;
 use crate::session::SessionManager;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct Settings {
     #[serde(default)]
     pub theme: ThemeConfig,
@@ -39,6 +40,8 @@ pub struct Settings {
     pub keyboard_sound: bool,
     #[serde(default)]
     pub show_virtual_keyboard: bool,
+    #[serde(default, rename = "windowsAltAsCmd")]
+    pub windows_alt_as_cmd: bool,
     #[serde(default = "default_true")]
     pub confirm_before_close_tab: bool,
     #[serde(default = "default_locale")]
@@ -494,6 +497,7 @@ impl Default for Settings {
             action_keyboard: None,
             keyboard_sound: false,
             show_virtual_keyboard: false,
+            windows_alt_as_cmd: false,
             confirm_before_close_tab: true,
             locale: default_locale(),
             panel_position: PanelPosition::default(),

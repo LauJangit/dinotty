@@ -164,6 +164,28 @@ const defs: KeyBindingDef[] = [
 
 export const keyBindingDefs = defs
 export const terminalKeyBindingDefs = defs.filter((def) => def.kind === 'terminal')
+export const appKeyBindingDefs = defs.filter((def) => def.kind !== 'terminal')
+
+export function keyEventMatchesBinding(e: KeyboardEvent, binding: KeyBinding): boolean {
+  if (binding.key.length === 1) {
+    // Single-char keys: prefer e.code (physical key) to handle Shift correctly.
+    // e.key reports the produced char ('+' for Shift+=), but binding stores '='.
+    const codeToKey: Record<string, string> = {
+      Equal: '=', Minus: '-',
+      BracketLeft: '[', BracketRight: ']', Backslash: '\\',
+      Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/',
+      Backquote: '`',
+    }
+    let physicalKey = ''
+    if (e.code.startsWith('Key')) physicalKey = e.code.slice(3).toLowerCase()
+    else if (e.code.startsWith('Digit')) physicalKey = e.code.slice(5)
+    else physicalKey = codeToKey[e.code] ?? ''
+    return physicalKey === binding.key.toLowerCase()
+      ? e.shiftKey === binding.shift
+      : e.key.toLowerCase() === binding.key.toLowerCase() && e.shiftKey === binding.shift
+  }
+  return e.key === binding.key && e.shiftKey === binding.shift
+}
 
 export function useKeybindings() {
   function getBinding(id: string): KeyBinding {
@@ -210,5 +232,15 @@ export function useKeybindings() {
     })
   }
 
-  return { defs, getBinding, formatBinding, getAllWithDisplay, isReadOnly }
+  /** Returns true if the key event matches an app-level shortcut (digits 0-9 for tab switch, or any app keybinding). Designed to be called only when virtualMeta is active. */
+  function isAppShortcut(e: KeyboardEvent): boolean {
+    if (!e.shiftKey && e.key >= '0' && e.key <= '9') return true
+
+    for (const def of appKeyBindingDefs) {
+      if (keyEventMatchesBinding(e, getBinding(def.id))) return true
+    }
+    return false
+  }
+
+  return { defs, getBinding, formatBinding, getAllWithDisplay, isReadOnly, isAppShortcut }
 }
