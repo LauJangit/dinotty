@@ -12,7 +12,6 @@
 )]
 use serde::Serialize;
 use serde_json::Value;
-use std::io::Write;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -193,14 +192,13 @@ impl McpTools {
 
         // Send command
         {
-            let mut w = session.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             session
                 .screen
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .begin_command_tracking();
             let cmd = format!("{command}\n");
-            w.write_all(cmd.as_bytes()).map_err(|e| format!("Write failed: {e}"))?;
+            session.write_input_sync(cmd.as_bytes()).map_err(|e| format!("Write failed: {e}"))?;
         }
 
         // Wait for completion
@@ -281,9 +279,8 @@ impl McpTools {
         let pane_id = resolve_pane(pane_id_arg, &self.manager)?;
 
         let session = self.manager.sessions.get(&pane_id).ok_or("Pane not found")?;
-        let mut w = session.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let cmd = format!("{command}\n");
-        w.write_all(cmd.as_bytes()).map_err(|e| format!("Write failed: {e}"))?;
+        session.write_input_sync(cmd.as_bytes()).map_err(|e| format!("Write failed: {e}"))?;
         Ok(r#"{"ok": true}"#.into())
     }
 

@@ -62,6 +62,7 @@ fn spawn_tauri_write_task(session: Arc<dinotty_server::session::Session>, pane_i
     let write_session = Arc::clone(&session);
     let write_pane = pane_id.clone();
     tauri::async_runtime::spawn(async move {
+        let is_ssh = write_session.is_ssh();
         while let Some(first) = input_rx.recv().await {
             if write_session.is_exited() {
                 break;
@@ -71,22 +72,19 @@ fn spawn_tauri_write_task(session: Arc<dinotty_server::session::Session>, pane_i
             while let Ok(data) = input_rx.try_recv() {
                 batch.push_str(&data);
             }
-            let ws = Arc::clone(&write_session);
             let batch_len = batch.len();
-            match tokio::task::spawn_blocking(move || {
-                use std::io::Write;
-                let mut w = ws.writer.lock().unwrap_or_else(|e| e.into_inner());
-                w.write_all(batch.as_bytes())
-            })
-            .await
-            {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => {
-                    tracing::error!("PTY write error ({}B): {}, pane={}", batch_len, e, write_pane);
-                    break;
-                }
+            let result = if is_ssh {
+                write_session.write_input_async(batch.as_bytes()).await
+            } else {
+                let ws = Arc::clone(&write_session);
+                tokio::task::spawn_blocking(move || ws.write_input_sync(batch.as_bytes()))
+                    .await
+                    .unwrap_or_else(|e| Err(e.to_string()))
+            };
+            match result {
+                Ok(()) => {}
                 Err(e) => {
-                    tracing::error!("PTY write task panic: {}, pane={}", e, write_pane);
+                    tracing::error!("PTY write error ({}B): {}, pane={}", batch_len, e, write_pane);
                     break;
                 }
             }

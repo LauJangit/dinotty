@@ -79,3 +79,53 @@ export async function apiUpdateLayout(
   })
   if (!res.ok) throw new Error(`update layout failed: ${res.status}`)
 }
+
+// ─── SSH ────────────────────────────────────────────────────────────
+
+export interface SshAuthMethod {
+  type: 'password' | 'key_file' | 'key_inline'
+  password?: string
+  key_path?: string
+  private_key?: string
+  passphrase?: string
+}
+
+export interface SshConnectRequest {
+  host: string
+  port: number
+  username: string
+  auth: SshAuthMethod
+  default_command?: string
+}
+
+export interface SshProfileConnectRequest {
+  profile_id: string
+}
+
+export async function apiCreateSshQuickTab(req: SshConnectRequest, signal?: AbortSignal): Promise<CreateTabResult> {
+  const res = await authFetch(apiUrl('/api/tabs/ssh/quick'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+    signal,
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    throw new Error(body?.error || `SSH connect failed: ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function apiCreateSshTab(profileId: string, signal?: AbortSignal): Promise<CreateTabResult> {
+  const res = await authFetch(apiUrl('/api/tabs/ssh'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ profile_id: profileId }),
+    signal,
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    throw new Error(body?.error || `SSH connect failed: ${res.status}`)
+  }
+  return res.json()
+}

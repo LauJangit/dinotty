@@ -99,6 +99,7 @@
                 splitPane.reorderPane(src, tgt, pos)
             "
             @divider-drag-end="onDividerDragEnd(tab)"
+            @reconnect="onSshReconnect"
           />
           <PreviewPanel
             v-if="tab.paneId === activePaneId"
@@ -109,6 +110,7 @@
             :kind="tab.previewKind"
             :web-url="tab.previewUrl"
             :panel-position="resolvedPosition"
+            :remote="isRemote"
             @close="closePreview(tab.paneId)"
             @update:address="
               (v: string) => {
@@ -163,6 +165,16 @@
 
     <ServerList ref="serverListRef" @connect="onServerConnect" />
 
+    <SshHostsPanel ref="sshPanelRef" @connect="onSshConnect" />
+
+    <SshAuthPromptDialog
+      v-if="sshAuthVisible"
+      :host="sshAuthHost"
+      :prompts="sshAuthPrompts"
+      @submit="onSshAuthSubmit"
+      @cancel="onSshAuthCancel"
+    />
+
     <MobileKeyboard
       :visible="kbVisible"
       :pane-id="activePaneId ?? ''"
@@ -213,6 +225,8 @@ import ConfirmModal from './components/ui/ConfirmModal.vue'
 import PreviewPanel from './components/preview/PreviewPanel.vue'
 import CommandBookmarks from './components/command/CommandBookmarks.vue'
 import ServerList from './components/ServerList.vue'
+import SshHostsPanel from './components/ssh/SshHostsPanel.vue'
+import SshAuthPromptDialog from './components/ssh/SshAuthPromptDialog.vue'
 import StatusBar from './components/terminal/StatusBar.vue'
 import type { Tab, TerminalTab, PluginTab, PaneLayout } from './types/pane'
 import { getAllLeaves, findLeaf, findFirstLeaf, ensureSplitRoot } from './types/pane'
@@ -281,6 +295,11 @@ function setPreviewPanelRef(el: any) {
 }
 const bookmarksRef = ref<InstanceType<typeof CommandBookmarks>>()
 const serverListRef = ref<InstanceType<typeof ServerList>>()
+const sshPanelRef = ref<InstanceType<typeof SshHostsPanel>>()
+const sshAuthVisible = ref(false)
+const sshAuthHost = ref('')
+const sshAuthPaneId = ref('')
+const sshAuthPrompts = ref<Array<{ prompt: string; echo: boolean }>>([])
 const { t } = useI18n()
 const { getBinding, formatBinding } = useKeybindings()
 const notif = useNotification()
@@ -409,6 +428,24 @@ const syncWs = useSyncWebSocket({
   persist,
   focusActive,
   newTab: async () => { await newTab() },
+})
+
+// Set up SSH keyboard-interactive auth handler
+syncWs.setSshAuthPromptHandler((paneId: string, prompts: Array<{ prompt: string; echo: boolean }>) => {
+  sshAuthPaneId.value = paneId
+  sshAuthPrompts.value = prompts
+  // Find the host info from tabs
+  const tab = tabs.value.find((t) => {
+    if (t.type !== 'terminal') return false
+    return t.paneId === paneId || !!findLeaf(t.layout, paneId)
+  })
+  if (tab && tab.type === 'terminal') {
+    const leaf = findLeaf(tab.layout, paneId)
+    sshAuthHost.value = leaf?.title || paneId
+  } else {
+    sshAuthHost.value = paneId
+  }
+  sshAuthVisible.value = true
 })
 
 const splitPane = useSplitPane({
@@ -556,7 +593,7 @@ async function newTab() {
   }
 }
 
-function onNewMenuAction(type: 'new-tab' | 'split-h' | 'split-v' | 'broadcast') {
+function onNewMenuAction(type: 'new-tab' | 'split-h' | 'split-v' | 'broadcast' | 'ssh-connect') {
   switch (type) {
     case 'new-tab':
       return newTab()
@@ -566,6 +603,8 @@ function onNewMenuAction(type: 'new-tab' | 'split-h' | 'split-v' | 'broadcast') 
       return splitPane.splitPane('vertical')
     case 'broadcast':
       return splitPane.toggleBroadcast()
+    case 'ssh-connect':
+      return sshPanelRef.value?.open()
   }
 }
 
@@ -753,12 +792,21 @@ function closePreview(tabId: string) {
   }
 }
 
+const isRemote = computed(() => {
+  const tabId = activePaneId.value
+  if (!tabId) return false
+  const tab = tabs.value.find((t) => t.paneId === tabId)
+  if (!tab || tab.type !== 'terminal') return false
+  return findLeaf(tab.layout, tab.activePaneId)?.shell_type === 'ssh'
+})
+
 function openPreview() {
   const tabId = activePaneId.value
   if (!tabId) return
   const tab = tabs.value.find((t) => t.paneId === tabId)
   if (!tab || tab.type !== 'terminal') return
-  if (!tab.previewAddress.trim()) {
+  const isSsh = findLeaf(tab.layout, tab.activePaneId)?.shell_type === 'ssh'
+  if (isSsh || !tab.previewAddress.trim()) {
     tab.previewKind = 'files'
   }
   tab.previewVisible = true
@@ -861,6 +909,46 @@ function onTerminalScroll() {
 function onServerConnect(host: string, port: number) {
   const proto = location.protocol
   window.location.href = `${proto}//${host}:${port}/`
+}
+
+async function onSshConnect(result: { tab_id: string; pane_id: string; layout: any }) {
+  const existing = tabs.value.find((t) => t.paneId === result.tab_id)
+  if (existing) {
+    activePaneId.value = result.tab_id
+    persist()
+    nextTick(() => focusActive())
+    return
+  }
+  syncWs.markRecentlyCreated(result.tab_id)
+  tabs.value.push({
+    type: 'terminal',
+    paneId: result.tab_id,
+    layout: ensureSplitRoot(result.layout),
+    activePaneId: result.pane_id,
+    paneMru: [result.pane_id],
+    broadcastMode: false,
+    broadcastActivity: 0,
+    previewVisible: false,
+    previewAddress: '',
+    previewUrl: '',
+    previewKind: 'web',
+  })
+  activePaneId.value = result.tab_id
+  persist()
+  nextTick(() => focusActive())
+}
+
+function onSshReconnect() {
+  sshPanelRef.value?.open()
+}
+
+function onSshAuthSubmit(responses: string[]) {
+  syncWs.sendSshAuthResponse(sshAuthPaneId.value, responses)
+  sshAuthVisible.value = false
+}
+
+function onSshAuthCancel() {
+  sshAuthVisible.value = false
 }
 
 function openPlugin(pluginId: string) {
@@ -996,6 +1084,12 @@ const paletteCommands = computed<Command[]>(() => {
       subtitle: t('palette.openPreviewDesc'),
       action: () => openPreview(),
     },
+    {
+      icon: '⇄',
+      title: t('palette.sshConnect'),
+      subtitle: t('palette.sshConnectDesc'),
+      action: () => sshPanelRef.value?.open(),
+    },
   ]
 
   // Plugin-registered commands
@@ -1062,6 +1156,7 @@ function onGlobalKeydown(e: KeyboardEvent) {
       termRefs[tab.activePaneId]?.toggleSearch()
     },
     missionControl: () => openOverview(),
+    sshConnect: () => sshPanelRef.value?.open(),
     fontSizeUp: () => adjustActiveTerminalFontSize(1),
     fontSizeDown: () => adjustActiveTerminalFontSize(-1),
     fontSizeReset: () => adjustActiveTerminalFontSize(0),

@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::{error, info};
+use zeroize::Zeroize;
 
 use crate::session::SessionManager;
 
@@ -58,6 +59,8 @@ pub struct Settings {
     pub keybindings: std::collections::HashMap<String, KeyBinding>,
     #[serde(default)]
     pub log: LogConfig,
+    #[serde(default)]
+    pub ssh_profiles: Vec<SshProfile>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -501,6 +504,7 @@ impl Default for Settings {
             ip_whitelist: default_ip_whitelist(),
             keybindings: std::collections::HashMap::new(),
             log: LogConfig::default(),
+            ssh_profiles: vec![],
         }
     }
 }
@@ -567,6 +571,79 @@ pub fn save_settings_sync(settings: &Settings) -> Result<(), String> {
 }
 
 pub type SettingsState = Arc<RwLock<Settings>>;
+
+// ─── SSH 配置类型 ───
+
+/// 敏感字符串，Drop 时自动清零内存
+#[derive(Clone, Debug, Zeroize)]
+#[zeroize(drop)]
+#[derive(Default)]
+pub struct SensitiveString(String);
+
+impl SensitiveString {
+    #[must_use]
+    pub fn new(s: String) -> Self {
+        Self(s)
+    }
+    #[must_use]
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl Serialize for SensitiveString {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for SensitiveString {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(SensitiveString::new)
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SshAuthMethod {
+    Password { password: SensitiveString },
+    KeyFile { key_path: String, passphrase: Option<SensitiveString> },
+    KeyInline { private_key: SensitiveString, passphrase: Option<SensitiveString> },
+}
+
+impl Default for SshAuthMethod {
+    fn default() -> Self {
+        Self::Password { password: SensitiveString::default() }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SshProfile {
+    pub id: String,
+    pub name: String,
+    pub host: String,
+    #[serde(default = "default_ssh_port")]
+    pub port: u16,
+    #[serde(default = "default_ssh_username")]
+    pub username: String,
+    pub auth_method: SshAuthMethod,
+    #[serde(default)]
+    pub group: Option<String>,
+    #[serde(default)]
+    pub default_command: Option<String>,
+}
+
+fn default_ssh_port() -> u16 {
+    22
+}
+
+fn default_ssh_username() -> String {
+    "root".into()
+}
 
 #[must_use]
 pub fn create_settings_state() -> SettingsState {

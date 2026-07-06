@@ -1,5 +1,6 @@
 <template>
   <div
+    ref="containerRef"
     class="terminal-pane-container"
     @contextmenu.prevent="onContextMenu"
     @touchstart="onTouchStart"
@@ -41,13 +42,16 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import type { Terminal } from '@xterm/xterm'
 import { TerminalInstance } from '../../composables/useTerminal'
+import { copyToClipboard } from '../../utils/clipboard'
 import SearchBar from './SearchBar.vue'
 import TerminalContextMenu from './TerminalContextMenu.vue'
 import SelectionHandles from './SelectionHandles.vue'
 
 const props = defineProps<{
   paneId: string
+  sshHost?: string // "user@host:port" for SSH tabs
 }>()
 
 const emit = defineEmits<{
@@ -59,9 +63,11 @@ const emit = defineEmits<{
   previewLink: [url: string]
   linkActivate: []
   input: [data: string]
+  reconnect: []
 }>()
 
 const wrapperRef = ref<HTMLElement>()
+const containerRef = ref<HTMLElement>()
 let terminal: TerminalInstance | null = null
 let pendingFocus = false
 const searchVisible = ref(false)
@@ -87,12 +93,33 @@ const handleEndX = ref(0)
 const handleEndY = ref(0)
 let selAnchorRow = 0
 let selAnchorCol = 0
+// Long-pressed word range — keeps the whole word selected regardless of drag
+// direction (DT8 #2). selWordRow < 0 means "no active word selection".
+let selWordRow = -1
+let selWordStartCol = -1
+let selWordEndCol = -1
 let dragHandle: 'start' | 'end' | null = null
 let selectionTouched = false
+
+// Edge auto-scroll during selection drag (A4) — repeating scroll while the
+// finger is held in the top/bottom edge band, so selection can extend past the
+// visible viewport. lastDrag* hold the RAW (unclamped) touch coords: edge
+// detection needs the real off-edge position, while selection math clamps.
+let autoScrollTimer: ReturnType<typeof setInterval> | null = null
+let lastDragClientX = 0
+let lastDragClientY = 0
+const EDGE_SCROLL_ZONE_CELLS = 1.5
+const EDGE_SCROLL_INTERVAL_MS = 60
 
 // Link context menu state
 const linkType = ref<'file' | 'link'>()
 const linkTarget = ref<string>()
+
+const DT8_TOUCH_DEBUG = import.meta.env.DEV && (typeof localStorage !== 'undefined') && localStorage.getItem('dt8-touch-select-debug') === '1'
+
+function debugTouchSelect(branch: string, data: Record<string, unknown>) {
+  if (DT8_TOUCH_DEBUG) console.debug('[dt8-touch-select]', branch, data)
+}
 
 function getTerminal() {
   return terminal
@@ -179,19 +206,48 @@ let cachedCellW = 0
 let cachedCellH = 0
 let cachedScreenRect: DOMRect | null = null
 
-function cacheCellDims() {
+type ScreenCellGeometry = { cellW: number; cellH: number; screenRect: DOMRect }
+
+function getScreenCellGeometry(xt: NonNullable<TerminalInstance['xterm']>): ScreenCellGeometry | null {
+  const screen = xt.element?.querySelector('.xterm-screen') as HTMLElement | null
+  if (!screen) {
+    debugTouchSelect('geometry:null-screen', { cols: xt.cols, rows: xt.rows })
+    return null
+  }
+  const screenRect = screen.getBoundingClientRect()
+  if (screenRect.width <= 0 || screenRect.height <= 0 || xt.cols <= 0 || xt.rows <= 0) {
+    debugTouchSelect('geometry:null-rect', {
+      width: screenRect.width,
+      height: screenRect.height,
+      cols: xt.cols,
+      rows: xt.rows,
+    })
+    return null
+  }
+  const cellW = screenRect.width / xt.cols
+  const cellH = screenRect.height / xt.rows
+  if (!(cellW > 0) || !(cellH > 0)) {
+    debugTouchSelect('geometry:null-cell', {
+      cellW,
+      cellH,
+      width: screenRect.width,
+      height: screenRect.height,
+      cols: xt.cols,
+      rows: xt.rows,
+    })
+    return null
+  }
+  return { cellW, cellH, screenRect }
+}
+
+function cacheCellDims(geom?: ScreenCellGeometry) {
   const xt = terminal?.xterm
   if (!xt) return false
-  const core = (xt as any)._core
-  const dims = core?._renderService?.dimensions
-  if (!dims?.css?.cell?.width || !dims.css.cell.height) return false
-  cachedCellW = dims.css.cell.width
-  cachedCellH = dims.css.cell.height
-  const xtermEl = xt.element
-  if (!xtermEl) return false
-  const screen = xtermEl.querySelector('.xterm-screen') as HTMLElement
-  if (!screen) return false
-  cachedScreenRect = screen.getBoundingClientRect()
+  const geometry = geom ?? getScreenCellGeometry(xt)
+  if (!geometry) return false
+  cachedCellW = geometry.cellW
+  cachedCellH = geometry.cellH
+  cachedScreenRect = geometry.screenRect
   return true
 }
 
@@ -236,6 +292,11 @@ function calcSelectionLength(startCol: number, startRow: number, endCol: number,
   return Math.max(1, len)
 }
 
+// True if buffer position (r1,c1) is strictly before (r2,c2).
+function beforePos(r1: number, c1: number, r2: number, c2: number): boolean {
+  return r1 < r2 || (r1 === r2 && c1 < c2)
+}
+
 function updateSelectionTo(clientX: number, clientY: number) {
   const xt = terminal?.xterm
   if (!xt) return
@@ -243,13 +304,29 @@ function updateSelectionTo(clientX: number, clientY: number) {
   if (!pos) return
   const endRow = xt.buffer.active.viewportY + pos.row
   const endCol = pos.col
-  const sr = terminal!.selStartRow
-  const sc = terminal!.selStartCol
-  if (endRow < sr || (endRow === sr && endCol < sc)) {
-    xt.select(endCol, endRow, calcSelectionLength(endCol, endRow, sc, sr))
-  } else {
-    xt.select(sc, sr, calcSelectionLength(sc, sr, endCol, endRow))
+  // Always keep the originally long-pressed word fully selected, regardless of
+  // drag direction: span from the earlier of {drag point, word start} to the
+  // later of {drag point, word end}. Leftward drag used to anchor at the word
+  // start and drop the word body (DT8 #2).
+  let loR = endRow
+  let loC = endCol
+  let hiR = endRow
+  let hiC = endCol
+  if (selWordRow >= 0) {
+    if (beforePos(selWordRow, selWordStartCol, loR, loC)) {
+      loR = selWordRow
+      loC = selWordStartCol
+    }
+    if (beforePos(hiR, hiC, selWordRow, selWordEndCol)) {
+      hiR = selWordRow
+      hiC = selWordEndCol
+    }
   }
+  xt.select(loC, loR, calcSelectionLength(loC, loR, hiC, hiR))
+  // Keep selStart pointing at the selection's low point so the handle-drag
+  // 'end' anchor stays consistent after a leftward drag.
+  terminal!.selStartRow = loR
+  terminal!.selStartCol = loC
 }
 
 function bufferToPixel(col: number, bufferRow: number): { x: number; y: number } {
@@ -278,26 +355,36 @@ function selectionToPixelCoords(): { start: { x: number; y: number }; end: { x: 
 
 // Mobile long-press to start touch selection
 function onTouchStart(e: TouchEvent) {
-  if (!terminal || terminal.isMouseModeEnabled()) return
+  if (!terminal) return
   if (handlesVisible.value) return // selection mode active, don't start new long-press
+  if (longPressTimer) clearTimeout(longPressTimer)
   longPressFired = false
+  selWordRow = -1
   touchScrolling = false
+  terminal.touchMoved = false
   const touch = e.touches[0]
   longPressStartX = touch.clientX
   longPressStartY = touch.clientY
   longPressTimer = setTimeout(() => {
-    longPressFired = true
+    const xt = terminal?.xterm
+    if (!xt) return
+    const geom = getScreenCellGeometry(xt)
+    if (!geom) return
 
-    const wordPos = selectWordAtTouch(longPressStartX, longPressStartY)
+    const wordPos = selectWordAtTouch(longPressStartX, longPressStartY, geom)
     if (!wordPos) return
 
     // Enter selection mode
-    cacheCellDims()
+    cacheCellDims(geom)
     terminal!.inTouchSelection = true
     terminal!.selStartRow = wordPos.bufferRow
     terminal!.selStartCol = wordPos.startCol
     selAnchorRow = wordPos.bufferRow
     selAnchorCol = wordPos.startCol
+    selWordRow = wordPos.bufferRow
+    selWordStartCol = wordPos.startCol
+    selWordEndCol = wordPos.endCol
+    longPressFired = true // set only after a word is actually selected (DT8 #5)
     selectionTouched = false
 
     // Show handles at selection boundaries
@@ -318,45 +405,162 @@ function onTouchStart(e: TouchEvent) {
   }, 500)
 }
 
-function selectWordAtTouch(clientX: number, clientY: number): { bufferRow: number; startCol: number } | null {
+function buildColumnMaps(line: NonNullable<ReturnType<Terminal['buffer']['active']['getLine']>>, cols: number) {
+  const colToStrIdx: number[] = new Array(cols)
+  const strIdxToCol: number[] = []
+  let strIdx = 0
+  let lastStartStrIdx = -1
+  for (let col = 0; col < cols; col++) {
+    const cell = line.getCell(col)
+    const width = cell ? cell.getWidth() : 1
+    if (width === 0) {
+      // continuation column of the previous wide char — shares that char's start index
+      colToStrIdx[col] = lastStartStrIdx
+      continue
+    }
+    const codeUnits = cell?.getChars().length || 1
+    lastStartStrIdx = strIdx
+    colToStrIdx[col] = strIdx
+    for (let i = 0; i < codeUnits; i++) strIdxToCol[strIdx + i] = col
+    strIdx += codeUnits
+  }
+  return { colToStrIdx, strIdxToCol }
+}
+
+function selectWordAtTouch(clientX: number, clientY: number, geom: ScreenCellGeometry): { bufferRow: number; startCol: number; endCol: number } | null {
   const xterm = terminal?.xterm
-  if (!xterm) return null
+  if (!xterm) {
+    debugTouchSelect('select:null-xterm', {})
+    return null
+  }
 
-  const xtermEl = xterm.element
-  if (!xtermEl) return null
+  const col = Math.floor((clientX - geom.screenRect.left) / geom.cellW)
+  const row = Math.floor((clientY - geom.screenRect.top) / geom.cellH)
+  const geometryFacts = {
+    cellW: geom.cellW,
+    cellH: geom.cellH,
+    screenLeft: geom.screenRect.left,
+    screenTop: geom.screenRect.top,
+    screenWidth: geom.screenRect.width,
+    screenHeight: geom.screenRect.height,
+    col,
+    row,
+    cols: xterm.cols,
+    rows: xterm.rows,
+  }
 
-  const screen = xtermEl.querySelector('.xterm-screen') as HTMLElement
-  if (!screen) return null
-
-  const core = (xterm as any)._core
-  const dims = core?._renderService?.dimensions
-  if (!dims?.css?.cell?.width || !dims.css.cell.height) return null
-
-  const { width: cellW, height: cellH } = dims.css.cell
-  const rect = screen.getBoundingClientRect()
-
-  const col = Math.floor((clientX - rect.left) / cellW)
-  const row = Math.floor((clientY - rect.top) / cellH)
-
-  if (col < 0 || row < 0 || col >= xterm.cols || row >= xterm.rows) return null
+  if (col < 0 || row < 0 || col >= xterm.cols || row >= xterm.rows) {
+    debugTouchSelect('select:out-of-bounds', geometryFacts)
+    return null
+  }
 
   const buffer = xterm.buffer.active
   const bufferRow = buffer.viewportY + row
   const line = buffer.getLine(bufferRow)
-  if (!line) return null
+  if (!line) {
+    debugTouchSelect('select:null-line', { ...geometryFacts, bufferRow })
+    return null
+  }
 
   const lineText = line.translateToString(true)
-  if (!lineText) return null
+  if (!lineText) {
+    debugTouchSelect('select:empty-line', { ...geometryFacts, bufferRow })
+    return null
+  }
 
-  const wordRegex = /[\w.:/@-]+/g
+  const { colToStrIdx, strIdxToCol } = buildColumnMaps(line, xterm.cols)
+  const strCol = colToStrIdx[col]
+  if (strCol === undefined || strCol < 0) {
+    debugTouchSelect('select:no-word', { ...geometryFacts, bufferRow })
+    return null
+  }
+
+  const wordRegex = /[\w.:/@-]+|[一-鿿]+/g
   let match: RegExpExecArray | null
   while ((match = wordRegex.exec(lineText)) !== null) {
-    if (col >= match.index && col < match.index + match[0].length) {
-      xterm.select(match.index, bufferRow, match[0].length)
-      return { bufferRow, startCol: match.index }
+    if (strCol >= match.index && strCol < match.index + match[0].length) {
+      const startCol = strIdxToCol[match.index]
+      const lastStrIdx = match.index + match[0].length - 1
+      const lastCol = strIdxToCol[lastStrIdx]
+      if (startCol == null || lastCol == null) return null
+      const lastWidth = line.getCell(lastCol)?.getWidth() ?? 1
+      const columnLength = lastCol - startCol + Math.max(lastWidth, 1)
+      const endCol = startCol + columnLength - 1
+      xterm.select(startCol, bufferRow, columnLength)
+      debugTouchSelect('select:success', {
+        ...geometryFacts,
+        bufferRow,
+        startCol,
+        length: columnLength,
+      })
+      return { bufferRow, startCol, endCol }
     }
   }
+  debugTouchSelect('select:no-word', { ...geometryFacts, bufferRow })
   return null
+}
+
+// Clamp a client Y into the terminal screen so the selection endpoint always
+// lands on visible content (A3) — prevents the drag from "leaking" into the
+// input row / status bar below the terminal. Edge auto-scroll (A4) reveals the
+// off-screen content instead.
+function clampClientYToScreen(clientY: number): number {
+  if (!cachedScreenRect) return clientY
+  return Math.min(Math.max(clientY, cachedScreenRect.top), cachedScreenRect.bottom - 1)
+}
+
+// Which edge band the RAW touch Y sits in: -1 = top (scroll up), 1 = bottom
+// (scroll down), 0 = middle (no auto-scroll).
+function edgeScrollDir(clientY: number): -1 | 0 | 1 {
+  if (!cachedScreenRect || !cachedCellH) return 0
+  const zone = cachedCellH * EDGE_SCROLL_ZONE_CELLS
+  if (clientY < cachedScreenRect.top + zone) return -1
+  if (clientY > cachedScreenRect.bottom - zone) return 1
+  return 0
+}
+
+function stopAutoScroll() {
+  if (autoScrollTimer) {
+    clearInterval(autoScrollTimer)
+    autoScrollTimer = null
+  }
+}
+
+function startAutoScrollIfEdge() {
+  if (edgeScrollDir(lastDragClientY) !== 0) {
+    if (!autoScrollTimer) autoScrollTimer = setInterval(autoScrollTick, EDGE_SCROLL_INTERVAL_MS)
+  } else {
+    stopAutoScroll()
+  }
+}
+
+// Re-extend the selection to the current (clamped) drag point without touching
+// lastDrag* — used by both live touch/handle drag and the auto-scroll timer.
+function applyTouchSelection(clientX: number, clientY: number) {
+  updateSelectionTo(clientX, clampClientYToScreen(clientY))
+  menuSelectedText.value = terminal!.xterm?.getSelection() ?? ''
+  const coords = selectionToPixelCoords()
+  handleStartX.value = coords.start.x
+  handleStartY.value = coords.start.y
+  handleEndX.value = coords.end.x
+  handleEndY.value = coords.end.y
+}
+
+function autoScrollTick() {
+  const xt = terminal?.xterm
+  if (!xt) { stopAutoScroll(); return }
+  const dir = edgeScrollDir(lastDragClientY)
+  if (dir === 0) { stopAutoScroll(); return }
+  const before = xt.buffer.active.viewportY
+  xt.scrollLines(dir)
+  if (xt.buffer.active.viewportY === before) { stopAutoScroll(); return } // hit top/bottom
+  if (dragHandle) {
+    applyHandleDrag(lastDragClientX, lastDragClientY)
+  } else if (terminal?.inTouchSelection) {
+    applyTouchSelection(lastDragClientX, lastDragClientY)
+  } else {
+    stopAutoScroll()
+  }
 }
 
 function onTouchMove(e: TouchEvent) {
@@ -368,13 +572,10 @@ function onTouchMove(e: TouchEvent) {
       menuVisible.value = false // Close menu when user starts adjusting
     }
     const touch = e.touches[0]
-    updateSelectionTo(touch.clientX, touch.clientY)
-    menuSelectedText.value = terminal!.xterm?.getSelection() ?? ''
-    const coords = selectionToPixelCoords()
-    handleStartX.value = coords.start.x
-    handleStartY.value = coords.start.y
-    handleEndX.value = coords.end.x
-    handleEndY.value = coords.end.y
+    lastDragClientX = touch.clientX
+    lastDragClientY = touch.clientY
+    applyTouchSelection(touch.clientX, touch.clientY)
+    startAutoScrollIfEdge()
     return
   }
   const touch = e.touches[0]
@@ -409,14 +610,28 @@ function onTouchEnd(e: TouchEvent) {
   if (dragHandle) return // handle drag in progress, ignore terminal touch
   if (terminal?.inTouchSelection) {
     e.preventDefault()
+    stopAutoScroll()
     terminal.inTouchSelection = false
     const text = terminal.xterm?.getSelection() ?? ''
+    const target = e.currentTarget as HTMLElement
+    if (text) {
+      // Dispatch synchronously (not inside the copy .then()) so App.vue's
+      // onTerminalTouch sees scrollGestureDetected before it decides whether
+      // to show the on-screen keyboard toolbar — an async dispatch arrives
+      // after kbVisible is already set, causing a visible flash.
+      target.dispatchEvent(new CustomEvent('terminal-scroll', { bubbles: true }))
+      void copyToClipboard(text).then(
+        () => debugTouchSelect('copy:touch-end', { success: true }),
+        () => debugTouchSelect('copy:touch-end', { success: false }),
+      )
+    }
     menuSelectedText.value = text
     if (selectionTouched) {
       if (text) {
-        // User dragged to adjust → show menu at end handle
+        // User dragged to adjust → show menu at end handle (clamp into
+        // viewport so it doesn't render under the bottom status bar, A3)
         menuX.value = handleEndX.value
-        menuY.value = handleEndY.value + 24
+        menuY.value = Math.min(handleEndY.value + 24, window.innerHeight - 8)
         menuVisible.value = true
       } else {
         handlesVisible.value = false
@@ -424,10 +639,12 @@ function onTouchEnd(e: TouchEvent) {
     }
     // If not touched: menu already visible from long press, keep it
     selectionTouched = false
+    longPressFired = false
     return
   }
   if (longPressFired) {
-    e.preventDefault()
+    // A long-press that entered selection mode is handled in the branch above;
+    // reaching here means it did not — just clear the flag (DT8 #5).
     longPressFired = false
   }
   if (longPressTimer) {
@@ -443,6 +660,7 @@ function onTouchEnd(e: TouchEvent) {
 }
 
 function onTouchCancel() {
+  stopAutoScroll()
   if (longPressTimer) {
     clearTimeout(longPressTimer)
     longPressTimer = null
@@ -476,7 +694,19 @@ function onHandleDrag(handle: 'start' | 'end', clientX: number, clientY: number)
       }
     }
   }
-  const pos = touchToBufferPos(clientX, clientY)
+  lastDragClientX = clientX
+  lastDragClientY = clientY
+  applyHandleDrag(clientX, clientY)
+  startAutoScrollIfEdge()
+}
+
+// Extend the handle-drag selection to the (clamped) point. Anchor is already
+// fixed in selAnchorRow/Col by onHandleDrag's init block. Does not touch
+// lastDrag* — safe to call from the auto-scroll timer.
+function applyHandleDrag(clientX: number, clientY: number) {
+  const xt = terminal?.xterm
+  if (!xt) return
+  const pos = touchToBufferPos(clientX, clampClientYToScreen(clientY))
   if (!pos) return
   // Convert viewport-relative to absolute buffer coordinates
   const moveRow = xt.buffer.active.viewportY + pos.row
@@ -498,14 +728,23 @@ function onHandleDrag(handle: 'start' | 'end', clientX: number, clientY: number)
   handleEndY.value = coords.end.y
 }
 
-function onHandleDragEnd() {
+function onHandleDragEnd(canceled = false) {
+  stopAutoScroll()
   if (terminal) terminal.inTouchSelection = false
   dragHandle = null
   const text = terminal?.xterm?.getSelection() ?? ''
+  if (!canceled && text) {
+    // Dispatch synchronously — see onTouchEnd for why (avoids a keyboard-toolbar flash).
+    containerRef.value?.dispatchEvent(new CustomEvent('terminal-scroll', { bubbles: true }))
+    void copyToClipboard(text).then(
+      () => debugTouchSelect('copy:handle-drag-end', { success: true }),
+      () => debugTouchSelect('copy:handle-drag-end', { success: false }),
+    )
+  }
   menuSelectedText.value = text
   if (text) {
     menuX.value = handleEndX.value
-    menuY.value = handleEndY.value + 24
+    menuY.value = Math.min(handleEndY.value + 24, window.innerHeight - 8)
     menuVisible.value = true
   } else {
     handlesVisible.value = false
@@ -514,11 +753,13 @@ function onHandleDragEnd() {
 
 onMounted(() => {
   terminal = new TerminalInstance(props.paneId)
+  if (props.sshHost) terminal.sshHost = props.sshHost
   terminal.onTitleChange = (tv) => emit('titleChange', tv)
   terminal.onShellInfo = (s) => emit('shellInfo', s)
   terminal.onConnect = () => emit('connect')
   terminal.onDisconnect = () => emit('disconnect')
   terminal.onInput = (data) => emit('input', data)
+  terminal.onReconnect = () => emit('reconnect')
   terminal.onFileClick = (path, x, y) => {
     emit('linkActivate')
     linkType.value = 'file'
@@ -554,6 +795,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  stopAutoScroll()
   terminal?.destroy()
   terminal = null
 })

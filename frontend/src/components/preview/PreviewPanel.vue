@@ -9,6 +9,7 @@
       <div class="preview-toolbar">
         <div class="preview-mode-switch">
           <button
+            v-if="!remote"
             type="button"
             :class="{ active: kind === 'web' }"
             @click="switchToWeb"
@@ -150,6 +151,7 @@ const props = defineProps<{
   kind: 'web' | 'files'
   webUrl: string
   panelPosition: 'left' | 'right' | 'top' | 'bottom'
+  remote?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -338,6 +340,16 @@ watch(
       await restoreFilesPreview()
     }
   }
+)
+
+watch(
+  () => props.remote,
+  (isRemote) => {
+    if (isRemote && props.kind === 'web') {
+      switchToFiles()
+    }
+  },
+  { immediate: true }
 )
 
 async function restoreFilesPreview() {

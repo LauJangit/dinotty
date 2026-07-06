@@ -41,6 +41,7 @@ export interface SettingsData {
   ip_whitelist: string[]
   keybindings: Record<string, KeyBinding>
   log: LogConfig
+  ssh_profiles: SshProfile[]
 }
 
 export interface OpenApiConfig {
@@ -94,6 +95,22 @@ export interface TextConfig {
   cursor_blink: boolean
   scrollback: number
 }
+
+export interface SshProfile {
+  id: string
+  name: string
+  host: string
+  port: number
+  username: string
+  auth_method: SshAuthMethod
+  group?: string | null
+  default_command?: string | null
+}
+
+export type SshAuthMethod =
+  | { type: 'password'; password: string }
+  | { type: 'key_file'; key_path: string; passphrase?: string | null }
+  | { type: 'key_inline'; private_key: string; passphrase?: string | null }
 
 export interface CommandBookmark {
   id: string
@@ -225,6 +242,7 @@ export const settings = reactive<SettingsData>({
     path: '',
     max_size_mb: 50,
   },
+  ssh_profiles: [],
 })
 
 let loaded = false

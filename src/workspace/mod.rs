@@ -14,6 +14,7 @@ use std::sync::Arc;
 use crate::session::SessionManager;
 
 mod git;
+mod remote;
 mod syntax;
 
 pub use git::{
@@ -23,22 +24,22 @@ pub use git::{
 };
 pub use syntax::{workspace_syntax_check, SyntaxCheckBody, SyntaxCheckResponse, SyntaxDiagnostic};
 
-const MAX_TEXT_PREVIEW: usize = 512 * 1024;
-const MAX_DOWNLOAD: u64 = 500 * 1024 * 1024;
+pub(super) const MAX_TEXT_PREVIEW: usize = 512 * 1024;
+pub(super) const MAX_DOWNLOAD: u64 = 500 * 1024 * 1024;
 
 #[derive(Deserialize)]
 pub struct PaneQuery {
     pub pane_id: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct PanePathQuery {
     pub pane_id: String,
     #[serde(default)]
     pub path: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct WorkspaceListQuery {
     #[serde(default)]
     pub pane_id: String,
@@ -47,7 +48,7 @@ pub struct WorkspaceListQuery {
     pub root: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct ResolveQuery {
     pub pane_id: String,
     pub path: String,
@@ -95,18 +96,35 @@ macro_rules! try_res {
     };
 }
 
-fn json_err(status: StatusCode, msg: &str) -> Response {
+pub(super) fn json_err(status: StatusCode, msg: &str) -> Response {
     (status, Json(serde_json::json!({ "error": msg }))).into_response()
 }
 
-fn get_root(manager: &SessionManager, pane_id: &str) -> Result<PathBuf, Response> {
-    let session = manager
+fn get_session(
+    manager: &SessionManager,
+    pane_id: &str,
+) -> Result<Arc<crate::session::Session>, Response> {
+    manager
         .sessions
         .get(pane_id)
         .map(|r| Arc::clone(r.value()))
-        .ok_or_else(|| json_err(StatusCode::NOT_FOUND, "unknown pane"))?;
+        .ok_or_else(|| json_err(StatusCode::NOT_FOUND, "unknown pane"))
+}
+
+fn get_root(manager: &SessionManager, pane_id: &str) -> Result<PathBuf, Response> {
+    let session = get_session(manager, pane_id)?;
     let state = session.cwd_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     Ok(state.cwd.canonicalize().unwrap_or_else(|_| state.cwd.clone()))
+}
+
+/// Check if a session is SSH. Returns `Some(session)` if SSH, `None` if local.
+fn ssh_session(manager: &SessionManager, pane_id: &str) -> Option<Arc<crate::session::Session>> {
+    let session = manager.sessions.get(pane_id).map(|r| Arc::clone(r.value()))?;
+    if session.is_ssh() {
+        Some(session)
+    } else {
+        None
+    }
 }
 
 impl MetaResponse {
@@ -202,6 +220,9 @@ pub async fn workspace_resolve(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<ResolveQuery>,
 ) -> impl IntoResponse {
+    // if let Some(session) = ssh_session(&manager, &q.pane_id) {
+    //     return remote::remote_resolve(session, q.path).await;
+    // }
     let root = try_res!(get_root(&manager, &q.pane_id));
     let joined = if Path::new(&q.path).is_absolute() {
         resolve_user_path(dirs::home_dir(), &q.path)
@@ -218,11 +239,13 @@ pub async fn workspace_resolve(
     Json(ResolveResponse { rel }).into_response()
 }
 
-#[allow(clippy::unused_async)]
 pub async fn workspace_list(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<WorkspaceListQuery>,
-) -> impl IntoResponse {
+) -> Response {
+    if let Some(session) = ssh_session(&manager, &q.pane_id) {
+        return remote::remote_list(session, q.clone()).await;
+    }
     let root = match q.root.as_deref() {
         Some("/") => PathBuf::from("/"),
         Some("~") => dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")),
@@ -260,7 +283,7 @@ pub async fn workspace_list(
     Json(ListResponse { cwd: cwd_display, path: path_display, entries: list }).into_response()
 }
 
-fn detect_language(path: &Path) -> &'static str {
+pub(super) fn detect_language(path: &Path) -> &'static str {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
     match ext.as_str() {
         "rs" => "rust",
@@ -344,7 +367,7 @@ fn resolve_byte_range(range_header: &str, size: u64) -> ByteRangeResult {
     ByteRangeResult::Partial { start, end }
 }
 
-fn media_kind(path: &Path) -> Option<(&'static str, &'static str)> {
+pub(super) fn media_kind(path: &Path) -> Option<(&'static str, &'static str)> {
     let ext = path.extension()?.to_str()?.to_lowercase();
     Some(match ext.as_str() {
         "png" => ("image", "image/png"),
@@ -369,12 +392,12 @@ fn media_kind(path: &Path) -> Option<(&'static str, &'static str)> {
     })
 }
 
-fn skip_text_preview(path: &Path) -> bool {
+pub(super) fn skip_text_preview(path: &Path) -> bool {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
     matches!(ext.as_str(), "cube" | "lut" | "3dl" | "dat")
 }
 
-fn office_kind(path: &Path) -> Option<(&'static str, &'static str)> {
+pub(super) fn office_kind(path: &Path) -> Option<(&'static str, &'static str)> {
     let ext = path.extension()?.to_str()?.to_lowercase();
     Some(match ext.as_str() {
         "doc" => ("office", "application/msword"),
@@ -392,6 +415,9 @@ pub async fn workspace_meta(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<PanePathQuery>,
 ) -> impl IntoResponse {
+    if let Some(session) = ssh_session(&manager, &q.pane_id) {
+        return remote::remote_meta(session, q.clone()).await;
+    }
     let root = try_res!(get_root(&manager, &q.pane_id));
     let target = try_res!(normalize_join(&root, &q.path));
     if !target.is_file() {
@@ -447,7 +473,10 @@ pub async fn workspace_raw(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<PanePathQuery>,
     req_headers: HeaderMap,
-) -> impl IntoResponse {
+) -> Response {
+    if let Some(session) = ssh_session(&manager, &q.pane_id) {
+        return remote::remote_raw(session, q.clone()).await;
+    }
     let root = try_res!(get_root(&manager, &q.pane_id));
     let target = try_res!(normalize_join(&root, &q.path));
     if !target.is_file() {
@@ -559,7 +588,16 @@ pub async fn workspace_create_entry(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<CreateEntryQuery>,
     Json(body): Json<CreateEntryBody>,
-) -> impl IntoResponse {
+) -> Response {
+    if let Some(session) = ssh_session(&manager, &q.pane_id) {
+        return remote::remote_create_entry(
+            session,
+            q.parent.clone(),
+            body.kind.clone(),
+            body.name.clone(),
+        )
+        .await;
+    }
     let name = try_res!(validate_entry_name(&body.name));
     let kind = body.kind.to_lowercase();
     if kind != "file" && kind != "dir" {
@@ -598,7 +636,10 @@ pub async fn workspace_put_file(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<PanePathQuery>,
     Json(body): Json<PutFileBody>,
-) -> impl IntoResponse {
+) -> Response {
+    if let Some(session) = ssh_session(&manager, &q.pane_id) {
+        return remote::remote_put_file(session, q.clone(), body.content.clone()).await;
+    }
     if body.content.len() as u64 > MAX_DOWNLOAD {
         return json_err(StatusCode::BAD_REQUEST, "content too large");
     }
@@ -618,7 +659,10 @@ pub async fn workspace_put_file(
 pub async fn workspace_delete(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<PanePathQuery>,
-) -> impl IntoResponse {
+) -> Response {
+    if let Some(session) = ssh_session(&manager, &q.pane_id) {
+        return remote::remote_delete(session, q.clone()).await;
+    }
     let root = try_res!(get_root(&manager, &q.pane_id));
     let target = try_res!(normalize_join(&root, &q.path));
     if !target.exists() {
@@ -658,7 +702,10 @@ pub async fn workspace_rename(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<PanePathQuery>,
     Json(body): Json<RenameBody>,
-) -> impl IntoResponse {
+) -> Response {
+    if let Some(session) = ssh_session(&manager, &q.pane_id) {
+        return remote::remote_rename(session, q.clone(), body.new_name.clone()).await;
+    }
     let root = try_res!(get_root(&manager, &q.pane_id));
     let target = try_res!(normalize_join(&root, &q.path));
     if !target.exists() {
@@ -694,7 +741,10 @@ pub async fn workspace_move(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<PanePathQuery>,
     Json(body): Json<MoveBody>,
-) -> impl IntoResponse {
+) -> Response {
+    if let Some(session) = ssh_session(&manager, &q.pane_id) {
+        return remote::remote_move(session, q.clone(), body.dest.clone()).await;
+    }
     let root = try_res!(get_root(&manager, &q.pane_id));
     let source = try_res!(normalize_join(&root, &q.path));
     if !source.exists() {
@@ -750,7 +800,10 @@ pub async fn workspace_upload(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<UploadQuery>,
     mut multipart: Multipart,
-) -> impl IntoResponse {
+) -> Response {
+    if let Some(session) = ssh_session(&manager, &q.pane_id) {
+        return remote::remote_upload(session, q.dir.clone(), multipart).await;
+    }
     let root = try_res!(get_root(&manager, &q.pane_id));
     let dest_dir = try_res!(normalize_join(&root, &q.dir));
     if !dest_dir.is_dir() {

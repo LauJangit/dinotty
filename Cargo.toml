@@ -3,14 +3,14 @@ members = ["src-tauri"]
 
 [package]
 name = "dinotty-server"
-version = "0.14.4"
+version = "0.15.0"
 edition = "2021"
 license = "MIT"
 build = "build.rs"
 repository = "https://github.com/xichan96/dinotty"
 
 [dependencies]
-axum = { version = "0.7", features = ["ws"] }
+axum = { version = "0.7", features = ["ws", "macros"] }
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.5", features = ["fs", "cors"] }
 serde = { version = "1", features = ["derive"] }
@@ -50,6 +50,11 @@ tar = "0.4"
 flate2 = "1"
 zip = "2"
 libc = "0.2"
+russh = "0.62"
+russh-keys = "0.50.0-beta.7"
+russh-sftp = "2.3"
+zeroize = { version = "1", features = ["derive"] }
+base64 = "0.22"
 
 [package.metadata.deb]
 maintainer = "Dinotty Contributors <noreply@github.com>"

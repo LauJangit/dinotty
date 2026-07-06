@@ -1,12 +1,101 @@
 #![allow(clippy::too_many_lines)]
 use crate::event_bus::BusEvent;
-use crate::session::{Session, SessionManager, SessionStatus, SyncMsg};
+use crate::session::{Session, SessionBackend, SessionManager, SessionStatus, SyncMsg};
 use crate::vt_screen::VirtualScreen;
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{error, info};
+
+/// Broadcast task: 转发 PTY/SSH 输出到所有客户端
+/// 与传输无关，可被 Local 和 SSH 后端共用
+pub async fn broadcast_task(session: Arc<Session>, pane_id: String, manager: Arc<SessionManager>) {
+    info!("Broadcast task started, pane={}", pane_id);
+    let Some(mut output_rx) =
+        session.output_rx.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take()
+    else {
+        error!("Broadcast task: output_rx already taken, pane={}", pane_id);
+        return;
+    };
+
+    let sync_timeout = std::time::Duration::from_millis(500);
+    let mut sync_started_at: Option<std::time::Instant> = None;
+    let mut utf8_tail: Vec<u8> = Vec::new();
+
+    while let Some(first) = output_rx.recv().await {
+        if session.is_exited() {
+            break;
+        }
+
+        let mut batch = first;
+        while let Ok(data) = output_rx.try_recv() {
+            batch.extend_from_slice(&data);
+        }
+
+        if session.sync_active.load(std::sync::atomic::Ordering::Relaxed) {
+            if let Some(started) = sync_started_at {
+                if started.elapsed() > sync_timeout {
+                    tracing::warn!(
+                        "Sync mode timeout ({}ms), force-flushing, pane={}",
+                        started.elapsed().as_millis(),
+                        pane_id
+                    );
+                    session.set_sync_mode(false);
+                    sync_started_at = None;
+                }
+            } else {
+                sync_started_at = Some(std::time::Instant::now());
+            }
+        } else {
+            sync_started_at = None;
+        }
+
+        let results: Vec<crate::session::PendingCommandResult> = {
+            let mut pending =
+                session.pending_results.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            std::mem::take(&mut *pending)
+        };
+        for result in results {
+            manager.event_bus.publish(BusEvent::CommandFinished {
+                pane_id: pane_id.clone(),
+                command: String::new(),
+                exit_code: result.exit_code,
+                duration_ms: result.duration_ms,
+                stdout: result.stdout,
+                method: result.method.clone(),
+            });
+            manager.broadcast_sync(&SyncMsg::CommandFinished {
+                pane_id: pane_id.clone(),
+                command: String::new(),
+                exit_code: result.exit_code,
+                duration_ms: result.duration_ms,
+                stdout: String::new(),
+                method: result.method,
+            });
+        }
+
+        utf8_tail.extend_from_slice(&batch);
+        let valid_up_to = match std::str::from_utf8(&utf8_tail) {
+            Ok(s) => {
+                session.broadcast(s);
+                utf8_tail.clear();
+                continue;
+            }
+            Err(e) => e.valid_up_to(),
+        };
+        if valid_up_to > 0 {
+            let s = unsafe { std::str::from_utf8_unchecked(&utf8_tail[..valid_up_to]) };
+            session.broadcast(s);
+        }
+        utf8_tail.drain(..valid_up_to);
+        if utf8_tail.len() > 3 {
+            session.broadcast("\u{FFFD}");
+            utf8_tail.clear();
+        }
+    }
+    info!("Broadcast task exited, pane={}", pane_id);
+}
 
 /// Create a new PTY session and register it with the session manager.
 ///
@@ -75,9 +164,12 @@ pub fn create_session(
     let (output_tx, output_rx) = tokio::sync::mpsc::unbounded_channel();
 
     let session = Arc::new(Session {
-        writer: std::sync::Mutex::new(writer),
-        master: std::sync::Mutex::new(pair.master),
-        child: std::sync::Mutex::new(child),
+        backend: tokio::sync::Mutex::new(SessionBackend::Local {
+            writer,
+            master: pair.master,
+            child,
+        }),
+        ssh_params: None,
         screen: std::sync::Mutex::new(VirtualScreen::new(80, 24)),
         clients: std::sync::Mutex::new(Vec::new()),
         input_tx: std::sync::Mutex::new(None),
@@ -94,6 +186,9 @@ pub fn create_session(
         sync_buffer: std::sync::Mutex::new(Vec::new()),
         sync_buffer_bytes: std::sync::atomic::AtomicUsize::new(0),
         resize_tx,
+        ssh_cmd_tx: std::sync::Mutex::new(None),
+        ssh_handle: tokio::sync::Mutex::new(None),
+        sftp_session: std::sync::Mutex::new(None),
         output_tx,
         output_rx: std::sync::Mutex::new(Some(output_rx)),
         pending_results: std::sync::Mutex::new(Vec::new()),
@@ -257,102 +352,7 @@ pub fn create_session(
         let bcast_manager = Arc::clone(&manager_clone);
         let bcast_pane = pane_id_clone.clone();
         tokio::spawn(async move {
-            info!("Broadcast task started, pane={}", bcast_pane);
-            let Some(mut output_rx) = bcast_session
-                .output_rx
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .take()
-            else {
-                error!("Broadcast task: output_rx already taken, pane={}", bcast_pane);
-                return;
-            };
-
-            let sync_timeout = std::time::Duration::from_millis(500);
-            let mut sync_started_at: Option<std::time::Instant> = None;
-            let mut utf8_tail: Vec<u8> = Vec::new();
-
-            while let Some(first) = output_rx.recv().await {
-                if bcast_session.is_exited() {
-                    break;
-                }
-
-                // Drain all pending chunks to reduce broadcast frequency.
-                // When the task is behind, this coalesces multiple chunks into
-                // one batch — intermediate states are still forwarded to preserve
-                // escape sequence integrity for xterm.js.
-                let mut batch = first;
-                while let Ok(data) = output_rx.try_recv() {
-                    batch.extend_from_slice(&data);
-                }
-
-                // Sync safety timeout
-                if bcast_session.sync_active.load(std::sync::atomic::Ordering::Relaxed) {
-                    if let Some(started) = sync_started_at {
-                        if started.elapsed() > sync_timeout {
-                            tracing::warn!(
-                                "Sync mode timeout ({}ms), force-flushing, pane={}",
-                                started.elapsed().as_millis(),
-                                bcast_pane
-                            );
-                            bcast_session.set_sync_mode(false);
-                            sync_started_at = None;
-                        }
-                    } else {
-                        sync_started_at = Some(std::time::Instant::now());
-                    }
-                } else {
-                    sync_started_at = None;
-                }
-
-                // Drain pending command results
-                let results: Vec<crate::session::PendingCommandResult> = {
-                    let mut pending = bcast_session
-                        .pending_results
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    std::mem::take(&mut *pending)
-                };
-                for result in results {
-                    bcast_manager.event_bus.publish(BusEvent::CommandFinished {
-                        pane_id: bcast_pane.clone(),
-                        command: String::new(),
-                        exit_code: result.exit_code,
-                        duration_ms: result.duration_ms,
-                        stdout: result.stdout,
-                        method: result.method.clone(),
-                    });
-                    bcast_manager.broadcast_sync(&SyncMsg::CommandFinished {
-                        pane_id: bcast_pane.clone(),
-                        command: String::new(),
-                        exit_code: result.exit_code,
-                        duration_ms: result.duration_ms,
-                        stdout: String::new(),
-                        method: result.method,
-                    });
-                }
-
-                // UTF-8 handling + broadcast to clients
-                utf8_tail.extend_from_slice(&batch);
-                let valid_up_to = match std::str::from_utf8(&utf8_tail) {
-                    Ok(s) => {
-                        bcast_session.broadcast(s);
-                        utf8_tail.clear();
-                        continue;
-                    }
-                    Err(e) => e.valid_up_to(),
-                };
-                if valid_up_to > 0 {
-                    let s = unsafe { std::str::from_utf8_unchecked(&utf8_tail[..valid_up_to]) };
-                    bcast_session.broadcast(s);
-                }
-                utf8_tail.drain(..valid_up_to);
-                if utf8_tail.len() > 3 {
-                    bcast_session.broadcast("\u{FFFD}");
-                    utf8_tail.clear();
-                }
-            }
-            info!("Broadcast task exited, pane={}", bcast_pane);
+            broadcast_task(bcast_session, bcast_pane, bcast_manager).await;
         });
     }
 

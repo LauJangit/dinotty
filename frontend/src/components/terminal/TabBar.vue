@@ -22,6 +22,7 @@
         @touchend.prevent="onTabTouchEnd($event, tab.paneId)"
       >
         <span class="tab-index">{{ tab.index }}</span>
+        <Server v-if="tab.shellType === 'ssh'" :size="12" class="tab-ssh-icon" />
         <input
           v-if="editingPaneId === tab.paneId"
           ref="editInputRef"
@@ -58,13 +59,13 @@
     <div class="new-tab-split" ref="newMenuWrapRef">
       <button
         id="tab-new-btn"
-        title="New Tab (⌘T)"
+        :title="`${t('keybinding.newTab')} (${kbdNewTab})`"
         @click="newMenuOpen = !newMenuOpen"
         @touchend.prevent="newMenuOpen = !newMenuOpen"
       >
         <Terminal :size="16" />
       </button>
-      <div v-if="newMenuOpen" class="new-menu-dropdown" @mouseleave="newMenuOpen = false">
+      <div v-if="newMenuOpen" class="new-menu-dropdown" :class="{ 'align-right': newMenuAlignRight }" @mouseleave="newMenuOpen = false">
         <div
           class="new-menu-item"
           @click="emitAction('new-tab')"
@@ -106,6 +107,16 @@
           </div>
           <div v-if="broadcastActive" class="new-menu-status">{{ t('split.broadcastActive') }}</div>
         </template>
+        <div class="new-menu-sep" />
+        <div
+          class="new-menu-item"
+          @click="emitAction('ssh-connect')"
+          @touchend.prevent="emitAction('ssh-connect')"
+        >
+          <Globe :size="14" class="new-menu-icon" />
+          <span class="new-menu-label">{{ t('palette.sshConnect') }}</span>
+          <kbd class="new-menu-kbd">{{ kbdSshConnect }}</kbd>
+        </div>
       </div>
     </div>
     <div v-if="plugins.length > 0" class="tab-bar-plugin-wrap" ref="pluginWrapRef">
@@ -143,7 +154,7 @@
 
 <script setup lang="ts">
 import { ref, watch, onBeforeUnmount, nextTick } from 'vue'
-import { X, Terminal, Puzzle, Columns2, Rows2, Radio, LayoutDashboard } from 'lucide-vue-next'
+import { X, Terminal, Puzzle, Columns2, Rows2, Radio, LayoutDashboard, Globe, Server } from 'lucide-vue-next'
 import { useI18n } from '../../composables/useI18n'
 import { useKeybindings } from '../../composables/useKeybindings'
 
@@ -153,12 +164,14 @@ const kbdNewTab = formatBinding(getBinding('newTab')).join('')
 const kbdSplitH = formatBinding(getBinding('splitHorizontal')).join('')
 const kbdSplitV = formatBinding(getBinding('splitVertical')).join('')
 const kbdBroadcast = formatBinding(getBinding('toggleBroadcast')).join('')
+const kbdSshConnect = formatBinding(getBinding('sshConnect')).join('')
 
 export interface TabInfo {
   paneId: string
   title: string
   index: number
   type: 'terminal' | 'plugin'
+  shellType?: string // "ssh" for SSH tabs
 }
 
 export interface PluginInfo {
@@ -195,7 +208,7 @@ withDefaults(
 const emit = defineEmits<{
   activate: [paneId: string]
   close: [paneId: string]
-  action: [type: 'new-tab' | 'split-h' | 'split-v' | 'broadcast']
+  action: [type: 'new-tab' | 'split-h' | 'split-v' | 'broadcast' | 'ssh-connect']
   reorder: [fromId: string, toId: string]
   'open-plugin': [pluginId: string]
   rename: [paneId: string, title: string]
@@ -249,9 +262,10 @@ function cancelEdit() {
 const pluginMenuOpen = ref(false)
 const pluginWrapRef = ref<HTMLElement>()
 const newMenuOpen = ref(false)
+const newMenuAlignRight = ref(false)
 const newMenuWrapRef = ref<HTMLElement>()
 
-function emitAction(type: 'new-tab' | 'split-h' | 'split-v' | 'broadcast') {
+function emitAction(type: 'new-tab' | 'split-h' | 'split-v' | 'broadcast' | 'ssh-connect') {
   emit('action', type)
   newMenuOpen.value = false
 }
@@ -270,6 +284,15 @@ watch([pluginMenuOpen, newMenuOpen], ([pluginOpen, newOpen]) => {
     document.addEventListener('touchstart', onDocTouchStart, { passive: true })
   } else {
     document.removeEventListener('touchstart', onDocTouchStart)
+  }
+  if (newOpen) {
+    nextTick(() => {
+      const wrap = newMenuWrapRef.value
+      if (wrap) {
+        const rect = wrap.getBoundingClientRect()
+        newMenuAlignRight.value = rect.right + 220 > window.innerWidth
+      }
+    })
   }
 })
 
@@ -410,6 +433,11 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   opacity: 0.7;
 }
+.tab-ssh-icon {
+  flex-shrink: 0;
+  color: var(--accent, #4d7fff);
+  opacity: 0.8;
+}
 .tab-title-input {
   background: var(--bg-input, #2a2a2a);
   border: 1px solid var(--accent, #8a8a8a);
@@ -466,6 +494,7 @@ onBeforeUnmount(() => {
 }
 .tab-bar-plugin-wrap {
   position: relative;
+  flex-shrink: 0;
 }
 .plugin-dropdown {
   position: absolute;
@@ -503,6 +532,7 @@ onBeforeUnmount(() => {
 }
 .new-tab-split {
   position: relative;
+  flex-shrink: 0;
 }
 .new-menu-dropdown {
   position: absolute;
@@ -515,6 +545,10 @@ onBeforeUnmount(() => {
   padding: 4px 0;
   z-index: 500;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+.new-menu-dropdown.align-right {
+  left: auto;
+  right: 0;
 }
 .new-menu-item {
   display: flex;

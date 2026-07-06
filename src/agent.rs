@@ -25,7 +25,6 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::Write;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{mpsc, RwLock};
@@ -309,7 +308,6 @@ async fn execute_command(
 
     // Send command + newline
     {
-        let mut w = session.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         // Clear any pending command tracking and start fresh
         session
             .screen
@@ -318,7 +316,7 @@ async fn execute_command(
             .begin_command_tracking();
 
         let cmd = format!("{command}\n");
-        w.write_all(cmd.as_bytes()).map_err(|e| {
+        session.write_input_sync(cmd.as_bytes()).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 AgentError {
@@ -435,9 +433,8 @@ pub async fn agent_send(
 
     match state.manager.sessions.get(&pane_id) {
         Some(session) => {
-            let mut w = session.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let cmd = format!("{}\n", req.command);
-            if let Err(e) = w.write_all(cmd.as_bytes()) {
+            if let Err(e) = session.write_input_sync(cmd.as_bytes()) {
                 return error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "INTERNAL_ERROR",

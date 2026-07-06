@@ -71,6 +71,12 @@ export interface SyncLayoutUpdated {
   active_pane_id: string
 }
 
+export interface SyncSshAuthPrompt {
+  type: 'ssh_auth_prompt'
+  pane_id: string
+  prompts: Array<{ prompt: string; echo: boolean }>
+}
+
 export type SyncServerMsg =
   | SyncTabList
   | SyncTabCreated
@@ -78,6 +84,7 @@ export type SyncServerMsg =
   | SyncTabActivated
   | SyncPluginChanged
   | SyncLayoutUpdated
+  | SyncSshAuthPrompt
 
 export interface SyncCreateTab {
   type: 'create_tab'
@@ -108,9 +115,16 @@ export interface SyncUpdateLayout {
   active_pane_id: string
 }
 
+export interface SyncSshAuthResponse {
+  type: 'ssh_auth_response'
+  pane_id: string
+  responses: string[]
+}
+
 export type SyncClientMsg =
   | SyncCreateTab
   | SyncCloseTab
   | SyncClosePane
   | SyncActivateTab
   | SyncUpdateLayout
+  | SyncSshAuthResponse

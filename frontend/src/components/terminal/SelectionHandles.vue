@@ -24,7 +24,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onUnmounted } from 'vue'
 
 const props = defineProps<{
   visible: boolean
@@ -36,7 +36,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   drag: [handle: 'start' | 'end', clientX: number, clientY: number]
-  dragEnd: []
+  dragEnd: [canceled: boolean]
 }>()
 
 const dragging = ref(false)
@@ -85,7 +85,7 @@ function onMove(e: MouseEvent | TouchEvent) {
   emit('drag', activeHandle.value, pos.clientX, pos.clientY)
 }
 
-function onEnd() {
+function onEnd(e?: Event) {
   dragging.value = false
   activeHandle.value = null
   window.removeEventListener('mousemove', onMove)
@@ -93,8 +93,18 @@ function onEnd() {
   window.removeEventListener('touchmove', onMove)
   window.removeEventListener('touchend', onEnd)
   window.removeEventListener('touchcancel', onEnd)
-  emit('dragEnd')
+  emit('dragEnd', e?.type === 'touchcancel')
 }
+
+// Safety net: if the component unmounts mid-drag, onEnd may never fire — remove
+// any window listeners so their closures don't leak or emit into a dead parent (DT8 #4).
+onUnmounted(() => {
+  window.removeEventListener('mousemove', onMove)
+  window.removeEventListener('mouseup', onEnd)
+  window.removeEventListener('touchmove', onMove)
+  window.removeEventListener('touchend', onEnd)
+  window.removeEventListener('touchcancel', onEnd)
+})
 </script>
 
 <style scoped>

@@ -1,4 +1,3 @@
-use std::io::Write;
 use std::sync::Arc;
 
 use axum::{
@@ -189,8 +188,7 @@ pub async fn session_input(
             .into_response();
     };
 
-    let mut w = session.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if w.write_all(req.data.as_bytes()).is_err() {
+    if session.write_input_sync(req.data.as_bytes()).is_err() {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": "write failed" })),

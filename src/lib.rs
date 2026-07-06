@@ -14,6 +14,7 @@ pub mod pty;
 pub mod qr_code;
 pub mod session;
 pub mod settings;
+pub mod ssh;
 pub mod tabs;
 pub mod token;
 pub mod util;
