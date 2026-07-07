@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::broadcast;
 
-use crate::settings::SettingsState;
+use crate::{platform::shell, settings::SettingsState};
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -113,18 +113,18 @@ impl NotificationBroadcast {
             let env_body = body.to_string();
 
             tokio::spawn(async move {
-                let result = tokio::time::timeout(
-                    std::time::Duration::from_secs(30),
-                    tokio::process::Command::new("sh")
-                        .arg("-c")
-                        .arg(&cmd)
-                        .env("DINOTTY_NOTIFICATION_TYPE", &env_type)
-                        .env("DINOTTY_PANE_ID", &env_pane)
-                        .env("DINOTTY_TITLE", &env_title)
-                        .env("DINOTTY_BODY", &env_body)
-                        .output(),
-                )
-                .await;
+                let hook_shell = shell::notification_hook_shell(&cmd);
+                let mut command = tokio::process::Command::new(hook_shell.program);
+                command.args(hook_shell.args);
+                command
+                    .env("DINOTTY_NOTIFICATION_TYPE", &env_type)
+                    .env("DINOTTY_PANE_ID", &env_pane)
+                    .env("DINOTTY_TITLE", &env_title)
+                    .env("DINOTTY_BODY", &env_body);
+
+                let result =
+                    tokio::time::timeout(std::time::Duration::from_secs(30), command.output())
+                        .await;
                 match result {
                     Ok(Ok(output)) => {
                         if !output.status.success() {

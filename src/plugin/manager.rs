@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::platform::fs as platform_fs;
 use crate::session::SessionManager;
 
 use super::helpers::{copy_dir_all, extract_tar_gz, set_executable, validate_manifest};
@@ -62,7 +63,7 @@ impl PluginManager {
             // Skip broken symlinks
             if path.is_symlink() && !path.exists() {
                 tracing::warn!("Removing broken symlink: {:?}", path);
-                let _ = std::fs::remove_file(&path);
+                let _ = platform_fs::remove_symlink_or_file(&path);
                 continue;
             }
 
@@ -196,7 +197,7 @@ impl PluginManager {
         validate_manifest(&manifest)?;
 
         let dest = self.plugin_dir.join(&manifest.id);
-        if dest.exists() {
+        if platform_fs::path_exists_or_symlink(&dest) {
             return Err(format!("plugin '{}' already installed, use update instead", manifest.id));
         }
 
@@ -245,21 +246,14 @@ impl PluginManager {
         validate_manifest(&manifest)?;
 
         let dest = self.plugin_dir.join(&manifest.id);
-        if dest.exists() {
+        if platform_fs::path_exists_or_symlink(&dest) {
             return Err(format!("plugin '{}' already installed, use update instead", manifest.id));
         }
 
         std::fs::create_dir_all(&self.plugin_dir).map_err(|e| e.to_string())?;
 
         if dev_link {
-            // Create a symlink from src -> plugin_dir/id
-            #[cfg(unix)]
-            std::os::unix::fs::symlink(src, &dest).map_err(|e| format!("symlink failed: {e}"))?;
-            #[cfg(not(unix))]
-            {
-                let _ = (src, &dest);
-                return Err("dev-link is only supported on Unix".into());
-            }
+            platform_fs::create_dir_symlink(src, &dest)?;
         } else {
             copy_dir_all(src, &dest)?;
         }
@@ -293,6 +287,12 @@ impl PluginManager {
     pub fn update(&self, id: &str, archive: &[u8]) -> Result<PluginManifest, String> {
         let old_info =
             self.registry.get(id).ok_or_else(|| format!("plugin '{id}' not installed"))?.clone();
+        if old_info.is_dev_link {
+            return Err(
+                "cannot update a dev-link plugin; unlink it and install a packaged plugin instead"
+                    .into(),
+            );
+        }
 
         let tmp = tempfile::tempdir().map_err(|e| e.to_string())?;
         extract_tar_gz(archive, tmp.path())?;
@@ -310,14 +310,14 @@ impl PluginManager {
 
         let plugin_path = self.plugin_dir.join(id);
         let backup = tempfile::tempdir().map_err(|e| e.to_string())?;
-        if plugin_path.exists() {
+        if platform_fs::path_exists_or_symlink(&plugin_path) {
             copy_dir_all(&plugin_path, backup.path())?;
-            std::fs::remove_dir_all(&plugin_path).map_err(|e| e.to_string())?;
+            remove_plugin_path(&plugin_path)?;
         }
 
         if let Err(e) = std::fs::rename(tmp.path(), &plugin_path) {
-            if plugin_path.exists() {
-                let _ = std::fs::remove_dir_all(&plugin_path);
+            if platform_fs::path_exists_or_symlink(&plugin_path) {
+                let _ = remove_plugin_path(&plugin_path);
             }
             if backup.path().exists() {
                 let _ = std::fs::rename(backup.path(), &plugin_path);
@@ -349,8 +349,8 @@ impl PluginManager {
         self.kill_plugin_processes(id).await;
 
         let plugin_path = self.plugin_dir.join(id);
-        if plugin_path.exists() {
-            std::fs::remove_dir_all(&plugin_path).map_err(|e| e.to_string())?;
+        if platform_fs::path_exists_or_symlink(&plugin_path) {
+            remove_plugin_path(&plugin_path)?;
         }
 
         if !keep_data {
@@ -362,5 +362,14 @@ impl PluginManager {
 
         self.registry.remove(id);
         Ok(())
+    }
+}
+
+fn remove_plugin_path(path: &std::path::Path) -> Result<(), String> {
+    let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+    if meta.file_type().is_symlink() || meta.file_type().is_file() {
+        platform_fs::remove_symlink_or_file(path)
+    } else {
+        std::fs::remove_dir_all(path).map_err(|e| e.to_string())
     }
 }

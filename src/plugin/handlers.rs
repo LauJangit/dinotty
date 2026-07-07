@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use tokio::process::Command;
 use tokio::sync::{Mutex as TokioMutex, RwLock};
 
-use crate::session::SessionManager;
+use crate::{platform::fs as platform_fs, session::SessionManager};
 
 use super::helpers::{
     copy_dir_all, extract_zip, find_plugin_root, is_safe_segment, plugin_err, set_executable,
@@ -442,13 +442,17 @@ pub async fn dev_link_plugin(
     }
 
     let link = pm.plugin_dir.join(&manifest.id);
-    if link.exists() {
-        let _ = std::fs::remove_file(&link);
+    if platform_fs::path_exists_or_symlink(&link) {
+        if let Err(e) = platform_fs::remove_symlink_or_file(&link) {
+            return plugin_err(StatusCode::CONFLICT, &e);
+        }
     }
 
-    std::fs::create_dir_all(&pm.plugin_dir).ok();
-    if let Err(e) = std::os::unix::fs::symlink(&src, &link) {
+    if let Err(e) = std::fs::create_dir_all(&pm.plugin_dir) {
         return plugin_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+    }
+    if let Err(e) = platform_fs::create_dir_symlink(&src, &link) {
+        return plugin_err(StatusCode::INTERNAL_SERVER_ERROR, &e);
     }
 
     pm.registry.insert(
@@ -481,6 +485,15 @@ pub async fn install_from_dir(
     match pm.install_from_dir(&src, body.dev_link) {
         Ok(manifest) => Json(manifest).into_response(),
         Err(e) => plugin_err(StatusCode::INTERNAL_SERVER_ERROR, &e),
+    }
+}
+
+fn remove_plugin_path(path: &std::path::Path) -> Result<(), String> {
+    let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+    if meta.file_type().is_symlink() || meta.file_type().is_file() {
+        platform_fs::remove_symlink_or_file(path)
+    } else {
+        std::fs::remove_dir_all(path).map_err(|e| e.to_string())
     }
 }
 
@@ -649,7 +662,8 @@ pub async fn install_from_git(
     }
 
     let dest = pm.plugin_dir.join(&manifest.id);
-    let is_update = pm.registry.contains_key(&manifest.id) || dest.exists();
+    let is_update =
+        pm.registry.contains_key(&manifest.id) || platform_fs::path_exists_or_symlink(&dest);
 
     if is_update {
         let old_info = pm.registry.get(&manifest.id).map(|e| e.clone());
@@ -657,16 +671,16 @@ pub async fn install_from_git(
             Ok(b) => b,
             Err(e) => return plugin_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
         };
-        if dest.exists() {
+        if platform_fs::path_exists_or_symlink(&dest) {
             if let Err(e) = copy_dir_all(&dest, backup.path()) {
                 return plugin_err(StatusCode::INTERNAL_SERVER_ERROR, &e);
             }
-            if let Err(e) = std::fs::remove_dir_all(&dest) {
-                return plugin_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+            if let Err(e) = remove_plugin_path(&dest) {
+                return plugin_err(StatusCode::INTERNAL_SERVER_ERROR, &e);
             }
         }
         if let Err(e) = copy_dir_all(&plugin_root, &dest) {
-            let _ = std::fs::remove_dir_all(&dest);
+            let _ = remove_plugin_path(&dest);
             let _ = copy_dir_all(backup.path(), &dest);
             return plugin_err(StatusCode::INTERNAL_SERVER_ERROR, &format!("update failed: {e}"));
         }

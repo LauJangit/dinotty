@@ -63,7 +63,7 @@ impl Default for HistoryState {
 impl HistoryState {
     #[must_use]
     pub fn new() -> Self {
-        let shell_type = crate::pty::get_shell_type(&crate::pty::get_shell());
+        let shell_type = crate::platform::shell::default_shell().shell_type;
         let history_path = get_history_path(&shell_type);
         let (broadcast_tx, _) = broadcast::channel(16);
 
@@ -91,6 +91,9 @@ impl HistoryState {
         let content = match tokio::fs::read(&self.inner.history_path).await {
             Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
             Err(e) => {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    return;
+                }
                 warn!("Failed to read history file {:?}: {}", self.inner.history_path, e);
                 return;
             }
@@ -209,7 +212,7 @@ impl HistoryState {
 }
 
 fn get_history_path(shell_type: &str) -> PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+    let home = crate::platform::shell::home_dir();
     match shell_type {
         "zsh" => {
             if let Ok(histfile) = std::env::var("HISTFILE") {
@@ -218,7 +221,34 @@ fn get_history_path(shell_type: &str) -> PathBuf {
             home.join(".zsh_history")
         }
         "bash" => home.join(".bash_history"),
+        "powershell" => powershell_history_path(&home),
+        "cmd" => home.join(".dinotty_cmd_history"),
         _ => home.join(".sh_history"),
+    }
+}
+
+fn powershell_history_path(home: &std::path::Path) -> PathBuf {
+    let base = std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .or_else(dirs::data_dir)
+        .unwrap_or_else(|| home.to_path_buf());
+
+    let windows_powershell = base
+        .join("Microsoft")
+        .join("Windows")
+        .join("PowerShell")
+        .join("PSReadLine")
+        .join("ConsoleHost_history.txt");
+    let powershell_core = base
+        .join("Microsoft")
+        .join("PowerShell")
+        .join("PSReadLine")
+        .join("ConsoleHost_history.txt");
+
+    if windows_powershell.exists() || !powershell_core.exists() {
+        windows_powershell
+    } else {
+        powershell_core
     }
 }
 

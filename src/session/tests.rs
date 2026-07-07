@@ -135,10 +135,13 @@ fn sniff_cwd_handles_chunked_input() {
     let home = PathBuf::from("/home/user");
     let mut cwd = PathBuf::from("/home/user");
     let mut buf = Vec::new();
+    let target = std::env::temp_dir();
+    let target_str = target.to_string_lossy();
     sniff_cwd_from_title_osc(&mut buf, b"\x1b]0;user", &home, &mut cwd);
     assert_eq!(cwd, PathBuf::from("/home/user")); // not yet
-    sniff_cwd_from_title_osc(&mut buf, b"@host:/opt\x07", &home, &mut cwd);
-    assert_eq!(cwd, PathBuf::from("/opt"));
+    let chunk = format!("@host:{target_str}\x07");
+    sniff_cwd_from_title_osc(&mut buf, chunk.as_bytes(), &home, &mut cwd);
+    assert_eq!(cwd, target.canonicalize().unwrap_or(target));
 }
 
 #[test]
@@ -570,14 +573,15 @@ fn cwd_state_default_path() {
 
 #[test]
 fn sniff_cwd_updates_cwd_state() {
-    // Use a path that exists and canonicalizes to itself
     let home = PathBuf::from("/");
     let mut cwd = home.clone();
     let mut buf = Vec::new();
+    let target = std::env::temp_dir();
+    let target_str = target.to_string_lossy();
     // OSC 0: \x1b]0;user@host:path\x07
-    sniff_cwd_from_title_osc(&mut buf, b"\x1b]0;user@host:/usr\x07", &home, &mut cwd);
-    // canonicalize("/usr") works on both macOS and Linux
-    assert!(cwd.ends_with("usr"), "cwd should end with 'usr', got: {cwd:?}");
+    let data = format!("\x1b]0;user@host:{target_str}\x07");
+    sniff_cwd_from_title_osc(&mut buf, data.as_bytes(), &home, &mut cwd);
+    assert_eq!(cwd, target.canonicalize().unwrap_or(target));
 }
 
 #[test]

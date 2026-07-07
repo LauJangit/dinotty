@@ -50,7 +50,31 @@ curl -s -X POST http://127.0.0.1:8999/api/notify \
 
 ## 通知命令钩子
 
-可在设置中配置 shell 命令，当通知事件发生时自动执行。适用于触发系统级提醒（如 macOS `osascript`、`notify-send` 等）。
+可在设置中配置 shell 命令，当通知事件发生时自动执行。适用于触发系统级提醒（如 macOS `osascript`、Linux `notify-send`、Windows PowerShell 声音或 Toast 等）。
+
+命令钩子按**服务端平台**执行：
+
+| 平台 | 执行方式 |
+|------|----------|
+| Linux / macOS | `sh -c <command>` |
+| Windows | 优先 `pwsh.exe -NoProfile -Command <command>`，其次 `powershell.exe`，最后 `cmd.exe /C` |
+
+示例：
+
+```bash
+# Linux
+notify-send "Dinotty" "$DINOTTY_TITLE: $DINOTTY_BODY"
+
+# macOS
+osascript -e 'display notification "'$DINOTTY_BODY'" with title "Dinotty"'
+```
+
+```powershell
+# Windows PowerShell
+[System.Media.SystemSounds]::Asterisk.Play()
+```
+
+钩子会收到 `DINOTTY_NOTIFICATION_TYPE`、`DINOTTY_PANE_ID`、`DINOTTY_TITLE`、`DINOTTY_BODY` 环境变量。
 
 ## Open API（外部设备控制）
 

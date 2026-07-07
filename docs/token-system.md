@@ -141,8 +141,15 @@ Authorization: Bearer <global-token>
 
 ### 存储位置
 
-- Token 元数据：`~/.config/dinotty/tokens.json`
-- 撤销列表：内存中（DashMap），定期清理
+Token 元数据存储在平台配置目录下的 `tokens.json`：
+
+| 平台 | Token 元数据路径 |
+|------|------------------|
+| Linux | `~/.config/dinotty/tokens.json` |
+| macOS | `~/Library/Application Support/dinotty/tokens.json` |
+| Windows | `%APPDATA%\dinotty\tokens.json` |
+
+撤销列表保存在内存中（DashMap），并定期清理。
 
 ### 哈希算法
 

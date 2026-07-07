@@ -56,12 +56,7 @@ fn save_secrets(secrets: &HashMap<String, String>) -> Result<(), String> {
     let json =
         serde_json::to_string_pretty(&SecretsFile(secrets.clone())).map_err(|e| e.to_string())?;
     std::fs::write(secrets_path(), json).map_err(|e| e.to_string())?;
-    // Set permissions to 0600 on Unix
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(secrets_path(), std::fs::Permissions::from_mode(0o600));
-    }
+    let _ = crate::platform::fs::set_private_file_permissions(&secrets_path());
     Ok(())
 }
 

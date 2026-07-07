@@ -17,9 +17,24 @@ curl -X POST http://127.0.0.1:8999/api/plugins/dev-link \
   -d '{"path": "/your/plugin/dir"}'
 ```
 
+Windows PowerShell 示例（JSON 中的反斜杠需要转义）：
+
+```powershell
+curl.exe -X POST http://127.0.0.1:8999/api/plugins/dev-link `
+  -H "Content-Type: application/json" `
+  -d '{"path":"C:\\Users\\you\\plugins\\my-plugin"}'
+```
+
+`dev-link` 会创建目录符号链接；Windows 上如果失败，请开启 Developer Mode 或使用管理员权限。也可以改用上传安装包或手动放置。
+
 **方式三：手动放置**
 
-将插件目录直接放入 `~/.dinotty/plugins/<plugin-id>/`，文件监听器会自动检测。
+将插件目录直接放入插件目录，文件监听器会自动检测：
+
+| 平台 | 插件目录 |
+|------|----------|
+| Linux / macOS | `~/.dinotty/plugins/<plugin-id>/` |
+| Windows | `%USERPROFILE%\.dinotty\plugins\<plugin-id>` |
 
 插件支持**热重载**——修改插件文件后无需重启服务器，浏览器自动加载最新版本。
 

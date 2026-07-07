@@ -1,5 +1,6 @@
 #![allow(clippy::too_many_lines)]
 use crate::event_bus::BusEvent;
+use crate::platform::shell;
 use crate::session::{Session, SessionBackend, SessionManager, SessionStatus, SyncMsg};
 use crate::vt_screen::VirtualScreen;
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
@@ -116,26 +117,30 @@ pub fn create_session(
         .openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 })
         .map_err(|e| e.to_string())?;
 
-    let shell = get_shell();
-    let shell_type = get_shell_type(&shell);
-    let mut cmd = CommandBuilder::new(&shell);
-    cmd.args(get_shell_args(&shell));
+    let shell_spec = shell::default_shell();
+    let shell_type = shell_spec.shell_type.clone();
+    let mut cmd = CommandBuilder::new(&shell_spec.program);
+    for arg in &shell_spec.args {
+        cmd.arg(arg);
+    }
     cmd.env("TERM", "xterm-256color");
     configure_utf8_locale(&mut cmd);
 
-    let home_path = std::env::var("HOME").map_or_else(
-        |_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
-        PathBuf::from,
-    );
+    let home_path = shell::home_dir();
 
     let effective_cwd = cwd.filter(|p| p.is_dir()).unwrap_or_else(|| home_path.clone());
     cmd.cwd(&effective_cwd);
 
-    // Shell-specific env setup still uses $HOME (for ZDOTDIR/PROMPT_COMMAND)
-    if let Ok(ref home) = std::env::var("HOME") {
+    // Shell-specific hooks depend on HOME-style prompt expansion.
+    if matches!(shell_type.as_str(), "zsh" | "bash") {
+        let home =
+            std::env::var("HOME").unwrap_or_else(|_| home_path.to_string_lossy().into_owned());
+        if std::env::var_os("HOME").is_none() {
+            cmd.env("HOME", &home);
+        }
         match shell_type.as_str() {
             "zsh" => {
-                if let Some(zdotdir) = setup_zsh_title_hooks(home) {
+                if let Some(zdotdir) = setup_zsh_title_hooks(&home) {
                     cmd.env("ZDOTDIR", &zdotdir);
                 }
             }
@@ -479,47 +484,17 @@ fn configure_utf8_locale(cmd: &mut CommandBuilder) {
 
 #[must_use]
 pub fn get_shell() -> String {
-    // Non-interactive shells that should be skipped
-    const BLOCKED: &[&str] = &[
-        "/sbin/nologin",
-        "/usr/sbin/nologin",
-        "/bin/false",
-        "/usr/bin/false",
-        "/bin/nologin",
-        "/usr/bin/nologin",
-    ];
-
-    if let Ok(s) = std::env::var("SHELL") {
-        if std::path::Path::new(&s).exists() && !BLOCKED.contains(&s.as_str()) {
-            return s;
-        }
-    }
-    for s in ["/bin/zsh", "/usr/bin/zsh", "/bin/bash", "/usr/bin/bash", "/bin/sh"] {
-        if std::path::Path::new(s).exists() {
-            return s.to_string();
-        }
-    }
-    "/bin/sh".to_string()
+    shell::default_shell().program
 }
 
 #[must_use]
 pub fn get_shell_type(shell: &str) -> String {
-    if shell.contains("zsh") {
-        "zsh".into()
-    } else if shell.contains("bash") {
-        "bash".into()
-    } else {
-        "sh".into()
-    }
+    shell::shell_type(shell)
 }
 
 #[must_use]
-pub fn get_shell_args(shell: &str) -> Vec<&'static str> {
-    if shell.contains("zsh") || shell.contains("bash") {
-        vec!["-i", "-l"]
-    } else {
-        vec!["-i"]
-    }
+pub fn get_shell_args(shell: &str) -> Vec<String> {
+    shell::shell_args(shell)
 }
 
 #[cfg(test)]

@@ -123,13 +123,7 @@ impl HostKeyVerifier {
 
         std::fs::write(&self.known_hosts_path, content)?;
 
-        // 设置文件权限 0600
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let perms = std::fs::Permissions::from_mode(0o600);
-            std::fs::set_permissions(&self.known_hosts_path, perms)?;
-        }
+        crate::platform::fs::set_private_file_permissions(&self.known_hosts_path)?;
 
         info!("Saved host key for {}:{}", host, port);
         Ok(())

@@ -300,9 +300,7 @@ impl Session {
     }
 
     pub fn on_pty_output(&self, data: &[u8]) {
-        let Some(home) = dirs::home_dir() else {
-            return;
-        };
+        let home = crate::platform::shell::home_dir();
         let mut state = self.cwd_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let CwdState { ref mut cwd, ref mut sniff_buf } = *state;
         sniff_cwd_from_title_osc(sniff_buf, data, &home, cwd);
@@ -697,7 +695,7 @@ fn parse_title_cwd(title: &str, home: &Path) -> Option<PathBuf> {
         home.join(rest)
     } else if path_part == "~" {
         home.to_path_buf()
-    } else if path_part.starts_with('/') {
+    } else if Path::new(path_part).is_absolute() || path_part.starts_with('/') {
         PathBuf::from(path_part)
     } else {
         home.join(path_part)
