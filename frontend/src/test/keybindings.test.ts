@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import KeyboardTab from '../components/settings/KeyboardTab.vue'
 import { settings } from '../composables/useSettings'
 import { handleTerminalShortcutKeydown } from '../composables/useTerminal'
-import { keyBindingDefs, useKeybindings } from '../composables/useKeybindings'
+import { keyBindingDefs, keyEventMatchesBinding, useKeybindings } from '../composables/useKeybindings'
 
 vi.mock('../composables/apiBase', () => ({
   apiUrl: (path: string) => path,
@@ -29,6 +29,7 @@ const APP_DEFAULTS = [
   ['searchTerminal', 'f', false, false],
   ['switchTab', '1', false, true],
   ['missionControl', 'm', true, false],
+  ['sshConnect', 't', true, false],
   ['fontSizeUp', '=', true, false],
   ['fontSizeDown', '-', false, false],
   ['fontSizeReset', '0', false, false],
@@ -62,25 +63,32 @@ describe('unified keybindings', () => {
     resetKeybindings()
   })
 
-  it('keeps the 17 app defaults and persisted shape unchanged', () => {
+  it('keeps the 18 app defaults and persisted shape unchanged', () => {
     const appDefs = keyBindingDefs.filter((def) => (def.kind ?? 'app') === 'app')
 
-    expect(appDefs).toHaveLength(17)
-    expect(appDefs.map((def) => [
-      def.id,
-      def.defaultBinding.key,
-      def.defaultBinding.shift,
-      def.readonly === true,
-    ])).toEqual(APP_DEFAULTS)
+    expect(appDefs).toHaveLength(18)
+    expect(
+      appDefs.map((def) => [
+        def.id,
+        def.defaultBinding.key,
+        def.defaultBinding.shift,
+        def.readonly === true,
+      ])
+    ).toEqual(APP_DEFAULTS)
     expect(appDefs.every((def) => def.sequence === undefined)).toBe(true)
-    expect(appDefs.every((def) => Object.keys(def.defaultBinding).join(',') === 'key,shift')).toBe(true)
+    expect(appDefs.every((def) => Object.keys(def.defaultBinding).join(',') === 'key,shift')).toBe(
+      true
+    )
   })
 
   it('formats app bindings exactly as before and terminal bindings with literal modifiers', () => {
     const { formatBinding } = useKeybindings()
 
     expect(formatBinding({ key: 'b', shift: true })).toEqual(['⌘', '⇧', 'B'])
-    expect(formatBinding({ key: 'enter', shift: true, meta: false }, 'terminal')).toEqual(['⇧', '⏎'])
+    expect(formatBinding({ key: 'enter', shift: true, meta: false }, 'terminal')).toEqual([
+      '⇧',
+      '⏎',
+    ])
     expect(formatBinding({ key: 'arrowleft', shift: false, meta: true }, 'terminal')).toEqual([
       '⌘',
       '←',
@@ -112,6 +120,33 @@ describe('unified keybindings', () => {
     }
   })
 
+  it('keeps terminal Meta shortcuts explicit unless Windows Alt-as-Cmd is active', () => {
+    const altLeft = keyEvent('ArrowLeft', { altKey: true })
+    const sendWithoutVirtualMeta = vi.fn()
+
+    expect(handleTerminalShortcutKeydown(altLeft, sendWithoutVirtualMeta)).toBe(false)
+    expect(sendWithoutVirtualMeta).not.toHaveBeenCalled()
+
+    const windowsAltLeft = keyEvent('ArrowLeft', { altKey: true })
+    const sendWithVirtualMeta = vi.fn()
+    const stopPropagation = vi.spyOn(windowsAltLeft, 'stopPropagation')
+
+    expect(handleTerminalShortcutKeydown(windowsAltLeft, sendWithVirtualMeta, true)).toBe(true)
+    expect(sendWithVirtualMeta).toHaveBeenCalledWith('\x01')
+    expect(windowsAltLeft.defaultPrevented).toBe(true)
+    expect(stopPropagation).toHaveBeenCalled()
+  })
+
+  it('matches shifted physical keys for app shortcuts such as font size up', () => {
+    const binding = useKeybindings().getBinding('fontSizeUp')
+
+    expect(keyEventMatchesBinding(keyEvent('+', { code: 'Equal', shiftKey: true }), binding)).toBe(
+      true
+    )
+    expect(keyEventMatchesBinding(keyEvent('+', { code: 'NumpadAdd', shiftKey: true }), binding))
+      .toBe(false)
+  })
+
   it('does not match terminal bindings hand-edited to reserved Ctrl+Shift+C/V', () => {
     const cases = [
       ['term.lineStart', keyEvent('C', { ctrlKey: true, shiftKey: true })],
@@ -139,7 +174,7 @@ describe('unified keybindings', () => {
   it('records literal modifiers for terminal shortcuts', async () => {
     const wrapper = await recordKey(
       'term.lineStart',
-      keyEvent('x', { shiftKey: true, metaKey: true, ctrlKey: true, altKey: true }),
+      keyEvent('x', { shiftKey: true, metaKey: true, ctrlKey: true, altKey: true })
     )
 
     expect(settings.keybindings['term.lineStart']).toEqual({
@@ -155,7 +190,7 @@ describe('unified keybindings', () => {
   it('records app shortcuts with only key and shift', async () => {
     const wrapper = await recordKey(
       'newTab',
-      keyEvent('x', { shiftKey: true, metaKey: true, ctrlKey: true, altKey: true }),
+      keyEvent('x', { shiftKey: true, metaKey: true, ctrlKey: true, altKey: true })
     )
 
     expect(settings.keybindings.newTab).toEqual({ key: 'x', shift: true })
@@ -189,7 +224,7 @@ describe('unified keybindings', () => {
   it('accepts terminal reserved combos when another literal modifier is present', async () => {
     const wrapper = await recordKey(
       'term.lineEnd',
-      keyEvent('C', { ctrlKey: true, altKey: true, shiftKey: true }),
+      keyEvent('C', { ctrlKey: true, altKey: true, shiftKey: true })
     )
 
     expect(settings.keybindings['term.lineEnd']).toEqual({

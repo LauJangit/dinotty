@@ -44,20 +44,41 @@ docs: update plugin development guide
 
 ## Pre-submission Checklist
 
-Make sure these pass before submitting a PR:
+Make sure these checks pass before submitting a PR:
 
 ```bash
-# Backend build
-cargo build
+# Backend
+cargo fmt --check
+cargo clippy -- -D warnings
+cargo test --workspace
 
-# Frontend type check
-cd frontend && npx vue-tsc --noEmit
+# Frontend
+cd frontend
+pnpm exec vue-tsc --noEmit
+pnpm test
 ```
+
+Run the same checks on Windows PowerShell when touching Windows-sensitive code. For frontend checks:
+
+```powershell
+Set-Location frontend
+pnpm exec vue-tsc --noEmit
+pnpm test
+Set-Location ..
+```
+
+If your change touches platform support, PTY, paths, shell startup, or plugin filesystem behavior, manually verify the affected platforms. For Windows changes, cover:
+
+- Default shell detection for `pwsh.exe` / `powershell.exe` / `cmd.exe`
+- `DINOTTY_SHELL` overriding the default shell
+- `C:\...` paths, paths with spaces, and SSH private key paths
+- Plugin dev-link; if symlink creation fails, enable Windows Developer Mode or run as Administrator
 
 ## Code Style
 
 - **Rust**: Format with `rustfmt` (`cargo fmt`)
 - **Frontend**: Follow the project's existing ESLint / Prettier config
+- **Docs**: Keep bilingual README or paired docs in sync; call out Linux/macOS/Windows behavior differences explicitly
 
 ## Issues
 

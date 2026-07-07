@@ -17,9 +17,24 @@ curl -X POST http://127.0.0.1:8999/api/plugins/dev-link \
   -d '{"path": "/your/plugin/dir"}'
 ```
 
+Windows PowerShell example (escape backslashes inside JSON):
+
+```powershell
+curl.exe -X POST http://127.0.0.1:8999/api/plugins/dev-link `
+  -H "Content-Type: application/json" `
+  -d '{"path":"C:\\Users\\you\\plugins\\my-plugin"}'
+```
+
+`dev-link` creates a directory symlink. On Windows, enable Developer Mode or run as Administrator if symlink creation fails. Uploading an archive or manual placement are alternatives.
+
 **Option 3: Manual placement**
 
-Drop a plugin directory directly into `~/.dinotty/plugins/<plugin-id>/`. The file watcher detects it automatically.
+Drop a plugin directory into the plugin directory. The file watcher detects it automatically:
+
+| Platform | Plugin directory |
+|----------|------------------|
+| Linux / macOS | `~/.dinotty/plugins/<plugin-id>/` |
+| Windows | `%USERPROFILE%\.dinotty\plugins\<plugin-id>` |
 
 Plugins support **hot-reload** — edit plugin files and the browser picks up changes instantly without restarting the server.
 

@@ -64,7 +64,7 @@ vi.mock('../composables/apiBase', () => ({
   wsUrlWithToken: (url: string) => url,
   checkTokenConfigured: async () => false,
 }))
-vi.mock('../composables/useTransport', () => ({ isTauri: () => false }))
+vi.mock('../composables/useTransport', () => ({ isTauri: () => false, tauriInvoke: vi.fn() }))
 vi.mock('../composables/useTerminal', () => ({
   isTouchDevice: () => false,
   setActivePaneId: () => {},
@@ -84,12 +84,19 @@ const BINDING_KEYS: Record<string, string> = {
   focusNextPane: ']',
   focusPrevPane: '[',
   searchTerminal: 'f',
+  missionControl: 'm',
+  sshConnect: 's',
+  fontSizeUp: '=',
+  fontSizeDown: '-',
+  fontSizeReset: '0',
 }
 vi.mock('../composables/useKeybindings', () => ({
   useKeybindings: () => ({
     getBinding: (id: string) => ({ key: BINDING_KEYS[id] ?? 'x', shift: false }),
     formatBinding: (b: any) => b.key,
   }),
+  keyEventMatchesBinding: (e: KeyboardEvent, binding: { key: string; shift: boolean }) =>
+    e.key.toLowerCase() === binding.key.toLowerCase() && e.shiftKey === binding.shift,
 }))
 vi.mock('../composables/useMonitor', () => ({ initMonitorHistory: () => {} }))
 vi.mock('../composables/useNotification', () => ({
@@ -103,18 +110,22 @@ vi.mock('../composables/useNotification', () => ({
 }))
 vi.mock('../composables/usePluginLoader', () => ({
   usePluginLoader: () => ({
-    loadedPlugins: { value: new Map() },
+    loadedPlugins: new Map(),
     loadAll: vi.fn(),
     getPluginContext: vi.fn(),
-    pluginList: { value: [] },
-    allCommands: { value: [] },
-    allQuickPicks: { value: [] },
+    pluginList: { __v_isRef: true, value: [] },
+    allCommands: { __v_isRef: true, value: [] },
+    allQuickPicks: { __v_isRef: true, value: [] },
   }),
   handlePluginChanged: vi.fn(),
 }))
 
 vi.mock('../composables/useTabApi', () => ({
-  apiCreateTab: vi.fn(async () => ({ tab_id: 't-new', pane_id: 'p-new', layout: {} })),
+  apiCreateTab: vi.fn(async () => ({
+    tab_id: 't-new',
+    pane_id: 'p-new',
+    layout: { type: 'leaf', paneId: 'p-new', title: 'Terminal', ratio: 1, zoomed: false },
+  })),
   apiCloseTab: mocks.apiCloseTab,
   apiClosePane: vi.fn(async () => ({ tab_closed: false })),
   apiActivatePane: vi.fn(async () => {}),
@@ -162,6 +173,7 @@ vi.mock('../composables/useSplitPane', () => ({
 
 import { shallowMount } from '@vue/test-utils'
 import { nextTick, defineComponent, h } from 'vue'
+import { createPinia } from 'pinia'
 import App from '../App.vue'
 import { settings } from '../composables/useSettings'
 
@@ -209,11 +221,14 @@ const ConfirmModalStub = defineComponent({
 
 async function mountWithTabs() {
   vi.useFakeTimers()
+  const pinia = createPinia()
   const wrapper = shallowMount(App, {
     global: {
+      plugins: [pinia],
       stubs: {
         SplitContainer: SplitContainerStub,
         ConfirmModal: ConfirmModalStub,
+        ConfirmCloseDialog: false,
       },
     },
   })

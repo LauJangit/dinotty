@@ -145,12 +145,13 @@ Claude Code 和 Codex 各自提供了内建的远程方案，但仅限于自身 
 
 ## 安装
 
-前往 [GitHub Releases](https://github.com/xichan96/dinotty/releases) 下载对应平台的安装包：
+前往 [GitHub Releases](https://github.com/xichan96/dinotty/releases) 下载对应平台的安装包或二进制：
 
 | 平台 | 格式 | 说明 |
 |------|------|------|
 | **macOS** | `.dmg` | 双击打开，拖入 Applications 即可 |
 | **Linux** | `.deb` | `sudo dpkg -i dinotty_*.deb` |
+| **Windows** | `.exe` / 源码构建 | 在 PowerShell 中运行 `dinotty-server.exe`，也可从源码构建 |
 
 > 也可以从源码构建，见下方「快速开始」。
 
@@ -177,6 +178,19 @@ systemctl enable dinotty  # 开机自启
 nohup dinotty-server &
 ```
 
+**Windows 启动方式**：
+
+```powershell
+# PowerShell
+.\dinotty-server.exe -p 8999
+
+# 可选：指定默认 shell（优先级高于自动检测）
+$env:DINOTTY_SHELL = "pwsh.exe"
+.\dinotty-server.exe
+```
+
+Windows 默认 shell 检测顺序为 `DINOTTY_SHELL` → `pwsh.exe` → `powershell.exe` → `%ComSpec%` / `cmd.exe`。
+
 默认监听端口 **8999**，启动后访问 `http://<your-ip>:8999`。可通过 `-p` 参数指定端口：
 
 ```bash
@@ -197,6 +211,18 @@ cd frontend && pnpm install && pnpm run build && cd ..
 cargo run
 ```
 
+Windows PowerShell 下可使用等价的分步命令：
+
+```powershell
+git clone --depth 1 --single-branch -b dev git@github.com:xichan96/dinotty.git
+cd dinotty
+cd frontend
+pnpm install
+pnpm run build
+cd ..
+cargo run
+```
+
 在浏览器中打开 http://127.0.0.1:8999 。
 
 ```bash
@@ -205,6 +231,12 @@ RUST_LOG=debug cargo run
 
 # 前端类型检查
 cd frontend && npx vue-tsc --noEmit
+```
+
+```powershell
+# Windows PowerShell 带调试日志运行
+$env:RUST_LOG = "debug"
+cargo run
 ```
 
 ## 技术栈
@@ -219,7 +251,7 @@ cd frontend && npx vue-tsc --noEmit
 
 ## 更多文档
 
-- [部署指南](docs/deployment.md) — systemd、Docker、跨平台构建、配置说明
+- [部署指南](docs/deployment.md) — systemd、Docker、Windows 原生运行、跨平台构建、配置说明
 - [通知系统](docs/notifications.md) — HTTP API、Claude Code 集成、Open API
 - [插件系统](docs/plugins.md) — 安装、清单、API、内置插件
 - [插件开发](docs/plugin-development.md) — 完整的插件开发文档

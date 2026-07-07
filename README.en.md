@@ -145,12 +145,13 @@ Claude Code and Codex each offer built-in remote solutions, but are limited to t
 
 ## Installation
 
-Download the installer for your platform from [GitHub Releases](https://github.com/xichan96/dinotty/releases):
+Download the installer or binary for your platform from [GitHub Releases](https://github.com/xichan96/dinotty/releases):
 
 | Platform | Format | Notes |
 |----------|--------|-------|
 | **macOS** | `.dmg` | Open and drag to Applications |
 | **Linux** | `.deb` | `sudo dpkg -i dinotty_*.deb` |
+| **Windows** | `.exe` / source build | Run `dinotty-server.exe` from PowerShell, or build from source |
 
 > You can also build from source, see "Quick Start" below.
 
@@ -177,6 +178,19 @@ systemctl enable dinotty  # auto-start on boot
 nohup dinotty-server &
 ```
 
+**Windows startup**:
+
+```powershell
+# PowerShell
+.\dinotty-server.exe -p 8999
+
+# Optional: override the default shell before auto-detection
+$env:DINOTTY_SHELL = "pwsh.exe"
+.\dinotty-server.exe
+```
+
+On Windows, the default shell is detected in this order: `DINOTTY_SHELL` → `pwsh.exe` → `powershell.exe` → `%ComSpec%` / `cmd.exe`.
+
 Default port is **8999**. After starting, visit `http://<your-ip>:8999`. Use `-p` to specify a custom port:
 
 ```bash
@@ -197,6 +211,18 @@ cd frontend && pnpm install && pnpm run build && cd ..
 cargo run
 ```
 
+Windows PowerShell equivalent:
+
+```powershell
+git clone --depth 1 --single-branch -b dev git@github.com:xichan96/dinotty.git
+cd dinotty
+cd frontend
+pnpm install
+pnpm run build
+cd ..
+cargo run
+```
+
 Open http://127.0.0.1:8999 in your browser.
 
 ```bash
@@ -205,6 +231,12 @@ RUST_LOG=debug cargo run
 
 # Frontend type-check
 cd frontend && npx vue-tsc --noEmit
+```
+
+```powershell
+# Windows PowerShell debug logging
+$env:RUST_LOG = "debug"
+cargo run
 ```
 
 ## Tech Stack
@@ -219,7 +251,7 @@ cd frontend && npx vue-tsc --noEmit
 
 ## More Documentation
 
-- [Deployment Guide](docs/deployment.en.md) — systemd, Docker, cross-platform build, configuration
+- [Deployment Guide](docs/deployment.en.md) — systemd, Docker, Windows native run, cross-platform build, configuration
 - [Notification System](docs/notifications.en.md) — HTTP API, Claude Code integration, Open API
 - [Plugin System](docs/plugins.en.md) — installation, manifest, API, built-in plugins
 - [Plugin Development](docs/plugin-development.md) — full plugin development guide

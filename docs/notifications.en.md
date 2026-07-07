@@ -50,7 +50,31 @@ Other AI agents and automation scripts can also call the HTTP API to send notifi
 
 ## Notification Command Hooks
 
-You can configure shell commands in Settings that execute automatically when notification events fire. Useful for triggering system-level alerts (e.g., macOS `osascript`, `notify-send`, etc.).
+You can configure shell commands in Settings that execute automatically when notification events fire. Useful for triggering system-level alerts (e.g., macOS `osascript`, Linux `notify-send`, Windows PowerShell sounds or toasts, etc.).
+
+Hooks run on the **server platform**:
+
+| Platform | Execution method |
+|----------|------------------|
+| Linux / macOS | `sh -c <command>` |
+| Windows | `pwsh.exe -NoProfile -Command <command>` first, then `powershell.exe`, then `cmd.exe /C` |
+
+Examples:
+
+```bash
+# Linux
+notify-send "Dinotty" "$DINOTTY_TITLE: $DINOTTY_BODY"
+
+# macOS
+osascript -e 'display notification "'$DINOTTY_BODY'" with title "Dinotty"'
+```
+
+```powershell
+# Windows PowerShell
+[System.Media.SystemSounds]::Asterisk.Play()
+```
+
+Hooks receive `DINOTTY_NOTIFICATION_TYPE`, `DINOTTY_PANE_ID`, `DINOTTY_TITLE`, and `DINOTTY_BODY` environment variables.
 
 ## Open API (External Device Control)
 

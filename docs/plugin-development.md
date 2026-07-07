@@ -29,7 +29,12 @@
 - `styles.css` — 可选样式表
 - `bin/` — 可选 CLI 二进制或脚本，供 `exec.run` / `exec.spawn` 调用
 
-Dinotty 在 `~/.dinotty/plugins/<plugin-id>/` 下扫描所有插件目录，在浏览器中动态 `import()` 加载 JS 入口，调用其导出的 `activate(context)` 函数。
+Dinotty 会扫描用户插件目录，在浏览器中动态 `import()` 加载 JS 入口，调用其导出的 `activate(context)` 函数。
+
+| 平台 | 插件目录 |
+|------|----------|
+| Linux / macOS | `~/.dinotty/plugins/<plugin-id>/` |
+| Windows | `%USERPROFILE%\.dinotty\plugins\<plugin-id>` |
 
 插件可以：
 
@@ -117,6 +122,19 @@ curl -X POST http://127.0.0.1:8999/api/plugins/dev-link \
   -H "Content-Type: application/json" \
   -d '{"path": "/path/to/your/hello-world"}'
 ```
+
+Windows PowerShell 示例：
+
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.dinotty\plugins\hello-world"
+# 将上面三个文件复制进去
+
+curl.exe -X POST http://127.0.0.1:8999/api/plugins/dev-link `
+  -H "Content-Type: application/json" `
+  -d '{"path":"C:\\Users\\you\\plugins\\hello-world"}'
+```
+
+`dev-link` 会创建目录符号链接；Windows 上如果失败，请开启 Developer Mode 或使用管理员权限。
 
 ---
 
@@ -211,7 +229,7 @@ d.dispose() // 取消监听
 
 ### 持久化存储
 
-数据存储在 `~/.dinotty/plugin-data/<plugin-id>/` 下，每个 key 对应一个 JSON 文件。
+数据存储在用户目录下的 `.dinotty/plugin-data/<plugin-id>/`，每个 key 对应一个 JSON 文件。Windows 上路径为 `%USERPROFILE%\.dinotty\plugin-data\<plugin-id>`。
 
 ```js
 await ctx.storage.set('config', { theme: 'dark' })
@@ -406,7 +424,7 @@ const keys = await ctx.storage.list()
 await ctx.storage.delete('providers')
 ```
 
-存储路径：`~/.dinotty/plugin-data/<plugin-id>/<key>.json`
+存储路径：Linux/macOS 为 `~/.dinotty/plugin-data/<plugin-id>/<key>.json`，Windows 为 `%USERPROFILE%\.dinotty\plugin-data\<plugin-id>\<key>.json`。
 
 ---
 
@@ -423,7 +441,9 @@ await ctx.storage.delete('providers')
 }
 ```
 
-`bin.entry` 是相对于插件根目录的路径。Dinotty 在安装时会自动为其添加可执行权限（Unix）。
+`bin.entry` 是相对于插件根目录的路径。Dinotty 在安装时会自动为其添加可执行权限（Unix）；Windows 不使用 executable bit，请优先提供 `.exe` 或可直接由 Windows 启动的 `.cmd` 包装脚本。
+
+如果插件需要跨平台分发，建议按目标平台打包不同的 CLI 入口，或在 JS 中检测运行结果并给出清晰错误提示。
 
 ### exec.run — 同步调用
 
@@ -470,6 +490,8 @@ handle.kill()
 
 `bin/my-tool` 可以是任意可执行文件（Rust 二进制、shell 脚本、Python 脚本等）。只需确保输出 JSON（方便 JS 侧解析）并通过 exit code 表示成功（0）或失败（非 0）。
 
+Unix shell 脚本示例：
+
 ```bash
 #!/bin/bash
 # bin/my-tool
@@ -483,6 +505,21 @@ case "$1" in
     ;;
 esac
 ```
+
+Windows `.cmd` 包装脚本示例：
+
+```bat
+@echo off
+rem bin\my-tool.cmd
+if "%~1"=="list" (
+  echo {"items":["a","b"]}
+  exit /b 0
+)
+echo unknown command 1>&2
+exit /b 1
+```
+
+在 `plugin.json` 中将 Windows 包的 `bin.entry` 指向 `./bin/my-tool.exe` 或 `./bin/my-tool.cmd`。
 
 ---
 
@@ -543,6 +580,12 @@ npm install --save-dev esbuild
 npx esbuild src/main.ts --bundle --format=esm --outfile=dist/main.js
 ```
 
+Windows PowerShell：
+
+```powershell
+..\..\frontend\node_modules\.bin\esbuild.cmd src/main.ts --bundle --format=esm --outfile=dist/main.js
+```
+
 **注意**：esbuild 的 `--bundle` 会把所有依赖打包进单个文件。不要 `import vue` —— 所有 Vue API 都通过 `ctx` 传入，无需额外依赖。
 
 ### 监听模式（开发时）
@@ -570,6 +613,15 @@ mkdir my-plugin && cd my-plugin
 curl -X POST http://127.0.0.1:8999/api/plugins/dev-link \
   -H "Content-Type: application/json" \
   -d "{\"path\": \"$(pwd)\"}"
+```
+
+Windows PowerShell：
+
+```powershell
+$body = @{ path = (Get-Location).Path } | ConvertTo-Json -Compress
+curl.exe -X POST http://127.0.0.1:8999/api/plugins/dev-link `
+  -H "Content-Type: application/json" `
+  -d $body
 ```
 
 链接成功后插件立即出现在标签栏的插件列表中。
@@ -611,6 +663,12 @@ curl http://127.0.0.1:8999/api/plugins
 ```bash
 # 在插件目录的父目录执行
 tar -czf my-plugin.tar.gz my-plugin/
+```
+
+Windows 10/11 PowerShell 通常也自带 `tar.exe`：
+
+```powershell
+tar -czf my-plugin.tar.gz my-plugin
 ```
 
 压缩包根目录**必须包含 `plugin.json`**（即压缩包结构为 `my-plugin/plugin.json`，而非 `plugin.json` 直接在根部）。

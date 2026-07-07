@@ -78,7 +78,7 @@ Token 格式：`dnt_<64位十六进制>`，使用 SHA-256 哈希存储。
 ```json
 {
   "command": "ls -la",
-  "cwd": "/tmp",           // 可选，工作目录
+  "cwd": "/tmp",           // 可选，工作目录；Windows 示例："C:\\Users\\dev\\project"
   "env": {"KEY": "val"},   // 可选，环境变量（暂未实现）
   "timeout": 30000,        // 可选，超时毫秒数（默认 300000，最大 3600000）
   "pane_id": "auto",       // 可选，目标 pane（默认 "auto" 使用活跃 pane）
@@ -268,7 +268,7 @@ Token 格式：`dnt_<64位十六进制>`，使用 SHA-256 哈希存储。
 
 ## Shell 集成
 
-Agent API 依赖 OSC 133 Shell Integration 协议检测命令边界：
+Agent API 优先依赖 OSC 133 Shell Integration 协议检测命令边界，并在 shell 不完整支持时降级到 prompt 检测：
 
 ```
 ESC ] 133 ; A ESC \    → Prompt 开始
@@ -276,12 +276,14 @@ ESC ] 133 ; B ESC \    → 命令开始（用户按下回车）
 ESC ] 133 ; D ; N ESC \ → 命令完成，N 为 exit code
 ```
 
-Dinotty 会自动在 zsh/bash 中注入 OSC 133 序列：
+Dinotty 会根据本地 shell 自动注入或启用对应的集成：
 
-- **zsh**: 通过 `precmd_functions` 和 `preexec_functions` 钩子
-- **bash**: 通过 `PROMPT_COMMAND` 和 `BASH_ENV` trap
+- **zsh**: 通过 `precmd_functions` 和 `preexec_functions` 钩子注入 OSC 133
+- **bash**: 通过 `PROMPT_COMMAND` 和 `BASH_ENV` trap 注入 OSC 133
+- **PowerShell / pwsh (Windows)**: 启动时注入 `prompt` 函数，用于同步窗口标题、当前目录和 prompt 边界；命令完成检测可能继续使用 `prompt_detection` 后备方案
+- **cmd.exe / sh / 其他 shell**: 不保证支持 OSC 133，会自动降级到 prompt 检测模式
 
-如果 shell 不支持 OSC 133（如 sh），会自动降级到 prompt 检测模式。
+Windows 下 `command` 字段会发送到当前 pane 的实际 shell；PowerShell 可使用 `Get-ChildItem`，cmd 可使用 `dir`。JSON 字符串中的 Windows 路径需要写成 `C:\\Users\\dev\\project`。
 
 ---
 

@@ -44,20 +44,41 @@ docs: 更新插件开发文档
 
 ## 提交前检查
 
-确保以下两项通过后再提交 PR：
+确保以下检查通过后再提交 PR：
 
 ```bash
-# 后端编译
-cargo build
+# 后端
+cargo fmt --check
+cargo clippy -- -D warnings
+cargo test --workspace
 
-# 前端类型检查
-cd frontend && npx vue-tsc --noEmit
+# 前端
+cd frontend
+pnpm exec vue-tsc --noEmit
+pnpm test
 ```
+
+Windows PowerShell 下同样需要执行上述检查；前端目录切换可以使用：
+
+```powershell
+Set-Location frontend
+pnpm exec vue-tsc --noEmit
+pnpm test
+Set-Location ..
+```
+
+如果改动涉及平台适配、PTY、路径、Shell 或插件文件系统逻辑，请至少在受影响平台手动验证。Windows 相关改动建议覆盖：
+
+- `pwsh.exe` / `powershell.exe` / `cmd.exe` 的默认 shell 检测
+- `DINOTTY_SHELL` 覆盖默认 shell
+- `C:\...` 路径、空格路径和 SSH 私钥路径
+- 插件 dev-link；如符号链接失败，确认已开启 Windows Developer Mode 或使用管理员权限
 
 ## 代码风格
 
 - **Rust**：使用 `rustfmt` 格式化（`cargo fmt`）
 - **前端**：遵循项目已有的 ESLint / Prettier 配置
+- **文档**：中英文 README 或成对文档需要同步更新；平台行为差异请明确写出 Linux/macOS/Windows
 
 ## Issue
 
