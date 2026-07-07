@@ -108,7 +108,7 @@ while let Ok(event) = rx.recv().await {
 
 ### FileChanged
 
-文件监视器检测到文件变更时触发。
+文件监视器检测到文件变更时触发。`path` 使用服务端平台的原生路径格式；Windows 事件序列化为 JSON 时会转义为 `C:\\Users\\dev\\project\\file.txt`。
 
 ```json
 {

@@ -16,6 +16,9 @@
         <span>{{ t('workspace.back') }}</span>
       </button>
       <span class="mc-ws-mobile-title">{{ workspaceName }}</span>
+      <button class="mc-ws-mobile-close" @click="emit('close')">
+        <X :size="18" />
+      </button>
     </div>
 
     <div v-if="cards.length === 0" class="mc-ws-mobile-empty-grid">
@@ -91,6 +94,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   back: []
+  close: []
   activate: [paneId: string]
   'close-tab': [paneId: string]
   'new-tab': [cwd?: string]

@@ -59,6 +59,12 @@ MCP Server 实现了 MCP 协议版本 `2024-11-05`，支持：
 echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | dinotty-server --mcp-stdio
 ```
 
+Windows PowerShell：
+
+```powershell
+'{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | .\dinotty-server.exe --mcp-stdio
+```
+
 ---
 
 ## 认证
@@ -144,7 +150,7 @@ Agent Token 需要相应 capability：
 
 ### file_read
 
-读取文件内容（限制在用户 home 目录内）。
+读取文件内容（限制在用户 home 目录内）。路径使用服务端平台的原生格式；Windows 路径在 JSON 中需要转义反斜杠，例如 `C:\\Users\\dev\\project\\main.rs`。
 
 ```json
 {
@@ -284,4 +290,4 @@ Agent Token 需要相应 capability：
 
 1. **为 MCP 客户端创建专用 Agent Token**，只授予必要的 capability
 2. **设置过期时间**，避免长期有效的 token
-3. **定期审计** `~/.config/dinotty/audit.log` 中的 MCP 调用记录
+3. **定期审计** MCP 调用记录：Linux 为 `~/.config/dinotty/audit.log`，macOS 为 `~/Library/Application Support/dinotty/audit.log`，Windows 为 `%APPDATA%\dinotty\audit.log`

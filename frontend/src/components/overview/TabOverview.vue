@@ -1,29 +1,30 @@
 <template>
   <template v-if="embedded && visible">
-    <!-- Embedded mode: just the grid, no backdrop -->
-    <Motion
-      key="card-grid-embedded"
-      class="mc-grid"
-      :style="gridStyle"
-      :initial="{ scale: 0.9, opacity: 0 }"
-      :animate="{ scale: 1, opacity: 1 }"
-      :exit="{ scale: 0.9, opacity: 0 }"
-      :transition="{ type: 'spring', damping: 25, stiffness: 300 }"
-    >
+    <!-- Embedded mode: grid with direction slide animation on workspace switch -->
+    <AnimatePresence mode="wait">
       <Motion
-        v-for="(card, i) in cards"
-        :key="card.paneId"
-        :ref="(el: any) => setCardRef(i, el)"
-        class="mc-card"
-        :class="{ active: card.paneId === activePaneId, focused: i === focusedIndex }"
-        :initial="{ opacity: 0, y: 20 }"
-        :animate="{ opacity: 1, y: 0 }"
-        :exit="{ opacity: 0, y: -10 }"
-        :transition="{ delay: Math.min(i, 8) * 0.03, type: 'spring', damping: 20 }"
-        @click="$emit('activate', card.paneId)"
-        @mouseenter="focusedIndex = i"
-        @contextmenu.prevent="openCardCtx($event, card)"
+        :key="cardsKey"
+        class="mc-grid"
+        :style="gridStyle"
+        :initial="{ opacity: 0, x: switchDirection === 'right' ? 50 : -50 }"
+        :animate="{ opacity: 1, x: 0 }"
+        :exit="{ opacity: 0, x: switchDirection === 'right' ? -50 : 50 }"
+        :transition="{ type: 'spring', damping: 30, stiffness: 400, mass: 0.8 }"
       >
+        <Motion
+          v-for="(card, i) in cards"
+          :key="card.paneId"
+          :ref="(el: any) => setCardRef(i, el)"
+          class="mc-card"
+          :class="{ active: card.paneId === activePaneId, focused: i === focusedIndex }"
+          :initial="{ opacity: 0, y: 20 }"
+          :animate="{ opacity: 1, y: 0 }"
+          :exit="{ opacity: 0, y: -10 }"
+          :transition="{ delay: Math.min(i, 8) * 0.02, type: 'spring', damping: 20 }"
+          @click="$emit('activate', card.paneId)"
+          @mouseenter="focusedIndex = i"
+          @contextmenu.prevent="openCardCtx($event, card)"
+        >
         <div class="mc-card-header">
           <span class="mc-card-index">{{ card.index }}</span>
           <span class="mc-card-title">{{ card.title }}</span>
@@ -46,8 +47,9 @@
           </div>
           <pre v-else class="mc-card-text"></pre>
         </div>
+        </Motion>
       </Motion>
-    </Motion>
+    </AnimatePresence>
   </template>
   <AnimatePresence v-else>
     <!-- Standalone mode: backdrop + grid -->
@@ -141,9 +143,13 @@ const props = withDefaults(
     cards: TabCard[]
     activePaneId: string | null
     embedded?: boolean
+    switchDirection?: 'left' | 'right'
   }>(),
-  { embedded: false },
+  { embedded: false, switchDirection: 'right' },
 )
+
+// Key for AnimatePresence — changes when workspace switches, not when individual tabs change
+const cardsKey = computed(() => props.cards.map(c => c.paneId).join(','))
 
 const emit = defineEmits<{
   close: []
@@ -185,6 +191,7 @@ function openCardCtx(e: MouseEvent, card: TabCard) {
 const COLS_SM = 2
 const COLS_MD = 3
 const COLS_LG = 4
+const COLS_XL = 5
 
 const focusedIndex = ref(0)
 const cardRefs = ref<(HTMLElement | null)[]>([])
@@ -197,6 +204,7 @@ function setCardRef(index: number, el: any) {
 
 function getCols(): number {
   const w = window.innerWidth
+  if (w >= 1200) return COLS_XL
   if (w >= 900) return COLS_LG
   if (w >= 480) return COLS_MD
   return COLS_SM
@@ -208,6 +216,7 @@ const gridStyle = computed(() => {
     '--mc-rows': Math.ceil(n / COLS_SM),
     '--mc-rows-md': Math.ceil(n / COLS_MD),
     '--mc-rows-lg': Math.ceil(n / COLS_LG),
+    '--mc-rows-xl': Math.ceil(n / COLS_XL),
   }
 })
 

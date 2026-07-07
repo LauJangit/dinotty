@@ -9,6 +9,9 @@
   >
     <div class="mc-ws-mobile-header">
       <span class="mc-ws-mobile-title">{{ t('settings.tab.workspaces') }}</span>
+      <button class="mc-ws-mobile-close" @click="emit('close')">
+        <X :size="18" />
+      </button>
     </div>
 
     <div v-if="workspaces.length === 0 && allCount === 0" class="mc-ws-mobile-empty">
@@ -67,7 +70,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { Motion } from 'motion-v'
-import { Plus, Pencil, Trash2 } from 'lucide-vue-next'
+import { Plus, Pencil, Trash2, X } from 'lucide-vue-next'
 import { useI18n } from '../../composables/useI18n'
 import { useWorkspaces } from '../../composables/useWorkspaces'
 import type { Workspace } from '../../types/workspace'
@@ -85,6 +88,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  close: []
   drilldown: [id: string | null]
   selectAll: []
   add: []

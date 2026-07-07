@@ -191,8 +191,25 @@ function onMenuCopy() {
   // copy already handled in TerminalContextMenu
 }
 
-async function onMenuPaste(text: string) {
-  terminal?.pasteText(text)
+async function onMenuPaste() {
+  const ta = document.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null
+  if (!ta) return
+  ta.focus()
+  // Try native execCommand paste first (works in Safari/WKWebView)
+  try {
+    if (document.execCommand('paste')) return
+  } catch {}
+  // Fallback: read clipboard and dispatch a synthetic paste event for xterm
+  try {
+    const text = await navigator.clipboard.readText()
+    if (text) {
+      const dt = new DataTransfer()
+      dt.setData('text/plain', text)
+      ta.dispatchEvent(new ClipboardEvent('paste', {
+        bubbles: true, cancelable: true, clipboardData: dt,
+      }))
+    }
+  } catch {}
 }
 
 function onMenuSelectAll() {

@@ -1,50 +1,37 @@
 <template>
-  <div class="mc-ws-panel">
-    <template v-if="workspaces.length === 0 && allCount === 0">
-      <div class="mc-ws-empty">
-        <p class="mc-ws-empty-text">{{ t('workspace.firstUse') }}</p>
-        <button class="mc-ws-add-btn" @click="$emit('add')">
-          <Plus :size="14" />
-          {{ t('workspace.add') }}
-        </button>
-      </div>
-    </template>
-    <template v-else>
-      <div class="mc-ws-items">
-        <button
-          class="mc-ws-item"
-          :class="{ selected: selectedId === '__all__' }"
-          @click="$emit('selectAll')"
-        >
-          <span class="mc-ws-dot">★</span>
-          <div class="mc-ws-info">
-            <span class="mc-ws-name">{{ t('workspace.all') }}</span>
-            <span class="mc-ws-path">~/</span>
-          </div>
-          <span v-if="allCount" class="mc-ws-count">{{ allCount }}</span>
-        </button>
-        <button
-          v-for="ws in workspaces"
-          :key="ws.id"
-          class="mc-ws-item"
-          :class="{ selected: ws.id === selectedId, active: ws.id === activeId }"
-          @click="$emit('select', ws.id)"
-          @contextmenu.prevent="openCtx($event, ws)"
-        >
-          <div class="mc-ws-info">
-            <span class="mc-ws-name">{{ ws.name }}</span>
-            <span class="mc-ws-path">{{ ws.path }}</span>
-          </div>
-          <span v-if="tabCounts[ws.id]" class="mc-ws-count">{{ tabCounts[ws.id] }}</span>
-        </button>
-      </div>
-      <div class="mc-ws-footer">
-        <button class="mc-ws-add-btn" @click="$emit('add')">
-          <Plus :size="14" />
-          {{ t('workspace.add') }}
-        </button>
-      </div>
-    </template>
+  <div class="mc-ws-list">
+    <div class="mc-ws-list-scroll">
+      <button
+        class="mc-ws-list-item"
+        :class="{ selected: selectedId === '__all__' }"
+        @click="$emit('select', '__all__')"
+      >
+        <span class="mc-ws-dot">&#9733;</span>
+        <span class="mc-ws-name">{{ t('workspace.all') }}</span>
+        <span v-if="allCount" class="mc-ws-count">{{ allCount }}</span>
+      </button>
+
+      <button
+        v-for="ws in workspaces"
+        :key="ws.id"
+        class="mc-ws-list-item"
+        :class="{ selected: ws.id === selectedId }"
+        @click="$emit('select', ws.id)"
+        @contextmenu.prevent="openCtx($event, ws)"
+      >
+        <span class="mc-ws-dot" />
+        <span class="mc-ws-name">{{ ws.name }}</span>
+        <span v-if="tabCounts[ws.id]" class="mc-ws-count">{{ tabCounts[ws.id] }}</span>
+      </button>
+    </div>
+
+    <div class="mc-ws-footer">
+      <button class="mc-ws-add-btn" @click="$emit('add')">
+        <Plus :size="14" />
+        {{ t('workspace.add') }}
+      </button>
+    </div>
+
     <ContextMenu
       :visible="ctxVisible"
       :x="ctxX"

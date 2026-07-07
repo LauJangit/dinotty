@@ -23,6 +23,28 @@ systemctl restart dinotty
 sudo bash deploy/systemd/uninstall.sh
 ```
 
+## Windows Native Run
+
+Windows can run the native server directly. Build the frontend first, then build the release binary with Cargo:
+
+```powershell
+cd frontend
+pnpm install
+pnpm run build
+cd ..
+cargo build --release -p dinotty-server
+.\target\release\dinotty-server.exe -p 8999
+```
+
+The default shell is detected in this order: `DINOTTY_SHELL` → `pwsh.exe` → `powershell.exe` → `%ComSpec%` / `cmd.exe`. To override it:
+
+```powershell
+$env:DINOTTY_SHELL = "C:\Program Files\PowerShell\7\pwsh.exe"
+.\target\release\dinotty-server.exe
+```
+
+For auto-start on Windows, wrap the command with Task Scheduler, NSSM, or WinSW. The one-click installer scripts in this repository currently target Linux systemd only.
+
 ## Docker Deploy
 
 ```bash
@@ -46,30 +68,45 @@ docker buildx build --platform linux/amd64,linux/arm64 \
   -f deploy/docker/Dockerfile .
 ```
 
+On Windows, use Docker Desktop with Linux containers. Set workspace paths in `.env` using paths visible inside Docker Desktop mounts.
+
 ## Cross-Platform Build
 
 ```bash
-# List supported targets
+# List targets supported by build.sh
 ./build.sh list
 
 # Cross-compile for Linux musl (static linking, no glibc dependency)
 ./build.sh cross
 
-# Build for all platforms
+# Build all platforms covered by build.sh
 ./build.sh all
 ```
 
-Output in `dist/` directory:
+`build.sh` is primarily for Unix shells. The current `dist/` outputs are:
+
 - `dinotty-server-x86_64-unknown-linux-musl`
 - `dinotty-server-aarch64-unknown-linux-musl`
 - `dinotty-server-x86_64-apple-darwin`
 - `dinotty-server-aarch64-apple-darwin`
 
+For a native Windows binary, run `cargo build --release -p dinotty-server` on Windows. The output is `target\release\dinotty-server.exe`.
+
 ## Configuration
 
 | Parameter | Method | Default | Description |
 |-----------|--------|---------|-------------|
-| Port | `--port` or `DINOTTY_PORT` | 8999 | Server listen port |
-| Token | `DINOTTY_TOKEN` env var | Random | Access auth token; printed in startup log when empty |
+| Port | `--port` / `-p` | 8999 | Server listen port |
+| Token | `DINOTTY_TOKEN` env var or config file | Unconfigured / first-time setup | Access auth token; when empty, Dinotty starts the first-time setup flow |
 | Log level | `RUST_LOG` env var | info | trace / debug / info / warn / error |
-| Shell | `SHELL` env var | Auto-detect | Default terminal shell |
+| Shell | Unix: `SHELL`; Windows: `DINOTTY_SHELL` | Auto-detect | Windows tries `DINOTTY_SHELL`, then `pwsh.exe`, `powershell.exe`, `%ComSpec%` / `cmd.exe` |
+
+### Config And Data Directories
+
+| Platform | Config directory | Plugin directory |
+|----------|------------------|------------------|
+| Linux | `~/.config/dinotty` | `~/.dinotty/plugins` |
+| macOS | `~/Library/Application Support/dinotty` | `~/.dinotty/plugins` |
+| Windows | `%APPDATA%\dinotty` | `%USERPROFILE%\.dinotty\plugins` |
+
+Tokens, `settings.json`, audit logs, and webhook secrets are stored in the config directory. Plugin persistent data lives under `.dinotty/plugin-data` in the user's home directory.

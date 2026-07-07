@@ -23,18 +23,7 @@ pub fn validate_manifest(manifest: &PluginManifest) -> Result<(), String> {
 }
 
 pub fn set_executable(path: &std::path::Path) -> Result<(), String> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(path).map_err(|e| e.to_string())?.permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(path, perms).map_err(|e| e.to_string())
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        Ok(())
-    }
+    crate::platform::fs::set_executable(path)
 }
 
 pub fn extract_tar_gz(data: &[u8], dest: &std::path::Path) -> Result<(), String> {

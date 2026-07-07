@@ -26,7 +26,8 @@
         @touchend.prevent="onTabTouchEnd($event, tab.paneId)"
       >
         <span class="tab-index">{{ tab.index }}</span>
-        <Server v-if="tab.shellType === 'ssh'" :size="12" class="tab-ssh-icon" />
+        <Puzzle v-if="tab.type === 'plugin'" :size="12" class="tab-plugin-icon" />
+        <Server v-else-if="tab.shellType === 'ssh'" :size="12" class="tab-ssh-icon" />
         <input
           v-if="editingPaneId === tab.paneId"
           ref="editInputRef"
@@ -441,6 +442,11 @@ onBeforeUnmount(() => {
 .tab-ssh-icon {
   flex-shrink: 0;
   color: var(--accent, #4d7fff);
+  opacity: 0.8;
+}
+.tab-plugin-icon {
+  flex-shrink: 0;
+  color: var(--color-green, #34d399);
   opacity: 0.8;
 }
 .tab-title-input {

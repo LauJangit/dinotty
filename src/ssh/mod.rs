@@ -103,16 +103,7 @@ fn validate_key_path(key_path: &str) -> Result<PathBuf, String> {
         return Err("Key file must be in ~/.ssh/ or /etc/ssh/".into());
     }
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::metadata(&canonical)
-            .map_err(|e| format!("Cannot read key file metadata: {e}"))?
-            .permissions();
-        if perms.mode() & 0o077 != 0 {
-            return Err("Key file permissions are too open (should be 0600 or 0400)".into());
-        }
-    }
+    crate::platform::fs::validate_private_key_permissions(&canonical)?;
 
     Ok(canonical)
 }

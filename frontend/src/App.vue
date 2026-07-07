@@ -313,12 +313,14 @@ const { loadedPlugins, loadAll, getPluginContext, pluginList, allCommands } = us
 const { isMobile } = useIsMobile()
 
 // Workspace filtering
-const { activeWorkspaceId, activeWorkspacePath, matchWorkspace } = useWorkspaces()
+const { workspaces, activeWorkspaceId, activeWorkspacePath, matchWorkspace } = useWorkspaces()
 
 const visibleTabList = computed(() => {
   const list = tabList.value.filter((info) => {
     const rawTab = tabs.value.find((t) => t.paneId === info.paneId)
-    if (!rawTab || rawTab.type !== 'terminal') return false
+    if (!rawTab) return false
+    // Plugin tabs are global — always visible regardless of workspace
+    if (rawTab.type === 'plugin') return true
     const ws = rawTab.cwd ? matchWorkspace(rawTab.cwd) : null
     if (activeWorkspaceId.value) {
       // Specific workspace: only tabs matching this workspace

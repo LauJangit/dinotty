@@ -37,14 +37,17 @@
         <button class="tcm-item" role="menuitem" @click="onSplitRight">
           <Columns2 :size="12" class="tcm-icon" />
           <span class="tcm-label">{{ t('terminal.ctxSplitRight') }}</span>
+          <span class="tcm-hint">{{ shortcutHint('splitHorizontal') }}</span>
         </button>
         <button class="tcm-item" role="menuitem" @click="onSplitDown">
           <Rows2 :size="12" class="tcm-icon" />
           <span class="tcm-label">{{ t('terminal.ctxSplitDown') }}</span>
+          <span class="tcm-hint">{{ shortcutHint('splitVertical') }}</span>
         </button>
         <button class="tcm-item" role="menuitem" @click="onBroadcast">
           <Radio :size="12" class="tcm-icon" />
           <span class="tcm-label">{{ t('terminal.ctxBroadcast') }}</span>
+          <span class="tcm-hint">{{ shortcutHint('toggleBroadcast') }}</span>
         </button>
       </div>
     </div>
@@ -112,6 +115,7 @@ import {
 } from 'lucide-vue-next'
 import { useSettings } from '../../composables/useSettings'
 import { useI18n } from '../../composables/useI18n'
+import { useKeybindings } from '../../composables/useKeybindings'
 import { copyToClipboard } from '../../utils/clipboard'
 import { randomId } from '../../utils/id'
 
@@ -127,7 +131,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: []
   copy: []
-  paste: [text: string]
+  paste: []
   selectAll: []
   openFile: [path: string]
   openLink: [url: string]
@@ -140,6 +144,11 @@ const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
 
 const { t } = useI18n()
 const { settings, saveSettings } = useSettings()
+const { getBinding, formatBinding } = useKeybindings()
+
+function shortcutHint(id: string): string {
+  return formatBinding(getBinding(id)).join('')
+}
 
 const bookmarkDialogVisible = ref(false)
 const bookmarkName = ref('')
@@ -178,13 +187,8 @@ function onCopy() {
   close()
 }
 
-async function onPaste() {
-  try {
-    const text = await navigator.clipboard.readText()
-    if (text) emit('paste', text)
-  } catch {
-    // clipboard read may be denied
-  }
+function onPaste() {
+  emit('paste')
   close()
 }
 

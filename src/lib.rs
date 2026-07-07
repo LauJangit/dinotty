@@ -8,6 +8,7 @@ pub mod mcp;
 pub mod monitor;
 pub mod notification;
 pub mod openapi;
+pub mod platform;
 pub mod plugin;
 pub mod proxy;
 pub mod pty;

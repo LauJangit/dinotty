@@ -44,7 +44,7 @@ describe('ConfirmModal Esc 键支持', () => {
     expect(cancelEmits).toBeUndefined()
   })
 
-  it('visible=true + 按 Enter → 不 emit cancel', async () => {
+  it('visible=true + 按 Enter → 触发当前聚焦的取消按钮', async () => {
     const wrapper = mount(ConfirmModal, {
       props: {
         visible: true,
@@ -60,7 +60,8 @@ describe('ConfirmModal Esc 键支持', () => {
     await wrapper.vm.$nextTick()
 
     const cancelEmits = wrapper.emitted('cancel')
-    expect(cancelEmits).toBeUndefined()
+    expect(cancelEmits).toBeDefined()
+    expect(cancelEmits!.length).toBe(1)
   })
 
   it('onUnmounted 移除 keydown listener', () => {

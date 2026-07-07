@@ -23,6 +23,28 @@ systemctl restart dinotty
 sudo bash deploy/systemd/uninstall.sh
 ```
 
+## Windows 原生运行
+
+Windows 可以直接运行原生服务器。先构建前端，再用 Cargo 构建 release：
+
+```powershell
+cd frontend
+pnpm install
+pnpm run build
+cd ..
+cargo build --release -p dinotty-server
+.\target\release\dinotty-server.exe -p 8999
+```
+
+默认 shell 检测顺序为 `DINOTTY_SHELL` → `pwsh.exe` → `powershell.exe` → `%ComSpec%` / `cmd.exe`。如需指定 shell：
+
+```powershell
+$env:DINOTTY_SHELL = "C:\Program Files\PowerShell\7\pwsh.exe"
+.\target\release\dinotty-server.exe
+```
+
+如需开机自启，可以使用 Windows 任务计划程序、NSSM 或 WinSW 包装上述命令；当前仓库内置的一键安装脚本仅面向 Linux systemd。
+
 ## Docker 部署
 
 ```bash
@@ -46,30 +68,45 @@ docker buildx build --platform linux/amd64,linux/arm64 \
   -f deploy/docker/Dockerfile .
 ```
 
+Windows 上可通过 Docker Desktop 使用 Linux 容器部署；`.env` 中的工作区路径需要按 Docker Desktop 的挂载路径填写。
+
 ## 跨平台构建
 
 ```bash
-# 列出支持的目标
+# 列出 build.sh 支持的目标
 ./build.sh list
 
 # 交叉编译 Linux musl（静态链接，无 glibc 依赖）
 ./build.sh cross
 
-# 构建所有平台
+# 构建 build.sh 覆盖的所有平台
 ./build.sh all
 ```
 
-产物输出到 `dist/` 目录：
+`build.sh` 主要面向 Unix shell，当前输出到 `dist/` 的目标包括：
+
 - `dinotty-server-x86_64-unknown-linux-musl`
 - `dinotty-server-aarch64-unknown-linux-musl`
 - `dinotty-server-x86_64-apple-darwin`
 - `dinotty-server-aarch64-apple-darwin`
 
+Windows 原生二进制请在 Windows 主机上运行 `cargo build --release -p dinotty-server`，产物为 `target\release\dinotty-server.exe`。
+
 ## 配置说明
 
 | 参数 | 方式 | 默认值 | 说明 |
 |------|------|--------|------|
-| 端口 | `--port` 或 `DINOTTY_PORT` | 8999 | 服务监听端口 |
-| Token | `DINOTTY_TOKEN` 环境变量 | 随机生成 | 访问认证令牌，为空时启动日志中打印 |
+| 端口 | `--port` / `-p` | 8999 | 服务监听端口 |
+| Token | `DINOTTY_TOKEN` 环境变量或配置文件 | 未配置 / 首次设置 | 访问认证令牌，为空时进入首次设置流程 |
 | 日志级别 | `RUST_LOG` 环境变量 | info | trace / debug / info / warn / error |
-| Shell | `SHELL` 环境变量 | 自动检测 | 默认终端 Shell |
+| Shell | Unix: `SHELL`；Windows: `DINOTTY_SHELL` | 自动检测 | Windows 优先 `DINOTTY_SHELL`，再尝试 `pwsh.exe`、`powershell.exe`、`%ComSpec%` / `cmd.exe` |
+
+### 配置与数据目录
+
+| 平台 | 配置目录 | 插件目录 |
+|------|----------|----------|
+| Linux | `~/.config/dinotty` | `~/.dinotty/plugins` |
+| macOS | `~/Library/Application Support/dinotty` | `~/.dinotty/plugins` |
+| Windows | `%APPDATA%\dinotty` | `%USERPROFILE%\.dinotty\plugins` |
+
+Token、`settings.json`、审计日志和 webhook secrets 存放在配置目录；插件持久化数据存放在用户目录下的 `.dinotty/plugin-data`。
