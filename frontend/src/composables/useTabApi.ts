@@ -4,6 +4,7 @@ export interface CreateTabResult {
   tab_id: string
   pane_id: string
   layout: any
+  cwd?: string
 }
 
 export interface SplitPaneResult {
@@ -19,7 +20,7 @@ export interface ClosePaneResult {
 }
 
 export interface ListTabsResult {
-  tabs: Array<{ tab_id: string; pane_id: string; layout?: any; active_pane_id?: string }>
+  tabs: Array<{ tab_id: string; pane_id: string; layout?: any; active_pane_id?: string; cwd?: string }>
   active_pane_id: string | null
 }
 
@@ -29,8 +30,12 @@ export async function apiListTabs(): Promise<ListTabsResult> {
   return res.json()
 }
 
-export async function apiCreateTab(): Promise<CreateTabResult> {
-  const res = await authFetch(apiUrl('/api/tabs'), { method: 'POST' })
+export async function apiCreateTab(cwd?: string): Promise<CreateTabResult> {
+  const res = await authFetch(apiUrl('/api/tabs'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cwd }),
+  })
   if (!res.ok) throw new Error(`create tab failed: ${res.status}`)
   return res.json()
 }

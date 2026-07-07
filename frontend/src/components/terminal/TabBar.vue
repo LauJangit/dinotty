@@ -9,7 +9,11 @@
       <span class="current-tab-name">{{ currentTabTitle }}</span>
     </template>
     <!-- Desktop mode: full tab list -->
-    <div v-else id="tabs-list">
+    <template v-else>
+    <button class="mc-trigger desktop-mc" @click="$emit('open-overview')">
+      <LayoutDashboard :size="16" />
+    </button>
+    <div id="tabs-list">
       <div
         v-for="tab in tabs"
         :key="tab.paneId"
@@ -55,6 +59,7 @@
         </button>
       </div>
     </div>
+    </template>
     <slot name="left" />
     <div class="new-tab-split" ref="newMenuWrapRef">
       <button
@@ -587,5 +592,21 @@ onBeforeUnmount(() => {
   font-size: 11px;
   color: var(--accent, #8a8a8a);
   padding: 2px 12px 6px;
+}
+.mc-trigger.desktop-mc {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-muted, #888);
+  cursor: pointer;
+}
+.mc-trigger.desktop-mc:hover {
+  background: var(--bg-hover, #2a2a2a);
+  color: var(--text, #fff);
 }
 </style>

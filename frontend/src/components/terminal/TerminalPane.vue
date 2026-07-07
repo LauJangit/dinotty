@@ -28,6 +28,9 @@
     @select-all="onMenuSelectAll"
     @open-file="onMenuOpenFile"
     @open-link="onMenuOpenLink"
+    @split-horizontal="emit('splitHorizontal')"
+    @split-vertical="emit('splitVertical')"
+    @toggle-broadcast="emit('toggleBroadcast')"
   />
   <SelectionHandles
     :visible="handlesVisible"
@@ -64,6 +67,9 @@ const emit = defineEmits<{
   linkActivate: []
   input: [data: string]
   reconnect: []
+  splitHorizontal: []
+  splitVertical: []
+  toggleBroadcast: []
 }>()
 
 const wrapperRef = ref<HTMLElement>()

@@ -39,6 +39,7 @@ export interface TerminalTab {
   previewUrl: string
   previewKind: 'web' | 'files'
   customTitle?: string // User-set tab title (overrides shell title)
+  cwd?: string // Current working directory (from backend)
 }
 
 /** Plugin tab (unchanged) */

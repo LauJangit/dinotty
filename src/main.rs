@@ -2,7 +2,7 @@
 
 use dinotty_server::{
     agent, audit, auth, file_watcher, history, mcp, monitor, notification, openapi, plugin, proxy,
-    qr_code, session, settings, tabs, token, webhook, workspace, ws,
+    qr_code, session, settings, tabs, token, webhook, workspace, workspace_mgmt, ws,
 };
 
 use axum::{
@@ -105,6 +105,7 @@ pub struct AppState {
     pub mcp: mcp::transport::McpState,
     pub mcp_sse: Arc<mcp::transport::SseState>,
     pub qr_codes: Arc<qr_code::QrCodeState>,
+    pub workspaces: workspace_mgmt::WorkspacesState,
 }
 
 // Allow extracting Arc<SessionManager> from AppState for ws handlers
@@ -191,6 +192,48 @@ impl axum::extract::FromRef<AppState> for Arc<mcp::transport::SseState> {
 impl axum::extract::FromRef<AppState> for Arc<qr_code::QrCodeState> {
     fn from_ref(state: &AppState) -> Self {
         state.qr_codes.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for workspace_mgmt::WorkspacesState {
+    fn from_ref(state: &AppState) -> Self {
+        state.workspaces.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for (workspace_mgmt::WorkspacesState, Arc<SessionManager>) {
+    fn from_ref(state: &AppState) -> Self {
+        (state.workspaces.clone(), state.manager.clone())
+    }
+}
+
+impl axum::extract::FromRef<AppState>
+    for (workspace_mgmt::WorkspacesState, Arc<SessionManager>, SettingsState)
+{
+    fn from_ref(state: &AppState) -> Self {
+        (state.workspaces.clone(), state.manager.clone(), state.settings.clone())
+    }
+}
+
+impl axum::extract::FromRef<AppState>
+    for (workspace_mgmt::WorkspacesState, SettingsState, Arc<SessionManager>)
+{
+    fn from_ref(state: &AppState) -> Self {
+        (state.workspaces.clone(), state.settings.clone(), state.manager.clone())
+    }
+}
+
+impl axum::extract::FromRef<AppState> for (SettingsState, Arc<SessionManager>) {
+    fn from_ref(state: &AppState) -> Self {
+        (state.settings.clone(), state.manager.clone())
+    }
+}
+
+impl axum::extract::FromRef<AppState>
+    for (Arc<SessionManager>, workspace_mgmt::WorkspacesState, SettingsState)
+{
+    fn from_ref(state: &AppState) -> Self {
+        (state.manager.clone(), state.workspaces.clone(), state.settings.clone())
     }
 }
 
@@ -445,6 +488,8 @@ async fn main() {
     let qr_codes = Arc::new(qr_code::QrCodeState::new());
     qr_codes.clone().start_cleanup_task();
 
+    let workspaces_state = workspace_mgmt::create_workspaces_state();
+
     let state = AppState {
         manager,
         settings: settings_state,
@@ -463,6 +508,7 @@ async fn main() {
         mcp: mcp_server,
         mcp_sse,
         qr_codes,
+        workspaces: workspaces_state,
     };
 
     state.plugins.watch_changes(state.manager.clone());
@@ -520,6 +566,19 @@ async fn main() {
             .route("/api/workspace/git-stage-lines", post(workspace::workspace_git_stage_lines))
             .route("/api/workspace/git-revert-lines", post(workspace::workspace_git_revert_lines))
             .route("/api/workspace/syntax-check", post(workspace::workspace_syntax_check))
+            // Workspace management
+            .route(
+                "/api/workspaces",
+                get(workspace_mgmt::list_workspaces).post(workspace_mgmt::create_workspace),
+            )
+            .route("/api/workspaces/reorder", put(workspace_mgmt::reorder_workspaces))
+            .route(
+                "/api/workspaces/:id",
+                put(workspace_mgmt::update_workspace).delete(workspace_mgmt::delete_workspace),
+            )
+            .route("/api/workspaces/:id/activate", put(workspace_mgmt::activate_workspace))
+            .route("/api/workspaces/active", delete(workspace_mgmt::deactivate_workspace))
+            .route("/api/list-dirs", get(workspace_mgmt::list_dirs))
             .route("/ws/history", get(history::ws_history_handler))
             .route("/api/history", get(history::get_history).delete(history::delete_history))
             .route("/api/proxy", any(proxy::external_proxy_handler))

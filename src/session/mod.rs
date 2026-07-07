@@ -767,6 +767,7 @@ pub enum SyncMsg {
         tab_id: String,
         pane_id: String,
         layout: Option<serde_json::Value>,
+        cwd: Option<String>,
     },
     TabClosed {
         pane_id: String,
@@ -796,6 +797,25 @@ pub enum SyncMsg {
         stdout: String,
         method: String,
     },
+    WorkspaceCreated {
+        workspace: crate::workspace_mgmt::Workspace,
+    },
+    WorkspaceUpdated {
+        workspace: crate::workspace_mgmt::Workspace,
+    },
+    WorkspaceDeleted {
+        id: String,
+    },
+    WorkspaceActivated {
+        id: Option<String>,
+    },
+    WorkspaceReordered {
+        ids: Vec<String>,
+    },
+    WorkspaceList {
+        workspaces: Vec<crate::workspace_mgmt::Workspace>,
+        active_workspace_id: Option<String>,
+    },
 }
 
 #[derive(Serialize, Clone)]
@@ -806,6 +826,8 @@ pub struct TabInfo {
     pub layout: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_pane_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
 }
 
 impl Default for SessionManager {
@@ -1008,7 +1030,10 @@ impl SessionManager {
                     layout.as_ref().and_then(first_leaf_id).unwrap_or_else(|| tab_id.clone());
                 let active_pane_id =
                     v.get("active_pane_id").and_then(|v| v.as_str()).map(String::from);
-                TabInfo { tab_id, pane_id, layout, active_pane_id }
+                let cwd = self.sessions.get(&pane_id).and_then(|s| {
+                    s.cwd_state.lock().ok().map(|state| state.cwd.to_string_lossy().to_string())
+                });
+                TabInfo { tab_id, pane_id, layout, active_pane_id, cwd }
             })
             .collect();
 

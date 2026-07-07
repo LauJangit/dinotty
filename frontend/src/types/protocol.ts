@@ -37,7 +37,7 @@ export type ServerMsg = OutputMsg | ShellInfoMsg | ReconnectedMsg | SessionExitM
 // Sync WS messages
 export interface SyncTabList {
   type: 'tab_list'
-  tabs: { tab_id: string; pane_id: string; layout?: any; active_pane_id?: string }[]
+  tabs: { tab_id: string; pane_id: string; layout?: any; active_pane_id?: string; cwd?: string }[]
   active_pane_id: string | null
 }
 
@@ -46,6 +46,7 @@ export interface SyncTabCreated {
   tab_id: string
   pane_id: string
   layout?: any
+  cwd?: string
 }
 
 export interface SyncTabClosed {
@@ -77,6 +78,37 @@ export interface SyncSshAuthPrompt {
   prompts: Array<{ prompt: string; echo: boolean }>
 }
 
+export interface SyncWorkspaceCreated {
+  type: 'workspace_created'
+  workspace: { id: string; name: string; path: string; order: number }
+}
+
+export interface SyncWorkspaceUpdated {
+  type: 'workspace_updated'
+  workspace: { id: string; name: string; path: string; order: number }
+}
+
+export interface SyncWorkspaceDeleted {
+  type: 'workspace_deleted'
+  id: string
+}
+
+export interface SyncWorkspaceActivated {
+  type: 'workspace_activated'
+  id: string | null
+}
+
+export interface SyncWorkspaceReordered {
+  type: 'workspace_reordered'
+  ids: string[]
+}
+
+export interface SyncWorkspaceList {
+  type: 'workspace_list'
+  workspaces: { id: string; name: string; path: string; order: number }[]
+  active_workspace_id: string | null
+}
+
 export type SyncServerMsg =
   | SyncTabList
   | SyncTabCreated
@@ -85,6 +117,12 @@ export type SyncServerMsg =
   | SyncPluginChanged
   | SyncLayoutUpdated
   | SyncSshAuthPrompt
+  | SyncWorkspaceCreated
+  | SyncWorkspaceUpdated
+  | SyncWorkspaceDeleted
+  | SyncWorkspaceActivated
+  | SyncWorkspaceReordered
+  | SyncWorkspaceList
 
 export interface SyncCreateTab {
   type: 'create_tab'

@@ -33,6 +33,19 @@
           <span class="tcm-label">{{ t('terminal.ctxSelectAll') }}</span>
           <span class="tcm-hint">{{ isMac ? '⌘A' : 'Ctrl+A' }}</span>
         </button>
+        <div class="tcm-sep" />
+        <button class="tcm-item" role="menuitem" @click="onSplitRight">
+          <Columns2 :size="12" class="tcm-icon" />
+          <span class="tcm-label">{{ t('terminal.ctxSplitRight') }}</span>
+        </button>
+        <button class="tcm-item" role="menuitem" @click="onSplitDown">
+          <Rows2 :size="12" class="tcm-icon" />
+          <span class="tcm-label">{{ t('terminal.ctxSplitDown') }}</span>
+        </button>
+        <button class="tcm-item" role="menuitem" @click="onBroadcast">
+          <Radio :size="12" class="tcm-icon" />
+          <span class="tcm-label">{{ t('terminal.ctxBroadcast') }}</span>
+        </button>
       </div>
     </div>
 
@@ -93,6 +106,9 @@ import {
   TextSelect,
   FolderOpen,
   ExternalLink,
+  Columns2,
+  Rows2,
+  Radio,
 } from 'lucide-vue-next'
 import { useSettings } from '../../composables/useSettings'
 import { useI18n } from '../../composables/useI18n'
@@ -115,6 +131,9 @@ const emit = defineEmits<{
   selectAll: []
   openFile: [path: string]
   openLink: [url: string]
+  splitHorizontal: []
+  splitVertical: []
+  toggleBroadcast: []
 }>()
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
@@ -133,7 +152,7 @@ const canCopy = computed(() => hasSelection.value || !!props.linkTarget)
 
 const menuStyle = computed(() => {
   const MENU_WIDTH = 200
-  const BASE_HEIGHT = 180
+  const BASE_HEIGHT = 290
   const LINK_ITEM_HEIGHT = 36
   const SEP_HEIGHT = 9
   const menuHeight = BASE_HEIGHT + (props.linkType ? LINK_ITEM_HEIGHT + SEP_HEIGHT : 0)
@@ -208,6 +227,21 @@ function onOpenFile() {
 
 function onOpenLink() {
   if (props.linkTarget) emit('openLink', props.linkTarget)
+  close()
+}
+
+function onSplitRight() {
+  emit('splitHorizontal')
+  close()
+}
+
+function onSplitDown() {
+  emit('splitVertical')
+  close()
+}
+
+function onBroadcast() {
+  emit('toggleBroadcast')
   close()
 }
 </script>

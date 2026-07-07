@@ -3,7 +3,7 @@
   <LoginPage v-else-if="!authenticated" @success="onLoginSuccess" />
   <div v-else id="app-root">
     <TabBar
-      :tabs="tabList"
+      :tabs="visibleTabList"
       :active-pane-id="activePaneId"
       :indicators="notif.unreadByPane"
       :plugins="pluginList"
@@ -94,6 +94,9 @@
             @file-click="onFileClick"
             @preview-link="onPreviewLink"
             @link-activate="onLinkActivate"
+            @split-horizontal="splitPane.splitPane('horizontal')"
+            @split-vertical="splitPane.splitPane('vertical')"
+            @toggle-broadcast="splitPane.toggleBroadcast()"
             @reorder="
               (src: string, tgt: string, pos: 'left' | 'right' | 'top' | 'bottom') =>
                 splitPane.reorderPane(src, tgt, pos)
@@ -147,7 +150,7 @@
 
     <CommandPalette ref="paletteRef" :commands="paletteCommands" />
 
-    <SettingsPanel :open="settingsOpen" @close="settingsOpen = false" />
+    <SettingsPanel :open="settingsOpen" @close="settingsOpen = false" @token-changed="onTokenChanged" />
 
     <ConfirmCloseDialog @confirm="onConfirmClose" />
 
@@ -189,13 +192,15 @@
       @toggle="kbVisible = !kbVisible"
     />
 
-    <TabOverview
+    <WorkspaceOverview
       :visible="overviewOpen"
-      :cards="overviewCards"
       :active-pane-id="activePaneId"
+      :term-refs="termRefs"
       @close="overviewOpen = false"
       @activate="onOverviewActivate"
       @close-tab="onOverviewCloseTab"
+      @new-tab="onOverviewNewTab"
+      @rename-tab="onOverviewRenameTab"
     />
   </div>
 </template>
@@ -258,10 +263,10 @@ import {
   apiListTabs,
 } from './composables/useTabApi'
 import { Settings, Bell, Monitor, Plus, X, Star, AppWindow, Radar } from 'lucide-vue-next'
-import TabOverview from './components/overview/TabOverview.vue'
-import type { TabCard } from './composables/useTabPreview'
-import { useTabPreview, refreshPluginPreview, invalidatePluginPreview } from './composables/useTabPreview'
+import WorkspaceOverview from './components/overview/WorkspaceOverview.vue'
+import { refreshPluginPreview, invalidatePluginPreview } from './composables/useTabPreview'
 import { useIsMobile } from './composables/useIsMobile'
+import { useWorkspaces } from './composables/useWorkspaces'
 // formatCloseTabMessage moved to ConfirmCloseDialog component
 import LoginPage from './components/LoginPage.vue'
 import SetupPage from './components/SetupPage.vue'
@@ -306,15 +311,32 @@ const { getBinding, formatBinding } = useKeybindings()
 const notif = useNotification()
 const { loadedPlugins, loadAll, getPluginContext, pluginList, allCommands } = usePluginLoader()
 const { isMobile } = useIsMobile()
-const tabPreview = useTabPreview()
+
+// Workspace filtering
+const { activeWorkspaceId, activeWorkspacePath, matchWorkspace } = useWorkspaces()
+
+const visibleTabList = computed(() => {
+  const list = tabList.value.filter((info) => {
+    const rawTab = tabs.value.find((t) => t.paneId === info.paneId)
+    if (!rawTab || rawTab.type !== 'terminal') return false
+    const ws = rawTab.cwd ? matchWorkspace(rawTab.cwd) : null
+    if (activeWorkspaceId.value) {
+      // Specific workspace: only tabs matching this workspace
+      return ws?.id === activeWorkspaceId.value
+    }
+    // Default (无工作区): only tabs not belonging to any workspace
+    return !ws
+  })
+  // Reindex: workspace-relative 1-based indices
+  return list.map((t, i) => ({ ...t, index: i + 1 }))
+})
 
 const isLandscape = ref(window.innerWidth > window.innerHeight)
 
 // Mission Control
 const overviewOpen = ref(false)
-const overviewCards = ref<TabCard[]>([])
 const currentTabIndex = computed(() =>
-  tabs.value.findIndex((t) => t.paneId === activePaneId.value) + 1
+  visibleTabList.value.findIndex((t) => t.paneId === activePaneId.value) + 1
 )
 const currentTabTitle = computed(() => {
   const tab = tabs.value.find((t) => t.paneId === activePaneId.value)
@@ -324,7 +346,6 @@ const currentTabTitle = computed(() => {
 })
 
 function openOverview() {
-  overviewCards.value = tabPreview.captureAll(tabs.value, termRefs, notif.unreadByPane)
   overviewOpen.value = true
 }
 
@@ -354,14 +375,15 @@ function onOverviewCloseTab(tabId: string) {
   requestCloseTab(tabId)
 }
 
-watch(
-  () => tabs.value.length,
-  () => {
-    if (overviewOpen.value) {
-      overviewCards.value = tabPreview.captureAll(tabs.value, termRefs, notif.unreadByPane)
-    }
-  }
-)
+async function onOverviewNewTab(cwd?: string) {
+  overviewOpen.value = false
+  await newTab(cwd)
+}
+
+function onOverviewRenameTab(paneId: string, title: string) {
+  session.renameTab(paneId, title)
+  persist()
+}
 
 // Capture plugin preview when active tab changes to a plugin tab (handles initial load)
 watch(
@@ -560,13 +582,18 @@ window.addEventListener('beforeunload', (e) => {
 
 const DEFAULT_PREVIEW_URL = ''
 
-async function newTab() {
+async function newTab(cwd?: string) {
   try {
-    const result = await apiCreateTab()
+    const result = await apiCreateTab(cwd ?? activeWorkspacePath.value)
     // Dedup: broadcast_sync echoes back to sender — tab_created handler may
     // have already added this tab if the sync message arrived before the
     // REST response.
-    if (tabs.value.some((t) => t.type === 'terminal' && t.paneId === result.tab_id)) {
+    const existing = tabs.value.find((t) => t.type === 'terminal' && t.paneId === result.tab_id)
+    if (existing) {
+      // Ensure cwd is set (sync message may have arrived without it)
+      if (result.cwd && existing.type === 'terminal' && !existing.cwd) {
+        existing.cwd = result.cwd
+      }
       activePaneId.value = result.tab_id
       persist()
       nextTick(() => focusActive())
@@ -585,6 +612,7 @@ async function newTab() {
       previewAddress: '',
       previewUrl: '',
       previewKind: 'web',
+      cwd: result.cwd,
     })
     activePaneId.value = result.tab_id
     persist()
@@ -835,7 +863,17 @@ function getSendFn(): ((data: string) => void) | null {
   if (!tab || tab.type !== 'terminal') return null
   const paneId = tab.activePaneId
   if (!termRefs[paneId]) return null
-  return (data: string) => termRefs[paneId]?.sendData(data)
+  return (data: string) => {
+    termRefs[paneId]?.sendData(data)
+    if (tab.broadcastMode && getAllLeaves(tab.layout).length > 1) {
+      for (const leaf of getAllLeaves(tab.layout)) {
+        if (leaf.paneId !== paneId) {
+          termRefs[leaf.paneId]?.sendData(data, true)
+        }
+      }
+      tab.broadcastActivity++
+    }
+  }
 }
 
 async function onLoginSuccess() {
@@ -901,6 +939,11 @@ function onTerminalScroll() {
   clearTimeout(scrollGestureTimer)
   scrollGestureTimer = window.setTimeout(() => { scrollGestureDetected = false }, 300)
   if (kbVisible.value) kbVisible.value = false
+}
+
+function onTokenChanged() {
+  syncWs.closeWs()
+  syncWs.connectSyncWS()
 }
 
 function onServerConnect(host: string, port: number) {
@@ -1202,9 +1245,9 @@ function onGlobalKeydown(e: KeyboardEvent) {
 
   if (!e.shiftKey && e.key >= '1' && e.key <= '9') {
     const idx = parseInt(e.key) - 1
-    if (idx < tabs.value.length) {
+    if (idx < visibleTabList.value.length) {
       e.preventDefault()
-      activateTab(tabs.value[idx].paneId)
+      activateTab(visibleTabList.value[idx].paneId)
     }
   }
 }

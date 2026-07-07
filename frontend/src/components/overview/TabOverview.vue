@@ -1,5 +1,56 @@
 <template>
-  <AnimatePresence>
+  <template v-if="embedded && visible">
+    <!-- Embedded mode: just the grid, no backdrop -->
+    <Motion
+      key="card-grid-embedded"
+      class="mc-grid"
+      :style="gridStyle"
+      :initial="{ scale: 0.9, opacity: 0 }"
+      :animate="{ scale: 1, opacity: 1 }"
+      :exit="{ scale: 0.9, opacity: 0 }"
+      :transition="{ type: 'spring', damping: 25, stiffness: 300 }"
+    >
+      <Motion
+        v-for="(card, i) in cards"
+        :key="card.paneId"
+        :ref="(el: any) => setCardRef(i, el)"
+        class="mc-card"
+        :class="{ active: card.paneId === activePaneId, focused: i === focusedIndex }"
+        :initial="{ opacity: 0, y: 20 }"
+        :animate="{ opacity: 1, y: 0 }"
+        :exit="{ opacity: 0, y: -10 }"
+        :transition="{ delay: Math.min(i, 8) * 0.03, type: 'spring', damping: 20 }"
+        @click="$emit('activate', card.paneId)"
+        @mouseenter="focusedIndex = i"
+        @contextmenu.prevent="openCardCtx($event, card)"
+      >
+        <div class="mc-card-header">
+          <span class="mc-card-index">{{ card.index }}</span>
+          <span class="mc-card-title">{{ card.title }}</span>
+          <button
+            class="mc-card-close"
+            :aria-label="`Close ${card.title}`"
+            @click.stop="$emit('close-tab', card.paneId)"
+          >
+            <X :size="14" />
+          </button>
+        </div>
+        <div class="mc-card-preview">
+          <img v-if="card.previewImage" :src="card.previewImage" />
+          <SplitPreviewNode v-else-if="isSplitPreview(card.htmlContent)" :node="card.htmlContent" />
+          <pre v-else-if="card.htmlContent" class="mc-card-text" v-html="card.htmlContent"></pre>
+          <pre v-else-if="card.textContent" class="mc-card-text">{{ card.textContent }}</pre>
+          <div v-else-if="card.type === 'plugin'" class="mc-plugin-placeholder">
+            <Puzzle :size="32" />
+            <span class="mc-plugin-label">{{ card.title }}</span>
+          </div>
+          <pre v-else class="mc-card-text"></pre>
+        </div>
+      </Motion>
+    </Motion>
+  </template>
+  <AnimatePresence v-else>
+    <!-- Standalone mode: backdrop + grid -->
     <Motion
       v-if="visible"
       key="backdrop"
@@ -62,30 +113,74 @@
       </Motion>
     </Motion>
   </AnimatePresence>
+  <ContextMenu
+    :visible="ctxVisible"
+    :x="ctxX"
+    :y="ctxY"
+    :items="ctxItems"
+    @close="ctxVisible = false"
+  />
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { Motion, AnimatePresence } from 'motion-v'
-import { X, Puzzle } from 'lucide-vue-next'
+import { X, Puzzle, Pencil, Square } from 'lucide-vue-next'
 import type { TabCard, PanePreviewNode } from '../../composables/useTabPreview'
 import SplitPreviewNode from './SplitPreviewNode.vue'
+import ContextMenu from '../ui/ContextMenu.vue'
+import type { ContextMenuItem } from '../ui/ContextMenu.vue'
 
 function isSplitPreview(content: string | PanePreviewNode): content is PanePreviewNode {
   return typeof content === 'object' && content !== null && 'direction' in content
 }
 
-const props = defineProps<{
-  visible: boolean
-  cards: TabCard[]
-  activePaneId: string | null
-}>()
+const props = withDefaults(
+  defineProps<{
+    visible: boolean
+    cards: TabCard[]
+    activePaneId: string | null
+    embedded?: boolean
+  }>(),
+  { embedded: false },
+)
 
 const emit = defineEmits<{
   close: []
   activate: [paneId: string]
   'close-tab': [paneId: string]
+  'rename-tab': [paneId: string, title: string]
 }>()
+
+// Context menu for tab cards
+const ctxVisible = ref(false)
+const ctxX = ref(0)
+const ctxY = ref(0)
+const ctxItems = ref<ContextMenuItem[]>([])
+
+function openCardCtx(e: MouseEvent, card: TabCard) {
+  ctxX.value = e.clientX
+  ctxY.value = e.clientY
+  ctxItems.value = [
+    {
+      label: 'Rename',
+      icon: Pencil,
+      action: () => {
+        const name = prompt('Rename tab', card.title)
+        if (name !== null && name.trim()) {
+          emit('rename-tab', card.paneId, name.trim())
+        }
+      },
+    },
+    {
+      label: 'Close',
+      icon: Square,
+      danger: true,
+      action: () => emit('close-tab', card.paneId),
+    },
+  ]
+  ctxVisible.value = true
+}
 
 const COLS_SM = 2
 const COLS_MD = 3
@@ -124,19 +219,30 @@ watch(
       closing.value = false
       const idx = props.cards.findIndex((c) => c.paneId === props.activePaneId)
       focusedIndex.value = idx >= 0 ? idx : 0
-      nextTick(() => backdropRef.value?.$el?.focus?.())
+      if (!props.embedded) {
+        nextTick(() => backdropRef.value?.$el?.focus?.())
+      }
     } else {
       closing.value = true
     }
   },
 )
 
-// Clamp focused index when cards change (e.g. tab closed)
+// Reset focused index when cards change (workspace switch, tab close, etc.)
 watch(
-  () => props.cards.length,
-  (len) => {
-    if (len && focusedIndex.value >= len) focusedIndex.value = len - 1
+  () => props.cards,
+  (cards) => {
+    if (!cards.length) {
+      focusedIndex.value = 0
+      return
+    }
+    // Clamp to valid range
+    if (focusedIndex.value >= cards.length) focusedIndex.value = cards.length - 1
+    // Try to focus the active pane
+    const idx = cards.findIndex((c) => c.paneId === props.activePaneId)
+    if (idx >= 0) focusedIndex.value = idx
   },
+  { deep: false },
 )
 
 function onKeydown(e: KeyboardEvent) {
@@ -189,4 +295,14 @@ function onKeydown(e: KeyboardEvent) {
     el?.scrollIntoView({ block: 'nearest' })
   })
 }
+
+defineExpose({
+  focusedIndex,
+  onKeydown,
+  activateFocused() {
+    if (props.cards.length) {
+      emit('activate', props.cards[focusedIndex.value].paneId)
+    }
+  },
+})
 </script>

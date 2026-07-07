@@ -177,3 +177,364 @@
     max-width: 1000px;
   }
 }
+
+/* ── Workspace Overview — Desktop Dual Panel ──────────────── */
+.mc-ws-dual {
+  display: flex;
+  width: 100%;
+  max-width: 1100px;
+  max-height: calc(80vh - env(safe-area-inset-top, 0px));
+  gap: 0;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--bg-surface, var(--tab-bg));
+  border: 1px solid var(--border);
+}
+
+/* ── Workspace List Panel ─────────────────────────────────── */
+.mc-ws-panel {
+  width: 220px;
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.mc-ws-items {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+  scrollbar-width: none;
+}
+.mc-ws-items::-webkit-scrollbar { display: none; }
+
+.mc-ws-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  width: 100%;
+  text-align: left;
+  transition: background 0.1s;
+  -webkit-tap-highlight-color: transparent;
+}
+.mc-ws-item:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+}
+.mc-ws-item.selected {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.1));
+}
+
+.mc-ws-dot {
+  flex-shrink: 0;
+  font-size: 10px;
+  width: 12px;
+  text-align: center;
+  color: var(--accent);
+}
+
+.mc-ws-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.mc-ws-name {
+  font-size: 13px;
+  color: var(--fg-bright);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mc-ws-path {
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mc-ws-count {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+  padding: 1px 6px;
+  border-radius: 8px;
+  min-width: 18px;
+  text-align: center;
+}
+
+.mc-ws-footer {
+  padding: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.mc-ws-add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted, #888);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.mc-ws-add-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--bg-hover, rgba(255, 255, 255, 0.04));
+}
+
+.mc-ws-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  gap: 12px;
+}
+
+.mc-ws-empty-text {
+  font-size: 13px;
+  color: var(--text-muted, #888);
+  text-align: center;
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* Tab panel fills remaining space */
+.mc-ws-dual .mc-grid {
+  flex: 1;
+  max-width: none;
+  max-height: none;
+  border-radius: 0;
+}
+
+/* ── Workspace Overview — Mobile ──────────────────────────── */
+.mc-ws-mobile-list,
+.mc-ws-mobile-grid {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.mc-ws-mobile-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.mc-ws-mobile-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--fg-bright);
+  flex: 1;
+}
+
+.mc-ws-mobile-back {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mc-ws-mobile-items {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mc-ws-mobile-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 15px;
+  width: 100%;
+  text-align: left;
+  min-height: 52px;
+  -webkit-tap-highlight-color: transparent;
+}
+.mc-ws-mobile-item:active {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+}
+.mc-ws-mobile-item.active {
+  border-left: 3px solid var(--accent);
+  padding-left: 13px;
+}
+
+.mc-ws-mobile-dot {
+  flex-shrink: 0;
+  font-size: 12px;
+  width: 16px;
+  text-align: center;
+  color: var(--accent);
+}
+
+.mc-ws-mobile-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mc-ws-mobile-name {
+  font-size: 15px;
+  color: var(--fg-bright);
+}
+
+.mc-ws-mobile-path {
+  font-size: 12px;
+  color: var(--text-muted, #888);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mc-ws-mobile-count {
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--text-muted, #888);
+  background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+  padding: 2px 8px;
+  border-radius: 10px;
+  min-width: 22px;
+  text-align: center;
+}
+
+.mc-ws-mobile-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 12px 16px;
+  padding: 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted, #888);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mc-ws-mobile-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 24px;
+  gap: 16px;
+}
+
+.mc-ws-mobile-empty-grid {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 24px;
+}
+
+.mc-ws-mobile-cards {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  align-content: start;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mc-ws-mobile-new-tab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 16px;
+  margin: 8px 12px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted, #888);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ── Empty workspace panel ───────────────────────────────── */
+.mc-ws-empty-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+}
+.mc-ws-empty-panel-text {
+  font-size: 13px;
+  color: var(--text-muted, #888);
+  text-align: center;
+}
+.mc-ws-empty-panel-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted, #888);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.mc-ws-empty-panel-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}

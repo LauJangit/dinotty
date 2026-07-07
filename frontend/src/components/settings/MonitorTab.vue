@@ -1,5 +1,9 @@
 <template>
   <div>
+    <div class="local-hint">
+      <Monitor :size="14" />
+      <span>{{ t('settings.monitor.localHint') }}</span>
+    </div>
     <section class="settings-section">
       <div class="chart-header">
         <h3>{{ t('settings.monitor.cpuChart') }}</h3>
@@ -94,6 +98,7 @@
 
 <script setup lang="ts">
 import { computed, watch } from 'vue'
+import { Monitor } from 'lucide-vue-next'
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -269,6 +274,15 @@ const gpuMemChartData = computed(() => ({
 </script>
 
 <style scoped>
+.local-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fg-muted, #888);
+  margin-bottom: 16px;
+  padding: 0 2px;
+}
 .chart-header {
   display: flex;
   align-items: center;

@@ -1,212 +1,226 @@
 <template>
   <div>
-    <section class="settings-section">
-      <h3>{{ t('settings.language') }}</h3>
-      <div class="settings-row">
-        <select
-          v-model="settings.locale"
-          class="shortcut-input"
-          style="flex: 1"
-          @change="saveSettings()"
-        >
-          <option value="zh">{{ t('settings.lang.zh') }}</option>
-          <option value="en">{{ t('settings.lang.en') }}</option>
-        </select>
-      </div>
-    </section>
+    <div class="settings-group">
+      <h3 class="settings-group-title">{{ t('settings.group.interface') }}</h3>
 
-    <section class="settings-section">
-      <h3>{{ t('settings.panelPosition') }}</h3>
-      <div class="settings-row">
-        <select
-          v-model="settings.panel_position"
-          class="shortcut-input"
-          style="flex: 1"
-          @change="saveSettings()"
-        >
-          <option value="auto">{{ t('settings.panelPos.auto') }}</option>
-          <option value="left">{{ t('settings.panelPos.left') }}</option>
-          <option value="right">{{ t('settings.panelPos.right') }}</option>
-          <option value="top">{{ t('settings.panelPos.top') }}</option>
-          <option value="bottom">{{ t('settings.panelPos.bottom') }}</option>
-        </select>
-      </div>
-      <p class="settings-hint">{{ t('settings.panelPositionHint') }}</p>
-    </section>
-
-    <section class="settings-section">
-      <h3>{{ t('settings.accessUrl') }}</h3>
-      <div class="access-url-row">
-        <div class="access-url-display">
-          <span class="access-url-text">{{ accessUrl }}</span>
-          <button class="access-url-copy" @click="copyAccessUrl" :title="t('settings.copyUrl')">
-            {{ copied ? '✓' : '⧉' }}
-          </button>
-        </div>
-        <div v-if="accessUrl" class="qr-code-wrap">
-          <canvas ref="qrCanvasRef"></canvas>
-          <button class="qr-refresh-btn" @click="refreshQrCode" :title="t('settings.refreshQrCode')">
-            <RefreshCw :size="12" />
-          </button>
-        </div>
-        <p class="settings-hint">{{ t('settings.accessUrlHint') }}</p>
-      </div>
-    </section>
-
-    <section class="settings-section">
-      <h3>{{ t('settings.token') }}</h3>
-      <div class="token-row">
-        <input
-          ref="tokenInputRef"
-          :type="tokenVisible ? 'text' : 'password'"
-          :value="tokenEditing ? customToken : currentToken"
-          :readonly="!tokenEditing"
-          class="token-input"
-          :placeholder="tokenEditing ? t('settings.token.custom') : ''"
-          @input="customToken = ($event.target as HTMLInputElement).value"
-        />
-        <button
-          class="icon-btn"
-          @click="tokenVisible = !tokenVisible"
-          :title="tokenVisible ? t('settings.token.hide') : t('settings.token.show')"
-        >
-          <EyeOff v-if="tokenVisible" :size="14" /><Eye v-else :size="14" />
-        </button>
-        <template v-if="!tokenEditing">
-          <button class="icon-btn" @click="copyToken" :title="t('settings.token.copy')">
-            <Check v-if="tokenCopied" :size="14" /><Copy v-else :size="14" />
-          </button>
-          <button class="icon-btn" @click="startEditToken" :title="t('settings.token.edit')">
-            <Pencil :size="14" />
-          </button>
-          <button
-            class="icon-btn danger"
-            @click="regenerateToken"
-            :title="t('settings.token.regenerate')"
+      <section class="settings-section">
+        <h3>{{ t('settings.language') }}</h3>
+        <div class="settings-row">
+          <select
+            v-model="settings.locale"
+            class="shortcut-input"
+            style="flex: 1"
+            @change="saveSettings()"
           >
-            <RefreshCw :size="14" />
-          </button>
-        </template>
-        <template v-else>
+            <option value="zh">{{ t('settings.lang.zh') }}</option>
+            <option value="en">{{ t('settings.lang.en') }}</option>
+          </select>
+        </div>
+      </section>
+
+      <section class="settings-section">
+        <h3>{{ t('settings.panelPosition') }}</h3>
+        <div class="settings-row">
+          <select
+            v-model="settings.panel_position"
+            class="shortcut-input"
+            style="flex: 1"
+            @change="saveSettings()"
+          >
+            <option value="auto">{{ t('settings.panelPos.auto') }}</option>
+            <option value="left">{{ t('settings.panelPos.left') }}</option>
+            <option value="right">{{ t('settings.panelPos.right') }}</option>
+            <option value="top">{{ t('settings.panelPos.top') }}</option>
+            <option value="bottom">{{ t('settings.panelPos.bottom') }}</option>
+          </select>
+        </div>
+        <p class="settings-hint">{{ t('settings.panelPositionHint') }}</p>
+      </section>
+
+      <section class="settings-section">
+        <h3>{{ t('settings.virtualKeyboard') }}</h3>
+        <div class="settings-row">
+          <label>{{ t('settings.virtualKeyboard.show') }}</label>
+          <label class="toggle">
+            <input
+              type="checkbox"
+              v-model="settings.show_virtual_keyboard"
+              @change="saveSettings()"
+            />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+        <p class="settings-hint">{{ t('settings.virtualKeyboard.hint') }}</p>
+      </section>
+    </div>
+
+    <div class="settings-group">
+      <h3 class="settings-group-title">{{ t('settings.group.security') }}</h3>
+
+      <section class="settings-section">
+        <h3>{{ t('settings.accessUrl') }}</h3>
+        <div class="access-url-row">
+          <div class="access-url-display">
+            <span class="access-url-text">{{ accessUrl }}</span>
+            <button class="access-url-copy" @click="copyAccessUrl" :title="t('settings.copyUrl')">
+              {{ copied ? '✓' : '⧉' }}
+            </button>
+          </div>
+          <div v-if="accessUrl" class="qr-code-wrap">
+            <canvas ref="qrCanvasRef"></canvas>
+            <button class="qr-refresh-btn" @click="refreshQrCode" :title="t('settings.refreshQrCode')">
+              <RefreshCw :size="12" />
+            </button>
+          </div>
+          <p class="settings-hint">{{ t('settings.accessUrlHint') }}</p>
+        </div>
+      </section>
+
+      <section class="settings-section">
+        <h3>{{ t('settings.token') }}</h3>
+        <div class="token-row">
+          <input
+            ref="tokenInputRef"
+            :type="tokenVisible ? 'text' : 'password'"
+            :value="tokenEditing ? customToken : currentToken"
+            :readonly="!tokenEditing"
+            class="token-input"
+            :placeholder="tokenEditing ? t('settings.token.custom') : ''"
+            @input="customToken = ($event.target as HTMLInputElement).value"
+          />
           <button
             class="icon-btn"
-            @click="saveToken"
-            :disabled="customToken.trim().length < 8 || tokenSaving"
-            :title="t('settings.token.save')"
+            @click="tokenVisible = !tokenVisible"
+            :title="tokenVisible ? t('settings.token.hide') : t('settings.token.show')"
           >
-            <Save :size="14" />
+            <EyeOff v-if="tokenVisible" :size="14" /><Eye v-else :size="14" />
           </button>
-          <button class="icon-btn" @click="cancelEditToken" :title="t('settings.token.cancel')">
-            <X :size="14" />
-          </button>
+          <template v-if="!tokenEditing">
+            <button class="icon-btn" @click="copyToken" :title="t('settings.token.copy')">
+              <Check v-if="tokenCopied" :size="14" /><Copy v-else :size="14" />
+            </button>
+            <button class="icon-btn" @click="startEditToken" :title="t('settings.token.edit')">
+              <Pencil :size="14" />
+            </button>
+            <button
+              class="icon-btn danger"
+              @click="regenerateToken"
+              :title="t('settings.token.regenerate')"
+            >
+              <RefreshCw :size="14" />
+            </button>
+          </template>
+          <template v-else>
+            <button
+              class="icon-btn"
+              @click="saveToken"
+              :disabled="customToken.trim().length < 8 || tokenSaving"
+              :title="t('settings.token.save')"
+            >
+              <Save :size="14" />
+            </button>
+            <button class="icon-btn" @click="cancelEditToken" :title="t('settings.token.cancel')">
+              <X :size="14" />
+            </button>
+          </template>
+        </div>
+        <p class="settings-hint">{{ t('settings.token.hint') }}</p>
+        <p v-if="tokenError" class="token-error">{{ tokenError }}</p>
+      </section>
+
+      <section class="settings-section">
+        <h3>{{ t('settings.ipWhitelist') }}</h3>
+        <div v-for="(ip, idx) in settings.ip_whitelist" :key="idx" class="ip-row">
+          <span class="ip-text">{{ ip }}</span>
+          <button class="icon-btn danger" @click="removeIp(idx)">✕</button>
+        </div>
+        <div class="ip-row" style="margin-top: 8px">
+          <input
+            v-model="newIp"
+            type="text"
+            class="token-input"
+            :placeholder="t('settings.ipWhitelist.placeholder')"
+            @keydown.enter="addIp"
+          />
+          <button class="icon-btn" @click="addIp">{{ t('settings.ipWhitelist.add') }}</button>
+        </div>
+        <p class="settings-hint">{{ t('settings.ipWhitelist.hint') }}</p>
+      </section>
+    </div>
+
+    <div class="settings-group">
+      <h3 class="settings-group-title">{{ t('settings.group.behavior') }}</h3>
+
+      <section class="settings-section">
+        <h3>{{ t('settings.monitor') }}</h3>
+        <div class="settings-row">
+          <label>{{ t('settings.monitor.enabled') }}</label>
+          <label class="toggle">
+            <input type="checkbox" v-model="settings.monitor.enabled" @change="saveSettings()" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+      </section>
+
+      <section class="settings-section">
+        <h3>{{ t('settings.behavior') }}</h3>
+        <div class="settings-row">
+          <label>{{ t('settings.confirmBeforeCloseTab') }}</label>
+          <label class="toggle">
+            <input
+              type="checkbox"
+              v-model="settings.confirm_before_close_tab"
+              @change="saveSettings()"
+              data-setting="confirm-before-close-tab"
+            />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+        <p class="settings-hint" data-hint="confirm-before-close-tab">
+          {{ t('settings.confirmBeforeCloseTabHint') }}
+        </p>
+      </section>
+    </div>
+
+    <div class="settings-group">
+      <section class="settings-section">
+        <h3>{{ t('settings.log') }}</h3>
+        <div class="settings-row">
+          <label>{{ t('settings.log.enabled') }}</label>
+          <label class="toggle">
+            <input type="checkbox" v-model="settings.log.enabled" @change="saveSettings()" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+        <p class="settings-hint">{{ t('settings.log.hint') }}</p>
+
+        <template v-if="settings.log.enabled">
+          <div class="settings-row" style="margin-top: 12px">
+            <label>{{ t('settings.log.path') }}</label>
+            <input
+              v-model="settings.log.path"
+              class="shortcut-input"
+              :placeholder="t('settings.log.pathHint')"
+              @change="saveSettings()"
+            />
+          </div>
+          <div class="settings-row" style="margin-top: 8px">
+            <label>{{ t('settings.log.maxSize') }}</label>
+            <input
+              v-model.number="settings.log.max_size_mb"
+              type="number"
+              class="shortcut-input"
+              min="1"
+              max="500"
+              @change="saveSettings()"
+            />
+          </div>
+          <div style="margin-top: 12px">
+            <button class="icon-btn" @click="viewLog">{{ t('settings.log.view') }}</button>
+          </div>
         </template>
-      </div>
-      <p class="settings-hint">{{ t('settings.token.hint') }}</p>
-      <p v-if="tokenError" class="token-error">{{ tokenError }}</p>
-    </section>
-
-    <section class="settings-section">
-      <h3>{{ t('settings.ipWhitelist') }}</h3>
-      <div v-for="(ip, idx) in settings.ip_whitelist" :key="idx" class="ip-row">
-        <span class="ip-text">{{ ip }}</span>
-        <button class="icon-btn danger" @click="removeIp(idx)">✕</button>
-      </div>
-      <div class="ip-row" style="margin-top: 8px">
-        <input
-          v-model="newIp"
-          type="text"
-          class="token-input"
-          :placeholder="t('settings.ipWhitelist.placeholder')"
-          @keydown.enter="addIp"
-        />
-        <button class="icon-btn" @click="addIp">{{ t('settings.ipWhitelist.add') }}</button>
-      </div>
-      <p class="settings-hint">{{ t('settings.ipWhitelist.hint') }}</p>
-    </section>
-
-    <section class="settings-section">
-      <h3>{{ t('settings.monitor') }}</h3>
-      <div class="settings-row">
-        <label>{{ t('settings.monitor.enabled') }}</label>
-        <label class="toggle">
-          <input type="checkbox" v-model="settings.monitor.enabled" @change="saveSettings()" />
-          <span class="toggle-track"><span class="toggle-thumb"></span></span>
-        </label>
-      </div>
-    </section>
-
-    <section class="settings-section">
-      <h3>{{ t('settings.virtualKeyboard') }}</h3>
-      <div class="settings-row">
-        <label>{{ t('settings.virtualKeyboard.show') }}</label>
-        <label class="toggle">
-          <input
-            type="checkbox"
-            v-model="settings.show_virtual_keyboard"
-            @change="saveSettings()"
-          />
-          <span class="toggle-track"><span class="toggle-thumb"></span></span>
-        </label>
-      </div>
-      <p class="settings-hint">{{ t('settings.virtualKeyboard.hint') }}</p>
-    </section>
-
-    <section class="settings-section">
-      <h3>{{ t('settings.behavior') }}</h3>
-      <div class="settings-row">
-        <label>{{ t('settings.confirmBeforeCloseTab') }}</label>
-        <label class="toggle">
-          <input
-            type="checkbox"
-            v-model="settings.confirm_before_close_tab"
-            @change="saveSettings()"
-            data-setting="confirm-before-close-tab"
-          />
-          <span class="toggle-track"><span class="toggle-thumb"></span></span>
-        </label>
-      </div>
-      <p class="settings-hint" data-hint="confirm-before-close-tab">
-        {{ t('settings.confirmBeforeCloseTabHint') }}
-      </p>
-    </section>
-
-    <section class="settings-section">
-      <h3>{{ t('settings.log') }}</h3>
-      <div class="settings-row">
-        <label>{{ t('settings.log.enabled') }}</label>
-        <label class="toggle">
-          <input type="checkbox" v-model="settings.log.enabled" @change="saveSettings()" />
-          <span class="toggle-track"><span class="toggle-thumb"></span></span>
-        </label>
-      </div>
-      <p class="settings-hint">{{ t('settings.log.hint') }}</p>
-
-      <template v-if="settings.log.enabled">
-        <div class="settings-row" style="margin-top: 12px">
-          <label>{{ t('settings.log.path') }}</label>
-          <input
-            v-model="settings.log.path"
-            class="shortcut-input"
-            :placeholder="t('settings.log.pathHint')"
-            @change="saveSettings()"
-          />
-        </div>
-        <div class="settings-row" style="margin-top: 8px">
-          <label>{{ t('settings.log.maxSize') }}</label>
-          <input
-            v-model.number="settings.log.max_size_mb"
-            type="number"
-            class="shortcut-input"
-            min="1"
-            max="500"
-            @change="saveSettings()"
-          />
-        </div>
-        <div style="margin-top: 12px">
-          <button class="icon-btn" @click="viewLog">{{ t('settings.log.view') }}</button>
-        </div>
-      </template>
-    </section>
+      </section>
+    </div>
 
     <!-- Log Viewer Modal -->
     <div v-if="logModalVisible" class="log-modal-overlay" @click.self="logModalVisible = false">
@@ -240,6 +254,7 @@ import {
   fetchServerToken,
 } from '../../composables/apiBase'
 
+const emit = defineEmits<{ 'token-changed': [] }>()
 const { settings, saveSettings } = useSettings()
 const { t } = useI18n()
 
@@ -392,7 +407,7 @@ async function applyNewToken(token: string) {
     })
     if (res.ok) {
       setAuthToken(token)
-      window.location.reload()
+      emit('token-changed')
     } else {
       tokenError.value = t('settings.token.saveFailed')
     }

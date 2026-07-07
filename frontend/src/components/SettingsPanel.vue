@@ -20,7 +20,7 @@
       </div>
 
       <div class="settings-body">
-        <GeneralTab v-show="activeTab === 'general'" />
+        <GeneralTab v-show="activeTab === 'general'" @token-changed="emit('token-changed')" />
         <AppearanceTab v-show="activeTab === 'appearance'" />
         <KeyboardTab v-show="activeTab === 'keyboard'" />
         <MonitorTab v-show="activeTab === 'monitor'" />
@@ -55,7 +55,7 @@ import PluginsTab from './settings/PluginsTab.vue'
 import AboutTab from './settings/AboutTab.vue'
 
 defineProps<{ open: boolean }>()
-defineEmits<{ close: [] }>()
+const emit = defineEmits<{ close: []; 'token-changed': [] }>()
 
 const { settings, saveSettings, applyCurrentTheme } = useSettings()
 const { t } = useI18n()
@@ -208,8 +208,29 @@ const tabs = computed(() => [
   padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
 }
 
+.settings-group {
+  background: var(--bg-input, rgba(255, 255, 255, 0.03));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.06));
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.settings-group-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg-muted, #666);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin: 0 0 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.06));
+}
+.settings-group .settings-section:last-child {
+  margin-bottom: 0;
+}
+
 .settings-section {
-  margin-bottom: 24px;
+  margin-bottom: 20px;
 }
 .settings-section h3 {
   font-size: 13px;

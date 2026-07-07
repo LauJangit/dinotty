@@ -11,48 +11,96 @@
       </div>
       <div class="kb-group">
         <h4>{{ t('keybinding.appShortcuts') }}</h4>
-        <div
-          v-for="def in appDefs"
-          :key="def.id"
-          class="settings-row kb-shortcut-row"
-          :data-kb-id="def.id"
-        >
-          <label
-            ><span class="kb-icon">{{ def.icon }}</span> {{ t(def.titleKey) }}</label
+
+        <div class="kb-category">
+          <h5>{{ t('keybinding.group.tab') }}</h5>
+          <div
+            v-for="def in tabDefs"
+            :key="def.id"
+            class="settings-row kb-shortcut-row"
+            :data-kb-id="def.id"
           >
-          <div class="kb-shortcut-ctrl">
-            <span v-if="kbRecording !== def.id" class="kb-keys">
-              <kbd v-for="(k, i) in formatBinding(getBinding(def.id), def.kind ?? 'app')" :key="i">{{
-                k
-              }}</kbd>
-            </span>
-            <span v-else class="kb-keys recording">{{ t('keybinding.pressKeys') }}</span>
-            <template v-if="!isReadOnly(def.id)">
-              <button
-                v-if="kbRecording !== def.id"
-                class="shortcut-add"
-                data-kb-action="record"
-                @click="startKbRecord(def.id)"
-              >
-                {{ t('settings.record') }}
-              </button>
-              <button
-                v-else
-                class="shortcut-add kb-stop"
-                data-kb-action="stop"
-                @click="stopKbRecord()"
-              >
-                {{ t('settings.stop') }}
-              </button>
-              <button
-                v-if="settings.keybindings[def.id]"
-                class="shortcut-del"
-                data-kb-action="reset"
-                @click="resetKbBinding(def.id)"
-              >
-                {{ t('keybinding.reset') }}
-              </button>
-            </template>
+            <label><span class="kb-icon">{{ def.icon }}</span> {{ t(def.titleKey) }}</label>
+            <div class="kb-shortcut-ctrl">
+              <span v-if="kbRecording !== def.id" class="kb-keys">
+                <kbd v-for="(k, i) in formatBinding(getBinding(def.id), def.kind ?? 'app')" :key="i">{{ k }}</kbd>
+              </span>
+              <span v-else class="kb-keys recording">{{ t('keybinding.pressKeys') }}</span>
+              <template v-if="!isReadOnly(def.id)">
+                <button v-if="kbRecording !== def.id" class="shortcut-add" data-kb-action="record" @click="startKbRecord(def.id)">{{ t('settings.record') }}</button>
+                <button v-else class="shortcut-add kb-stop" data-kb-action="stop" @click="stopKbRecord()">{{ t('settings.stop') }}</button>
+                <button v-if="settings.keybindings[def.id]" class="shortcut-del" data-kb-action="reset" @click="resetKbBinding(def.id)">{{ t('keybinding.reset') }}</button>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <div class="kb-category">
+          <h5>{{ t('keybinding.group.pane') }}</h5>
+          <div
+            v-for="def in paneDefs"
+            :key="def.id"
+            class="settings-row kb-shortcut-row"
+            :data-kb-id="def.id"
+          >
+            <label><span class="kb-icon">{{ def.icon }}</span> {{ t(def.titleKey) }}</label>
+            <div class="kb-shortcut-ctrl">
+              <span v-if="kbRecording !== def.id" class="kb-keys">
+                <kbd v-for="(k, i) in formatBinding(getBinding(def.id), def.kind ?? 'app')" :key="i">{{ k }}</kbd>
+              </span>
+              <span v-else class="kb-keys recording">{{ t('keybinding.pressKeys') }}</span>
+              <template v-if="!isReadOnly(def.id)">
+                <button v-if="kbRecording !== def.id" class="shortcut-add" data-kb-action="record" @click="startKbRecord(def.id)">{{ t('settings.record') }}</button>
+                <button v-else class="shortcut-add kb-stop" data-kb-action="stop" @click="stopKbRecord()">{{ t('settings.stop') }}</button>
+                <button v-if="settings.keybindings[def.id]" class="shortcut-del" data-kb-action="reset" @click="resetKbBinding(def.id)">{{ t('keybinding.reset') }}</button>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <div class="kb-category">
+          <h5>{{ t('keybinding.group.nav') }}</h5>
+          <div
+            v-for="def in navDefs"
+            :key="def.id"
+            class="settings-row kb-shortcut-row"
+            :data-kb-id="def.id"
+          >
+            <label><span class="kb-icon">{{ def.icon }}</span> {{ t(def.titleKey) }}</label>
+            <div class="kb-shortcut-ctrl">
+              <span v-if="kbRecording !== def.id" class="kb-keys">
+                <kbd v-for="(k, i) in formatBinding(getBinding(def.id), def.kind ?? 'app')" :key="i">{{ k }}</kbd>
+              </span>
+              <span v-else class="kb-keys recording">{{ t('keybinding.pressKeys') }}</span>
+              <template v-if="!isReadOnly(def.id)">
+                <button v-if="kbRecording !== def.id" class="shortcut-add" data-kb-action="record" @click="startKbRecord(def.id)">{{ t('settings.record') }}</button>
+                <button v-else class="shortcut-add kb-stop" data-kb-action="stop" @click="stopKbRecord()">{{ t('settings.stop') }}</button>
+                <button v-if="settings.keybindings[def.id]" class="shortcut-del" data-kb-action="reset" @click="resetKbBinding(def.id)">{{ t('keybinding.reset') }}</button>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <div class="kb-category">
+          <h5>{{ t('keybinding.group.font') }}</h5>
+          <div
+            v-for="def in fontDefs"
+            :key="def.id"
+            class="settings-row kb-shortcut-row"
+            :data-kb-id="def.id"
+          >
+            <label><span class="kb-icon">{{ def.icon }}</span> {{ t(def.titleKey) }}</label>
+            <div class="kb-shortcut-ctrl">
+              <span v-if="kbRecording !== def.id" class="kb-keys">
+                <kbd v-for="(k, i) in formatBinding(getBinding(def.id), def.kind ?? 'app')" :key="i">{{ k }}</kbd>
+              </span>
+              <span v-else class="kb-keys recording">{{ t('keybinding.pressKeys') }}</span>
+              <template v-if="!isReadOnly(def.id)">
+                <button v-if="kbRecording !== def.id" class="shortcut-add" data-kb-action="record" @click="startKbRecord(def.id)">{{ t('settings.record') }}</button>
+                <button v-else class="shortcut-add kb-stop" data-kb-action="stop" @click="stopKbRecord()">{{ t('settings.stop') }}</button>
+                <button v-if="settings.keybindings[def.id]" class="shortcut-del" data-kb-action="reset" @click="resetKbBinding(def.id)">{{ t('keybinding.reset') }}</button>
+              </template>
+            </div>
           </div>
         </div>
       </div>
@@ -334,6 +382,16 @@ const { t } = useI18n()
 const { defs, getBinding, formatBinding, isReadOnly } = useKeybindings()
 const appDefs = computed(() => defs.filter((def) => (def.kind ?? 'app') === 'app'))
 const terminalDefs = computed(() => defs.filter((def) => def.kind === 'terminal'))
+
+const tabGroupIds = ['newTab', 'closeTab', 'switchTab']
+const paneGroupIds = ['splitHorizontal', 'splitVertical', 'toggleBroadcast', 'toggleZoom', 'equalizePanes', 'focusNextPane', 'focusPrevPane']
+const navGroupIds = ['togglePalette', 'openBookmarks', 'searchTerminal', 'missionControl', 'sshConnect']
+const fontGroupIds = ['fontSizeUp', 'fontSizeDown', 'fontSizeReset']
+
+const tabDefs = computed(() => appDefs.value.filter(d => tabGroupIds.includes(d.id)))
+const paneDefs = computed(() => appDefs.value.filter(d => paneGroupIds.includes(d.id)))
+const navDefs = computed(() => appDefs.value.filter(d => navGroupIds.includes(d.id)))
+const fontDefs = computed(() => appDefs.value.filter(d => fontGroupIds.includes(d.id)))
 
 const openApiPaneId = ref('')
 const openApiData = ref('')
@@ -983,6 +1041,22 @@ function unescapeFromDisplay(s: string): string {
   color: var(--fg-muted, #999);
   font-size: 12px;
   font-weight: 600;
+}
+.kb-category {
+  margin-bottom: 8px;
+}
+.kb-category h5 {
+  margin: 8px 0 4px;
+  padding: 4px 0;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--fg-muted, #777);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.06));
+}
+.kb-category:last-child {
+  margin-bottom: 0;
 }
 .kb-shortcut-ctrl {
   display: flex;

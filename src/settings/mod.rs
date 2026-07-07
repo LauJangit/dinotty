@@ -64,6 +64,8 @@ pub struct Settings {
     pub log: LogConfig,
     #[serde(default)]
     pub ssh_profiles: Vec<SshProfile>,
+    #[serde(default)]
+    pub active_workspace_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -509,6 +511,7 @@ impl Default for Settings {
             keybindings: std::collections::HashMap::new(),
             log: LogConfig::default(),
             ssh_profiles: vec![],
+            active_workspace_id: None,
         }
     }
 }

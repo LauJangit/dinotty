@@ -79,6 +79,9 @@
       @preview-link="(url: string) => emit('previewLink', leaf!.paneId, url)"
       @link-activate="emit('linkActivate')"
       @reconnect="emit('reconnect', leaf!.paneId)"
+      @split-horizontal="emit('splitHorizontal')"
+      @split-vertical="emit('splitVertical')"
+      @toggle-broadcast="emit('toggleBroadcast')"
     />
   </div>
 
@@ -106,6 +109,9 @@
         @preview-link="(id: string, url: string) => emit('previewLink', id, url)"
         @link-activate="emit('linkActivate')"
         @reorder="(src: string, tgt: string, pos: DropPosition) => emit('reorder', src, tgt, pos)"
+        @split-horizontal="emit('splitHorizontal')"
+        @split-vertical="emit('splitVertical')"
+        @toggle-broadcast="emit('toggleBroadcast')"
         @divider-drag-end="emit('dividerDragEnd')"
         @reconnect="(id: string) => emit('reconnect', id)"
       />
@@ -152,6 +158,9 @@ const emit = defineEmits<{
   reorder: [sourcePaneId: string, targetPaneId: string, position: DropPosition]
   dividerDragEnd: []
   reconnect: [paneId: string]
+  splitHorizontal: []
+  splitVertical: []
+  toggleBroadcast: []
 }>()
 
 const { t } = useI18n()

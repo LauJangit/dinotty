@@ -26,6 +26,12 @@ pub struct UpdateLayoutRequest {
     pub active_pane_id: String,
 }
 
+#[derive(Deserialize)]
+pub struct CreateTabRequest {
+    #[serde(default)]
+    pub cwd: Option<String>,
+}
+
 // ─── GET /api/tabs ─────────────────────────────────────────────────
 
 #[allow(clippy::unused_async)]
@@ -40,12 +46,18 @@ pub async fn list_tabs(State(manager): State<Arc<SessionManager>>) -> impl IntoR
 // ─── POST /api/tabs ────────────────────────────────────────────────
 
 #[allow(clippy::unused_async)]
-pub async fn create_tab(State(manager): State<Arc<SessionManager>>) -> impl IntoResponse {
+pub async fn create_tab(
+    State(manager): State<Arc<SessionManager>>,
+    Json(req): Json<CreateTabRequest>,
+) -> impl IntoResponse {
     let tab_id = uuid::Uuid::new_v4().to_string();
     let pane_id = uuid::Uuid::new_v4().to_string();
 
+    // Resolve CWD: explicit from request > $HOME (handled by pty::create_session)
+    let cwd = req.cwd.clone().map(std::path::PathBuf::from);
+
     // Create PTY session
-    let (_session, shell_type) = match pty::create_session(&manager, &pane_id, None, None) {
+    let (_session, shell_type) = match pty::create_session(&manager, &pane_id, None, cwd) {
         Ok(x) => x,
         Err(e) => {
             tracing::error!("Failed to create PTY: {}", e);
@@ -82,12 +94,14 @@ pub async fn create_tab(State(manager): State<Arc<SessionManager>>) -> impl Into
         tab_id: tab_id.clone(),
         pane_id: pane_id.clone(),
         layout: Some(layout.clone()),
+        cwd: req.cwd.clone(),
     });
 
     Json(serde_json::json!({
         "tab_id": tab_id,
         "pane_id": pane_id,
         "layout": layout,
+        "cwd": req.cwd,
     }))
     .into_response()
 }
@@ -465,6 +479,7 @@ pub async fn create_ssh_quick_tab(
         tab_id: tab_id.clone(),
         pane_id: pane_id.clone(),
         layout: Some(layout.clone()),
+        cwd: None,
     });
 
     Json(serde_json::json!({
@@ -548,6 +563,7 @@ pub async fn create_ssh_tab(
         tab_id: tab_id.clone(),
         pane_id: pane_id.clone(),
         layout: Some(layout.clone()),
+        cwd: None,
     });
 
     Json(serde_json::json!({

@@ -18,6 +18,7 @@ import {
 } from './apiBase'
 import { isTauri } from './useTransport'
 import { handlePluginChanged } from './usePluginLoader'
+import { useWorkspaces } from './useWorkspaces'
 import type TerminalPane from '../components/terminal/TerminalPane.vue'
 
 export function useSyncWebSocket(opts: {
@@ -31,6 +32,7 @@ export function useSyncWebSocket(opts: {
   const { tabs, activePaneId } = storeToRefs(session)
   const ui = useUiStore()
   const { syncConnected } = storeToRefs(ui)
+  const { workspaces, activeWorkspaceId } = useWorkspaces()
 
   let syncWs: WebSocket | null = null
   let suppressSync = false
@@ -178,6 +180,7 @@ export function useSyncWebSocket(opts: {
               previewUrl: migrated?.previewUrl ?? '',
               previewKind: migrated?.previewKind ?? 'web',
               customTitle: migrated?.customTitle,
+              cwd: tab.cwd,
             })
           }
         }
@@ -247,11 +250,17 @@ export function useSyncWebSocket(opts: {
         persist()
         nextTick(() => focusActive())
       } else if (msg.type === 'tab_created') {
-        const exists = tabs.value.some((t) => {
+        const existing = tabs.value.find((t) => {
           if (t.type !== 'terminal') return false
           return t.paneId === msg.tab_id || !!findLeaf(t.layout, msg.pane_id)
         })
-        if (!exists) {
+        if (existing) {
+          // Update cwd if sync message has it and existing tab doesn't
+          if (msg.cwd && existing.type === 'terminal' && !existing.cwd) {
+            existing.cwd = msg.cwd
+          }
+        }
+        if (!existing) {
           const layout = msg.layout
             ? ensureSplitRoot(msg.layout)
             : ensureSplitRoot({
@@ -273,6 +282,7 @@ export function useSyncWebSocket(opts: {
             previewAddress: '',
             previewUrl: '',
             previewKind: 'web',
+            cwd: msg.cwd,
           })
           markRecentlyCreated(msg.tab_id)
           activePaneId.value = msg.tab_id
@@ -384,6 +394,29 @@ export function useSyncWebSocket(opts: {
         // SSH keyboard-interactive auth prompt from backend
         // Emit event for the SSH auth dialog to handle
         onSshAuthPrompt?.(msg.pane_id, msg.prompts)
+      } else if (msg.type === 'workspace_list') {
+        workspaces.value = msg.workspaces
+        activeWorkspaceId.value = msg.active_workspace_id
+      } else if (msg.type === 'workspace_created') {
+        if (!workspaces.value.find((w) => w.id === msg.workspace.id)) {
+          workspaces.value.push(msg.workspace)
+        }
+      } else if (msg.type === 'workspace_updated') {
+        const idx = workspaces.value.findIndex((w) => w.id === msg.workspace.id)
+        if (idx >= 0) workspaces.value[idx] = msg.workspace
+      } else if (msg.type === 'workspace_deleted') {
+        workspaces.value = workspaces.value.filter((w) => w.id !== msg.id)
+        if (activeWorkspaceId.value === msg.id) {
+          activeWorkspaceId.value = null
+        }
+      } else if (msg.type === 'workspace_activated') {
+        activeWorkspaceId.value = msg.id
+      } else if (msg.type === 'workspace_reordered') {
+        for (let i = 0; i < msg.ids.length; i++) {
+          const ws = workspaces.value.find((w) => w.id === msg.ids[i])
+          if (ws) ws.order = i
+        }
+        workspaces.value.sort((a, b) => a.order - b.order)
       }
     }
 

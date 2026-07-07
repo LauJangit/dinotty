@@ -21,6 +21,7 @@ use crate::history::HistoryState;
 use crate::notification::NotificationBroadcast;
 use crate::session::{SessionManager, SessionStatus, SyncMsg};
 use crate::settings::SettingsState;
+use crate::workspace_mgmt::WorkspacesState;
 
 #[derive(Deserialize)]
 pub struct WsQuery {
@@ -101,12 +102,21 @@ pub async fn ws_handler(
 #[allow(clippy::unused_async)]
 pub async fn sync_handler(
     ws: WebSocketUpgrade,
-    State(manager): State<Arc<SessionManager>>,
+    State((manager, workspaces, settings)): State<(
+        Arc<SessionManager>,
+        WorkspacesState,
+        SettingsState,
+    )>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_sync_socket(socket, manager))
+    ws.on_upgrade(move |socket| handle_sync_socket(socket, manager, workspaces, settings))
 }
 
-async fn handle_sync_socket(socket: WebSocket, manager: Arc<SessionManager>) {
+async fn handle_sync_socket(
+    socket: WebSocket,
+    manager: Arc<SessionManager>,
+    workspaces: WorkspacesState,
+    settings: SettingsState,
+) {
     let (ws_tx, mut ws_rx) = socket.split();
 
     // Channel for all outbound WS messages
@@ -152,6 +162,15 @@ async fn handle_sync_socket(socket: WebSocket, manager: Arc<SessionManager>) {
     let msg = serde_json::to_string(&tab_list).expect("serialization is infallible");
     if ws_out_tx.send(Message::Text(msg)).is_err() {
         return;
+    }
+
+    // Send current workspace list with active workspace
+    {
+        let ws = workspaces.read().await;
+        let active_workspace_id = settings.read().await.active_workspace_id.clone();
+        let workspace_list = SyncMsg::WorkspaceList { workspaces: ws.clone(), active_workspace_id };
+        let msg = serde_json::to_string(&workspace_list).expect("serialization is infallible");
+        let _ = ws_out_tx.send(Message::Text(msg));
     }
 
     // Use mpsc channel to bridge broadcast messages and direct responses to the WebSocket
@@ -269,6 +288,7 @@ async fn handle_sync_socket(socket: WebSocket, manager: Arc<SessionManager>) {
                                     tab_id: tab_id.clone(),
                                     pane_id: leaf_id.clone(),
                                     layout: Some(layout.clone()),
+                                    cwd: None,
                                 })
                                 .unwrap(),
                             );
@@ -278,6 +298,7 @@ async fn handle_sync_socket(socket: WebSocket, manager: Arc<SessionManager>) {
                                     tab_id,
                                     pane_id: leaf_id,
                                     layout: Some(layout),
+                                    cwd: None,
                                 },
                                 &client_id,
                             );

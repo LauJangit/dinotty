@@ -21,4 +21,5 @@ pub mod util;
 pub mod vt_screen;
 pub mod webhook;
 pub mod workspace;
+pub mod workspace_mgmt;
 pub mod ws;

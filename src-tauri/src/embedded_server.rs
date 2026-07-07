@@ -28,6 +28,7 @@ use dinotty_server::session::SessionManager;
 use dinotty_server::settings;
 use dinotty_server::tabs;
 use dinotty_server::workspace;
+use dinotty_server::workspace_mgmt;
 use dinotty_server::ws;
 
 #[derive(Embed)]
@@ -53,6 +54,7 @@ pub struct AppState {
     pub port: u16,
     pub git_info: GitInfo,
     pub qr_codes: Arc<qr_code::QrCodeState>,
+    pub workspaces: workspace_mgmt::WorkspacesState,
 }
 
 impl axum::extract::FromRef<AppState> for Arc<SessionManager> {
@@ -106,6 +108,48 @@ impl axum::extract::FromRef<AppState> for (PluginManagerState, Arc<SessionManage
 impl axum::extract::FromRef<AppState> for Arc<qr_code::QrCodeState> {
     fn from_ref(state: &AppState) -> Self {
         state.qr_codes.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for workspace_mgmt::WorkspacesState {
+    fn from_ref(state: &AppState) -> Self {
+        state.workspaces.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for (workspace_mgmt::WorkspacesState, Arc<SessionManager>) {
+    fn from_ref(state: &AppState) -> Self {
+        (state.workspaces.clone(), state.manager.clone())
+    }
+}
+
+impl axum::extract::FromRef<AppState>
+    for (workspace_mgmt::WorkspacesState, Arc<SessionManager>, settings::SettingsState)
+{
+    fn from_ref(state: &AppState) -> Self {
+        (state.workspaces.clone(), state.manager.clone(), state.settings.clone())
+    }
+}
+
+impl axum::extract::FromRef<AppState>
+    for (workspace_mgmt::WorkspacesState, settings::SettingsState, Arc<SessionManager>)
+{
+    fn from_ref(state: &AppState) -> Self {
+        (state.workspaces.clone(), state.settings.clone(), state.manager.clone())
+    }
+}
+
+impl axum::extract::FromRef<AppState> for (settings::SettingsState, Arc<SessionManager>) {
+    fn from_ref(state: &AppState) -> Self {
+        (state.settings.clone(), state.manager.clone())
+    }
+}
+
+impl axum::extract::FromRef<AppState>
+    for (Arc<SessionManager>, workspace_mgmt::WorkspacesState, settings::SettingsState)
+{
+    fn from_ref(state: &AppState) -> Self {
+        (state.manager.clone(), state.workspaces.clone(), state.settings.clone())
     }
 }
 
@@ -298,6 +342,8 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
     let qr_codes = Arc::new(qr_code::QrCodeState::new());
     qr_codes.clone().start_cleanup_task();
 
+    let workspaces_state = workspace_mgmt::create_workspaces_state();
+
     let state = AppState {
         manager: manager.clone(),
         settings: settings_state,
@@ -310,6 +356,7 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
         port,
         git_info,
         qr_codes,
+        workspaces: workspaces_state,
     };
 
     state.plugins.watch_changes(manager);
@@ -353,6 +400,18 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
         .route("/api/workspace/git-stage-lines", post(workspace::workspace_git_stage_lines))
         .route("/api/workspace/git-revert-lines", post(workspace::workspace_git_revert_lines))
         .route("/api/workspace/syntax-check", post(workspace::workspace_syntax_check))
+        // Workspace management
+        .route(
+            "/api/workspaces",
+            get(workspace_mgmt::list_workspaces).post(workspace_mgmt::create_workspace),
+        )
+        .route("/api/workspaces/reorder", put(workspace_mgmt::reorder_workspaces))
+        .route(
+            "/api/workspaces/:id",
+            put(workspace_mgmt::update_workspace).delete(workspace_mgmt::delete_workspace),
+        )
+        .route("/api/workspaces/:id/activate", put(workspace_mgmt::activate_workspace))
+        .route("/api/workspaces/active", delete(workspace_mgmt::deactivate_workspace))
         .route("/api/notify", post(notification::post_notify))
         .route("/api/history", get(history::get_history).delete(history::delete_history))
         .route("/api/info", get(server_info))
