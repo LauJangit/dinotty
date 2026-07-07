@@ -1,10 +1,14 @@
-import { mount } from '@vue/test-utils'
+import { mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import KeyboardTab from '../components/settings/KeyboardTab.vue'
 import { settings } from '../composables/useSettings'
 import { handleTerminalShortcutKeydown } from '../composables/useTerminal'
-import { keyBindingDefs, keyEventMatchesBinding, useKeybindings } from '../composables/useKeybindings'
+import {
+  keyBindingDefs,
+  keyEventMatchesBinding,
+  useKeybindings,
+} from '../composables/useKeybindings'
 
 vi.mock('../composables/apiBase', () => ({
   apiUrl: (path: string) => path,
@@ -35,6 +39,13 @@ const APP_DEFAULTS = [
   ['fontSizeReset', '0', false, false],
 ] as const
 
+const mountedWrappers: VueWrapper[] = []
+
+function trackWrapper(wrapper: VueWrapper) {
+  mountedWrappers.push(wrapper)
+  return wrapper
+}
+
 function resetKeybindings() {
   settings.keybindings = {}
   settings.locale = 'en'
@@ -50,7 +61,7 @@ function keyEvent(key: string, init: KeyboardEventInit = {}) {
 }
 
 async function recordKey(id: string, event: KeyboardEvent) {
-  const wrapper = mount(KeyboardTab)
+  const wrapper = trackWrapper(mount(KeyboardTab))
   await wrapper.find(`[data-kb-id="${id}"] [data-kb-action="record"]`).trigger('click')
   await nextTick()
   window.dispatchEvent(event)
@@ -61,6 +72,11 @@ async function recordKey(id: string, event: KeyboardEvent) {
 describe('unified keybindings', () => {
   beforeEach(() => {
     resetKeybindings()
+  })
+
+  afterEach(() => {
+    for (const wrapper of mountedWrappers.splice(0)) wrapper.unmount()
+    vi.restoreAllMocks()
   })
 
   it('keeps the 18 app defaults and persisted shape unchanged', () => {
@@ -143,8 +159,9 @@ describe('unified keybindings', () => {
     expect(keyEventMatchesBinding(keyEvent('+', { code: 'Equal', shiftKey: true }), binding)).toBe(
       true
     )
-    expect(keyEventMatchesBinding(keyEvent('+', { code: 'NumpadAdd', shiftKey: true }), binding))
-      .toBe(false)
+    expect(
+      keyEventMatchesBinding(keyEvent('+', { code: 'NumpadAdd', shiftKey: true }), binding)
+    ).toBe(false)
   })
 
   it('does not match terminal bindings hand-edited to reserved Ctrl+Shift+C/V', () => {
@@ -172,7 +189,7 @@ describe('unified keybindings', () => {
   })
 
   it('records literal modifiers for terminal shortcuts', async () => {
-    const wrapper = await recordKey(
+    await recordKey(
       'term.lineStart',
       keyEvent('x', { shiftKey: true, metaKey: true, ctrlKey: true, altKey: true })
     )
@@ -184,17 +201,15 @@ describe('unified keybindings', () => {
       ctrl: true,
       alt: true,
     })
-    wrapper.unmount()
   })
 
   it('records app shortcuts with only key and shift', async () => {
-    const wrapper = await recordKey(
+    await recordKey(
       'newTab',
       keyEvent('x', { shiftKey: true, metaKey: true, ctrlKey: true, altKey: true })
     )
 
     expect(settings.keybindings.newTab).toEqual({ key: 'x', shift: true })
-    wrapper.unmount()
   })
 
   it('rejects bare modifier presses while recording terminal shortcuts', async () => {
@@ -202,11 +217,10 @@ describe('unified keybindings', () => {
 
     expect(settings.keybindings['term.lineEnd']).toBeUndefined()
     expect(wrapper.find(`[data-kb-id="term.lineEnd"] [data-kb-action="stop"]`).exists()).toBe(true)
-    wrapper.unmount()
   })
 
   it('rejects terminal bindings reserved for Ctrl+Shift+C/V copy and paste', async () => {
-    const wrapper = mount(KeyboardTab)
+    const wrapper = trackWrapper(mount(KeyboardTab))
     await wrapper.find(`[data-kb-id="term.lineEnd"] [data-kb-action="record"]`).trigger('click')
     await nextTick()
 
@@ -218,7 +232,6 @@ describe('unified keybindings', () => {
     window.dispatchEvent(keyEvent('V', { ctrlKey: true, shiftKey: true }))
     await nextTick()
     expect(settings.keybindings['term.lineEnd']).toBeUndefined()
-    wrapper.unmount()
   })
 
   it('accepts terminal reserved combos when another literal modifier is present', async () => {
@@ -235,7 +248,6 @@ describe('unified keybindings', () => {
       alt: true,
     })
     expect(wrapper.find(`[data-kb-id="term.lineEnd"] [data-kb-action="stop"]`).exists()).toBe(false)
-    wrapper.unmount()
   })
 
   it('reset restores the terminal default binding', async () => {
@@ -246,7 +258,7 @@ describe('unified keybindings', () => {
       ctrl: true,
       alt: false,
     }
-    const wrapper = mount(KeyboardTab)
+    const wrapper = trackWrapper(mount(KeyboardTab))
 
     await wrapper.find(`[data-kb-id="term.lineStart"] [data-kb-action="reset"]`).trigger('click')
     await nextTick()
@@ -257,6 +269,5 @@ describe('unified keybindings', () => {
       shift: false,
       meta: true,
     })
-    wrapper.unmount()
   })
 })

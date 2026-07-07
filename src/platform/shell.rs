@@ -223,7 +223,7 @@ fn root_dir() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{shell_args, shell_type};
+    use super::{default_shell, notification_hook_shell, resolve_command, shell_args, shell_type};
 
     #[test]
     fn detects_windows_shell_types() {
@@ -238,5 +238,110 @@ mod tests {
         assert_eq!(pwsh_args[0], "-NoLogo");
         assert!(pwsh_args.iter().any(|arg| arg.contains("DinottyOriginalPrompt")));
         assert!(shell_args("cmd.exe").is_empty());
+    }
+
+    #[cfg(windows)]
+    fn write_fake_command(path: &std::path::Path) {
+        std::fs::write(path, b"").unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resolve_command_uses_pathext_case_insensitively() {
+        let _env = crate::test_support::EnvGuard::new(&["PATH", "PATHEXT"]);
+        let tmp = tempfile::tempdir().unwrap();
+        write_fake_command(&tmp.path().join("foo.cmd"));
+        std::env::set_var("PATH", tmp.path());
+        std::env::set_var("PATHEXT", ".EXE;.CMD");
+
+        let resolved = resolve_command("foo").unwrap();
+
+        assert!(resolved.is_file());
+        assert!(resolved
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("foo.cmd")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn default_shell_prefers_quoted_dinotty_shell() {
+        let _env =
+            crate::test_support::EnvGuard::new(&["PATH", "PATHEXT", "DINOTTY_SHELL", "ComSpec"]);
+        let tmp = tempfile::tempdir().unwrap();
+        let pwsh = tmp.path().join("pwsh.exe");
+        write_fake_command(&pwsh);
+        std::env::set_var("PATH", "");
+        std::env::set_var("PATHEXT", ".EXE;.CMD");
+        std::env::set_var("DINOTTY_SHELL", format!("\"{}\"", pwsh.display()));
+        std::env::remove_var("ComSpec");
+
+        let shell = default_shell();
+
+        assert_eq!(shell.program, pwsh.to_string_lossy().as_ref());
+        assert_eq!(shell.shell_type, "powershell");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn default_shell_uses_expected_windows_priority() {
+        let _env =
+            crate::test_support::EnvGuard::new(&["PATH", "PATHEXT", "DINOTTY_SHELL", "ComSpec"]);
+        let tmp = tempfile::tempdir().unwrap();
+        let pwsh = tmp.path().join("pwsh.exe");
+        let powershell = tmp.path().join("powershell.exe");
+        let comspec = tmp.path().join("custom-cmd.exe");
+        let cmd = tmp.path().join("cmd.exe");
+        for path in [&pwsh, &powershell, &comspec, &cmd] {
+            write_fake_command(path);
+        }
+        std::env::set_var("PATH", tmp.path());
+        std::env::set_var("PATHEXT", ".EXE;.CMD");
+        std::env::remove_var("DINOTTY_SHELL");
+        std::env::remove_var("ComSpec");
+
+        assert_eq!(default_shell().program, pwsh.to_string_lossy().as_ref());
+
+        std::fs::remove_file(&pwsh).unwrap();
+        assert_eq!(default_shell().program, powershell.to_string_lossy().as_ref());
+
+        std::fs::remove_file(&powershell).unwrap();
+        std::env::set_var("ComSpec", &comspec);
+        assert_eq!(default_shell().program, comspec.to_string_lossy().as_ref());
+
+        std::env::remove_var("ComSpec");
+        assert_eq!(default_shell().program, cmd.to_string_lossy().as_ref());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn notification_hook_shell_prefers_pwsh_with_powershell_args() {
+        let _env = crate::test_support::EnvGuard::new(&["PATH", "PATHEXT"]);
+        let tmp = tempfile::tempdir().unwrap();
+        let pwsh = tmp.path().join("pwsh.exe");
+        write_fake_command(&pwsh);
+        std::env::set_var("PATH", tmp.path());
+        std::env::set_var("PATHEXT", ".EXE;.CMD");
+
+        let hook = notification_hook_shell("echo hi");
+
+        assert_eq!(hook.program, pwsh.to_string_lossy().as_ref());
+        assert_eq!(hook.args, vec!["-NoProfile", "-Command", "echo hi"]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn notification_hook_shell_falls_back_to_cmd() {
+        let _env = crate::test_support::EnvGuard::new(&["PATH", "PATHEXT"]);
+        let tmp = tempfile::tempdir().unwrap();
+        let cmd = tmp.path().join("cmd.exe");
+        write_fake_command(&cmd);
+        std::env::set_var("PATH", tmp.path());
+        std::env::set_var("PATHEXT", ".EXE;.CMD");
+
+        let hook = notification_hook_shell("echo hi");
+
+        assert_eq!(hook.program, cmd.to_string_lossy().as_ref());
+        assert_eq!(hook.args, vec!["/C", "echo hi"]);
     }
 }
