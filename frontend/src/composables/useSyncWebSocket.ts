@@ -197,6 +197,7 @@ export function useSyncWebSocket(opts: {
                   paneId: st.paneId,
                   title: st.title || st.pluginId,
                   pluginId: st.pluginId,
+                  workspaceId: st.workspaceId,
                 })
               }
             }
@@ -408,6 +409,11 @@ export function useSyncWebSocket(opts: {
         workspaces.value = workspaces.value.filter((w) => w.id !== msg.id)
         if (activeWorkspaceId.value === msg.id) {
           activeWorkspaceId.value = null
+        }
+        for (const tab of tabs.value) {
+          if (tab.type === 'plugin' && tab.workspaceId === msg.id) {
+            tab.workspaceId = undefined
+          }
         }
       } else if (msg.type === 'workspace_activated') {
         activeWorkspaceId.value = msg.id

@@ -42,12 +42,13 @@ export interface TerminalTab {
   cwd?: string // Current working directory (from backend)
 }
 
-/** Plugin tab (unchanged) */
+/** Plugin tab */
 export interface PluginTab {
   type: 'plugin'
   paneId: string
   title: string
   pluginId: string
+  workspaceId?: string
 }
 
 export type Tab = TerminalTab | PluginTab

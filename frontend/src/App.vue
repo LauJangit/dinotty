@@ -319,8 +319,12 @@ const visibleTabList = computed(() => {
   const list = tabList.value.filter((info) => {
     const rawTab = tabs.value.find((t) => t.paneId === info.paneId)
     if (!rawTab) return false
-    // Plugin tabs are global — always visible regardless of workspace
-    if (rawTab.type === 'plugin') return true
+    if (rawTab.type === 'plugin') {
+      if (activeWorkspaceId.value) {
+        return rawTab.workspaceId === activeWorkspaceId.value
+      }
+      return !rawTab.workspaceId
+    }
     const ws = rawTab.cwd ? matchWorkspace(rawTab.cwd) : null
     if (activeWorkspaceId.value) {
       // Specific workspace: only tabs matching this workspace
@@ -565,6 +569,7 @@ function persistNow() {
       paneId: t.paneId,
       title: t.title,
       pluginId: t.pluginId,
+      workspaceId: t.workspaceId,
     }
   })
   const activeIdx = tabs.value.findIndex((t) => t.paneId === activePaneId.value)
@@ -995,7 +1000,8 @@ function onSshAuthCancel() {
 
 function openPlugin(pluginId: string) {
   try {
-    const paneId = `plugin:${pluginId}`
+    const wsId = activeWorkspaceId.value ?? ''
+    const paneId = `plugin:${pluginId}:${wsId}`
     const existing = tabs.value.find((t) => t.paneId === paneId)
     if (existing) {
       activateTab(paneId)
@@ -1018,6 +1024,7 @@ function openPlugin(pluginId: string) {
       paneId,
       title: plugin.manifest.name,
       pluginId,
+      workspaceId: activeWorkspaceId.value ?? undefined,
     }
     tabs.value.push(newTab)
     activePaneId.value = paneId
