@@ -21,7 +21,7 @@ export interface ClosePaneResult {
 }
 
 export interface ListTabsResult {
-  tabs: Array<{ tab_id: string; pane_id: string; layout?: any; active_pane_id?: string; cwd?: string }>
+  tabs: Array<{ tab_id: string; pane_id: string; layout?: any; active_pane_id?: string; cwd?: string; connection_id?: string }>
   active_pane_id: string | null
 }
 

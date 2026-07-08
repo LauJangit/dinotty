@@ -40,6 +40,8 @@ export interface TerminalTab {
   previewKind: 'web' | 'files'
   customTitle?: string // User-set tab title (overrides shell title)
   cwd?: string // Current working directory (from backend)
+  connectionId?: string // SSH profile ID when this tab is an SSH session from a profile
+  workspaceId?: string // Explicit workspace assignment (set when SSH tab is created in a workspace)
 }
 
 /** Plugin tab */
@@ -74,6 +76,9 @@ export function migrateTab(raw: any): TerminalTab {
       previewAddress: raw.previewAddress ?? '',
       previewUrl: raw.previewUrl ?? '',
       previewKind: raw.previewKind ?? 'web',
+      connectionId: raw.connectionId,
+      cwd: raw.cwd,
+      workspaceId: raw.workspaceId,
     }
   }
   const tab = raw as TerminalTab

@@ -101,6 +101,7 @@ pub async fn create_tab(
         pane_id: pane_id.clone(),
         layout: Some(layout.clone()),
         cwd: req.cwd.clone(),
+        connection_id: None,
     });
 
     Json(serde_json::json!({
@@ -501,12 +502,14 @@ pub async fn create_ssh_quick_tab(
         pane_id: pane_id.clone(),
         layout: Some(layout.clone()),
         cwd: None,
+        connection_id: req.profile_id.clone(),
     });
 
     Json(serde_json::json!({
         "tab_id": tab_id,
         "pane_id": pane_id,
         "layout": layout,
+        "connection_id": req.profile_id,
     }))
     .into_response()
 }
@@ -531,6 +534,7 @@ pub async fn create_ssh_tab(
                 username: profile.username.clone(),
                 auth_method: profile.auth_method.clone(),
                 default_command: profile.default_command.clone(),
+                profile_id: Some(profile.id.clone()),
             },
             None => {
                 return (
@@ -585,12 +589,14 @@ pub async fn create_ssh_tab(
         pane_id: pane_id.clone(),
         layout: Some(layout.clone()),
         cwd: None,
+        connection_id: Some(req.profile_id.clone()),
     });
 
     Json(serde_json::json!({
         "tab_id": tab_id,
         "pane_id": pane_id,
         "layout": layout,
+        "connection_id": req.profile_id,
     }))
     .into_response()
 }

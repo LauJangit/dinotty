@@ -181,6 +181,7 @@ export function useSyncWebSocket(opts: {
               previewKind: migrated?.previewKind ?? 'web',
               customTitle: migrated?.customTitle,
               cwd: tab.cwd,
+              connectionId: tab.connection_id,
             })
           }
         }
@@ -260,6 +261,10 @@ export function useSyncWebSocket(opts: {
           if (msg.cwd && existing.type === 'terminal' && !existing.cwd) {
             existing.cwd = msg.cwd
           }
+          // Update connectionId if sync message has it and existing tab doesn't
+          if (msg.connection_id && existing.type === 'terminal' && !existing.connectionId) {
+            existing.connectionId = msg.connection_id
+          }
         }
         if (!existing) {
           const layout = msg.layout
@@ -284,6 +289,7 @@ export function useSyncWebSocket(opts: {
             previewUrl: '',
             previewKind: 'web',
             cwd: msg.cwd,
+            connectionId: msg.connection_id,
           })
           markRecentlyCreated(msg.tab_id)
           activePaneId.value = msg.tab_id
