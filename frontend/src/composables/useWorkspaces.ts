@@ -121,10 +121,15 @@ export function useWorkspaces() {
     () => workspaces.value.find((w) => w.id === activeWorkspaceId.value)?.path
   )
 
+  const activeWorkspaceName = computed(
+    () => workspaces.value.find((w) => w.id === activeWorkspaceId.value)?.name
+  )
+
   return {
     workspaces,
     activeWorkspaceId,
     activeWorkspacePath,
+    activeWorkspaceName,
     loadWorkspaces,
     createWorkspace,
     updateWorkspace,

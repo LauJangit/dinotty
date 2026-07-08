@@ -317,7 +317,7 @@ const { loadedPlugins, loadAll, getPluginContext, pluginList, allCommands } = us
 const { isMobile } = useIsMobile()
 
 // Workspace filtering
-const { workspaces, activeWorkspaceId, activeWorkspacePath, matchWorkspace } = useWorkspaces()
+const { workspaces, activeWorkspaceId, activeWorkspacePath, activeWorkspaceName, matchWorkspace } = useWorkspaces()
 
 const visibleTabList = computed(() => {
   const list = tabList.value.filter((info) => {
@@ -462,7 +462,13 @@ watch(
     return tab.title
   },
   (title) => {
-    document.title = title || 'Terminal'
+    const wsName = activeWorkspaceName.value
+    const fullTitle = wsName ? `${wsName} - ${title || 'Terminal'}` : (title || 'Terminal')
+    document.title = fullTitle
+    if (isTauri()) {
+      const tauriWindow = (window as any).__TAURI__?.window?.getCurrentWindow?.()
+      tauriWindow?.setTitle?.(fullTitle)
+    }
   },
   { immediate: true }
 )

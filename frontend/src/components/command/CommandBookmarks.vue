@@ -27,7 +27,7 @@
           </div>
         </div>
 
-        <div class="bookmarks-body">
+        <div class="bookmarks-body" @click="confirmDeleteId = null">
           <!-- Add form (collapsible) -->
           <div v-if="addMode" class="bookmark-add-form">
             <input
@@ -135,10 +135,31 @@
               >
                 <Pencil :size="12" />
               </button>
-              <button v-if="!editId" class="bookmark-del" @click="removeBookmark(bm.id)">
+              <button
+                v-if="editId !== bm.id"
+                class="bookmark-del"
+                @click.stop="confirmDeleteId = bm.id"
+              >
                 <X :size="12" />
               </button>
             </template>
+          </div>
+        </div>
+
+        <!-- Delete confirmation popup -->
+        <div v-if="confirmDeleteId" class="confirm-popup-backdrop" @click="confirmDeleteId = null">
+          <div class="confirm-popup" @click.stop>
+            <div class="confirm-popup-msg">
+              {{ t('bookmarks.confirmDeleteName', { name: confirmDeleteName }) }}
+            </div>
+            <div class="confirm-popup-actions">
+              <button class="confirm-popup-cancel" @click="confirmDeleteId = null">
+                {{ t('bookmarks.confirmNo') }}
+              </button>
+              <button class="confirm-popup-ok" @click="removeBookmark(confirmDeleteId!)">
+                {{ t('bookmarks.confirmYes') }}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -169,6 +190,13 @@ const commandInputRef = ref<HTMLInputElement>()
 const searchInputRef = ref<HTMLInputElement>()
 const searchQuery = ref('')
 const selectedIndex = ref(-1)
+
+// Delete confirmation state
+const confirmDeleteId = ref<string | null>(null)
+const confirmDeleteName = computed(() => {
+  const bm = settings.bookmarks.find((b) => b.id === confirmDeleteId.value)
+  return bm?.name || bm?.command || ''
+})
 
 // Edit state
 const editId = ref<string | null>(null)
@@ -251,9 +279,11 @@ function close() {
   visible.value = false
   addMode.value = false
   editId.value = null
+  confirmDeleteId.value = null
 }
 function toggleAddMode() {
   addMode.value = !addMode.value
+  confirmDeleteId.value = null
   if (addMode.value) {
     editId.value = null
     if (!isTouchDevice) {
@@ -292,6 +322,7 @@ function addBookmark() {
 }
 
 function removeBookmark(id: string) {
+  confirmDeleteId.value = null
   const idx = settings.bookmarks.findIndex((b) => b.id === id)
   if (idx !== -1) {
     settings.bookmarks.splice(idx, 1)
@@ -300,6 +331,7 @@ function removeBookmark(id: string) {
 }
 
 function startEdit(bm: { id: string; name: string; command: string; group: string | null }) {
+  confirmDeleteId.value = null
   editId.value = bm.id
   editName.value = bm.name
   editCommand.value = bm.command
@@ -387,6 +419,7 @@ defineExpose({ open, close })
 }
 
 .bookmarks-panel {
+  position: relative;
   width: 90vw;
   max-width: 500px;
   max-height: 70vh;
@@ -566,6 +599,58 @@ defineExpose({ open, close })
 .bookmark-del:hover {
   background: rgba(255, 100, 100, 0.2);
   color: #ff6b6b;
+}
+.confirm-popup-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  border-radius: 8px;
+}
+.confirm-popup {
+  background: var(--bg-surface, #1a1a1a);
+  border: 1px solid var(--border, #333);
+  border-radius: 8px;
+  padding: 16px 20px;
+  min-width: 240px;
+  max-width: 80%;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+}
+.confirm-popup-msg {
+  font-size: 13px;
+  color: var(--fg-bright);
+  margin-bottom: 14px;
+  word-break: break-all;
+  line-height: 1.5;
+}
+.confirm-popup-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.confirm-popup-cancel,
+.confirm-popup-ok {
+  padding: 5px 14px;
+  border: 1px solid var(--border, #333);
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  background: none;
+  color: var(--fg);
+}
+.confirm-popup-cancel:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.confirm-popup-ok {
+  background: #e55353;
+  border-color: #e55353;
+  color: #fff;
+}
+.confirm-popup-ok:hover {
+  background: #d33;
 }
 
 .bookmark-edit {

@@ -1,6 +1,6 @@
 [package]
 name = "dinotty-desktop"
-version = "0.16.1"
+version = "0.16.2"
 edition = "2021"
 license = "MIT"
 
@@ -8,6 +8,7 @@ license = "MIT"
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-shell = "2"
 tauri-plugin-global-shortcut = "2"
+tauri-plugin-clipboard = "2"
 dinotty-server = { path = "..", default-features = false }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }

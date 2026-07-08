@@ -50,6 +50,7 @@ import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import type { Terminal } from '@xterm/xterm'
 import { TerminalInstance } from '../../composables/useTerminal'
 import { copyToClipboard } from '../../utils/clipboard'
+import { readText as readClipboardText } from '@tauri-apps/plugin-clipboard-manager'
 import SearchBar from './SearchBar.vue'
 import TerminalContextMenu from './TerminalContextMenu.vue'
 import SelectionHandles from './SelectionHandles.vue'
@@ -195,24 +196,17 @@ function onMenuCopy() {
 }
 
 async function onMenuPaste() {
-  const ta = document.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null
-  if (!ta) return
-  ta.focus()
-  // Try native execCommand paste first (works in Safari/WKWebView)
+  if (!terminal?.xterm) return
   try {
-    if (document.execCommand('paste')) return
-  } catch {}
-  // Fallback: read clipboard and dispatch a synthetic paste event for xterm
-  try {
-    const text = await navigator.clipboard.readText()
-    if (text) {
-      const dt = new DataTransfer()
-      dt.setData('text/plain', text)
-      ta.dispatchEvent(new ClipboardEvent('paste', {
-        bubbles: true, cancelable: true, clipboardData: dt,
-      }))
-    }
-  } catch {}
+    const text = await readClipboardText()
+    if (text) terminal.xterm.paste(text)
+  } catch {
+    // Fallback: focus xterm textarea and try execCommand
+    const ta = document.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null
+    if (!ta) return
+    ta.focus()
+    try { document.execCommand('paste') } catch {}
+  }
 }
 
 function onMenuSelectAll() {
