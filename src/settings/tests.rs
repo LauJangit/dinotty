@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn old_config_missing_confirm_before_close_tab_defaults_to_true() {
-    let old_config = r#"{}"#;
+    let old_config = r"{}";
     let settings: Settings = serde_json::from_str(old_config)
         .expect("old config without confirm_before_close_tab should still parse");
     assert!(
@@ -13,18 +13,20 @@ fn old_config_missing_confirm_before_close_tab_defaults_to_true() {
 
 #[test]
 fn settings_defaults_locale_to_zh() {
-    let settings: Settings = serde_json::from_str(r#"{}"#).unwrap();
+    let settings: Settings = serde_json::from_str(r"{}").unwrap();
     assert_eq!(settings.locale, "zh");
 }
 
 #[test]
 fn settings_empty_json_is_valid() {
-    let settings: Settings = serde_json::from_str(r#"{}"#).unwrap();
+    let settings: Settings = serde_json::from_str(r"{}").unwrap();
+    assert_eq!(settings.settings_version, 0);
     assert!(!settings.keyboard_sound);
     assert!(!settings.show_virtual_keyboard);
     assert!(settings.confirm_before_close_tab);
     assert!(settings.bookmarks.is_empty());
     assert_eq!(settings.ip_whitelist, vec!["127.0.0.1", "::1"]);
+    assert_eq!(settings.upload_dir, default_upload_dir());
 }
 
 #[test]
@@ -47,7 +49,7 @@ fn settings_auth_token_is_skipped_in_serde() {
     let settings: Settings = serde_json::from_str(json).unwrap();
     assert!(settings.auth_token.is_empty());
 
-    let mut settings2: Settings = serde_json::from_str(r#"{}"#).unwrap();
+    let mut settings2: Settings = serde_json::from_str(r"{}").unwrap();
     settings2.auth_token = "my_token".to_string();
     let serialized = serde_json::to_string(&settings2).unwrap();
     assert!(!serialized.contains("my_token"));
@@ -55,13 +57,52 @@ fn settings_auth_token_is_skipped_in_serde() {
 
 #[test]
 fn settings_monitor_defaults() {
-    let settings: Settings = serde_json::from_str(r#"{}"#).unwrap();
+    let settings: Settings = serde_json::from_str(r"{}").unwrap();
     assert!(settings.monitor.enabled);
     assert!(settings.monitor.cpu);
 }
 
 #[test]
 fn settings_notification_defaults() {
-    let settings: Settings = serde_json::from_str(r#"{}"#).unwrap();
+    let settings: Settings = serde_json::from_str(r"{}").unwrap();
     assert!(settings.notification.enabled);
+}
+
+#[test]
+fn old_settings_migrate_legacy_upload_dir_once() {
+    let mut settings = Settings {
+        settings_version: 0,
+        upload_dir: "~/.dinotty/uploads".into(),
+        ..Settings::default()
+    };
+
+    assert!(migrate_settings(&mut settings));
+    assert_eq!(settings.settings_version, CURRENT_SETTINGS_VERSION);
+    assert_eq!(settings.upload_dir, default_upload_dir());
+}
+
+#[test]
+fn old_settings_migrate_resolved_temp_upload_dir_once() {
+    let mut settings = Settings {
+        settings_version: 1,
+        upload_dir: std::env::temp_dir().join("dinotty").to_string_lossy().into_owned(),
+        ..Settings::default()
+    };
+
+    assert!(migrate_settings(&mut settings));
+    assert_eq!(settings.settings_version, CURRENT_SETTINGS_VERSION);
+    assert_eq!(settings.upload_dir, default_upload_dir());
+}
+
+#[test]
+fn current_settings_keep_explicit_legacy_upload_dir() {
+    let mut settings = Settings {
+        settings_version: CURRENT_SETTINGS_VERSION,
+        upload_dir: "~/.dinotty/uploads".into(),
+        ..Settings::default()
+    };
+
+    assert!(!migrate_settings(&mut settings));
+    assert_eq!(settings.settings_version, CURRENT_SETTINGS_VERSION);
+    assert_eq!(settings.upload_dir, "~/.dinotty/uploads");
 }

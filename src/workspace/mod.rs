@@ -8,10 +8,16 @@ use axum::{
 };
 use axum_extra::extract::Multipart;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::{
+    collections::HashSet,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use crate::session::SessionManager;
+use crate::settings::{default_upload_dir, Settings, SettingsState};
 
 mod git;
 mod remote;
@@ -26,6 +32,8 @@ pub use syntax::{workspace_syntax_check, SyntaxCheckBody, SyntaxCheckResponse, S
 
 pub(super) const MAX_TEXT_PREVIEW: usize = 512 * 1024;
 pub(super) const MAX_DOWNLOAD: u64 = 500 * 1024 * 1024;
+const UPLOAD_MARKER: &str = ".dinotty-uploads";
+const INSUFFICIENT_STORAGE: &str = "Not enough disk space to store the upload.";
 
 #[derive(Deserialize)]
 pub struct PaneQuery {
@@ -57,6 +65,43 @@ pub struct ResolveQuery {
 #[derive(Serialize)]
 pub struct ResolveResponse {
     pub rel: String,
+}
+
+#[derive(Serialize)]
+struct UploadDirStatus {
+    managed: bool,
+    foreign: bool,
+    empty: bool,
+}
+
+struct UploadBase {
+    path: PathBuf,
+    managed: bool,
+}
+
+#[derive(Serialize)]
+#[allow(clippy::struct_excessive_bools)]
+struct UploadOpResponse {
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    saved: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deleted: Option<usize>,
+    managed: bool,
+    foreign: bool,
+    empty: bool,
+}
+
+#[derive(Serialize)]
+struct UploadDefaultDirResponse {
+    default_dir: String,
+}
+
+struct UploadFileEntry {
+    path: PathBuf,
+    name: String,
+    size: u64,
+    modified: SystemTime,
 }
 
 #[derive(Serialize)]
@@ -98,6 +143,13 @@ macro_rules! try_res {
 
 pub(super) fn json_err(status: StatusCode, msg: &str) -> Response {
     (status, Json(serde_json::json!({ "error": msg }))).into_response()
+}
+
+fn upload_io_err(e: &std::io::Error) -> Response {
+    match e.raw_os_error() {
+        Some(28 | 39 | 112) => json_err(StatusCode::INSUFFICIENT_STORAGE, INSUFFICIENT_STORAGE),
+        _ => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
 }
 
 fn get_session(
@@ -204,6 +256,9 @@ fn parent_dir_must_be_in_workspace(root: &Path, file_path: &Path) -> Result<(), 
 
 fn resolve_user_path(home: Option<PathBuf>, raw: &str) -> PathBuf {
     let raw = raw.trim();
+    if let Some(path) = expand_temp_token(raw) {
+        return path;
+    }
     if let Some(rest) = raw.strip_prefix("~/") {
         if let Some(h) = home.as_ref() {
             return h.join(rest);
@@ -213,6 +268,285 @@ fn resolve_user_path(home: Option<PathBuf>, raw: &str) -> PathBuf {
         return home.unwrap_or_else(|| PathBuf::from("/"));
     }
     PathBuf::from(raw)
+}
+
+fn expand_temp_token(raw: &str) -> Option<PathBuf> {
+    fn env_path(name: &str) -> PathBuf {
+        std::env::var_os(name)
+            .filter(|value| !value.is_empty())
+            .map_or_else(std::env::temp_dir, PathBuf::from)
+    }
+
+    fn token_remainder<'a>(raw: &'a str, token: &str, case_insensitive: bool) -> Option<&'a str> {
+        let matches = if case_insensitive {
+            raw.get(..token.len()).is_some_and(|prefix| prefix.eq_ignore_ascii_case(token))
+        } else {
+            raw.starts_with(token)
+        };
+        if !matches {
+            return None;
+        }
+
+        let rest = &raw[token.len()..];
+        if rest.is_empty() {
+            Some(rest)
+        } else if rest.starts_with('/') || rest.starts_with('\\') {
+            Some(rest.trim_start_matches(['/', '\\']))
+        } else {
+            None
+        }
+    }
+
+    #[cfg(windows)]
+    let tokens = [("%TEMP%", "TEMP", true), ("%TMP%", "TMP", true)];
+    #[cfg(not(windows))]
+    let tokens = [("$TMPDIR", "TMPDIR", false), ("${TMPDIR}", "TMPDIR", false)];
+
+    for (token, env_name, case_insensitive) in tokens {
+        if let Some(rest) = token_remainder(raw, token, case_insensitive) {
+            let base = env_path(env_name);
+            return Some(if rest.is_empty() { base } else { base.join(rest) });
+        }
+    }
+
+    None
+}
+
+fn path_contains_parent_dir(path: &Path) -> bool {
+    path.components().any(|c| matches!(c, std::path::Component::ParentDir))
+}
+
+fn upload_marker_present(base: &Path) -> bool {
+    std::fs::symlink_metadata(base.join(UPLOAD_MARKER)).is_ok_and(|m| m.file_type().is_file())
+}
+
+fn uploads_dir_has_any_entry(base: &Path) -> Result<bool, Response> {
+    let mut entries = std::fs::read_dir(base)
+        .map_err(|e| json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+    Ok(entries
+        .next()
+        .transpose()
+        .map_err(|e| json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?
+        .is_some())
+}
+
+fn uploads_dir_is_empty(base: &Path) -> Result<bool, Response> {
+    for entry in std::fs::read_dir(base)
+        .map_err(|e| json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?
+    {
+        let entry =
+            entry.map_err(|e| json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+        if entry.file_name().to_string_lossy() == UPLOAD_MARKER {
+            continue;
+        }
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+fn write_upload_marker(base: &Path) -> Result<(), Response> {
+    path_must_be_under(base, base)?;
+    let marker = base.join(UPLOAD_MARKER);
+    match std::fs::OpenOptions::new().write(true).create_new(true).open(&marker) {
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == ErrorKind::AlreadyExists && upload_marker_present(base) => Ok(()),
+        Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+            Err(json_err(StatusCode::CONFLICT, "uploads marker is not a regular file"))
+        }
+        Err(e) => Err(upload_io_err(&e)),
+    }
+}
+
+fn upload_dir_status(base: &Path) -> Result<UploadDirStatus, Response> {
+    let managed = upload_marker_present(base);
+    let empty = uploads_dir_is_empty(base)?;
+    Ok(UploadDirStatus { managed, foreign: !managed && !empty, empty })
+}
+
+fn prepare_upload_base(settings: &Settings) -> Result<UploadBase, Response> {
+    let raw = settings.upload_dir.trim();
+    if raw.is_empty() {
+        return Err(json_err(StatusCode::BAD_REQUEST, "upload dir is empty"));
+    }
+    let base = resolve_user_path(dirs::home_dir(), raw);
+    if path_contains_parent_dir(&base) {
+        return Err(json_err(StatusCode::BAD_REQUEST, "upload dir must not contain .."));
+    }
+    let existed = base.exists();
+    if existed && !base.is_dir() {
+        return Err(json_err(StatusCode::BAD_REQUEST, "upload dir is not a directory"));
+    }
+    std::fs::create_dir_all(&base).map_err(|e| match e.raw_os_error() {
+        Some(28 | 39 | 112) => upload_io_err(&e),
+        _ => json_err(StatusCode::BAD_REQUEST, "upload dir is invalid or unavailable"),
+    })?;
+    let base = base
+        .canonicalize()
+        .map_err(|_| json_err(StatusCode::BAD_REQUEST, "upload dir is invalid or unavailable"))?;
+    path_must_be_under(&base, &base)?;
+
+    let had_entries = if existed { uploads_dir_has_any_entry(&base)? } else { false };
+    if !upload_marker_present(&base) && (!existed || !had_entries) {
+        write_upload_marker(&base)?;
+    }
+
+    Ok(UploadBase { path: base.clone(), managed: upload_dir_status(&base)?.managed })
+}
+
+fn sanitize_upload_basename(raw: &str) -> Result<String, Response> {
+    if raw.is_empty() || raw == "." || raw == ".." || raw == UPLOAD_MARKER {
+        return Err(json_err(StatusCode::BAD_REQUEST, "invalid filename"));
+    }
+    if raw.contains('/') || raw.contains('\\') || raw.chars().any(|c| c.is_ascii_control()) {
+        return Err(json_err(StatusCode::BAD_REQUEST, "invalid filename"));
+    }
+    if Path::new(raw).components().any(|c| {
+        matches!(
+            c,
+            std::path::Component::Prefix(_)
+                | std::path::Component::RootDir
+                | std::path::Component::CurDir
+                | std::path::Component::ParentDir
+        )
+    }) {
+        return Err(json_err(StatusCode::BAD_REQUEST, "invalid filename"));
+    }
+    Ok(raw.to_string())
+}
+
+fn suffixed_upload_name(base: &str, n: u32) -> String {
+    const COMPOUND_EXTENSIONS: [&str; 4] = [".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst"];
+
+    let lower = base.to_ascii_lowercase();
+    for compound in COMPOUND_EXTENSIONS {
+        if lower.ends_with(compound) {
+            let stem_len = base.len().saturating_sub(compound.len());
+            if stem_len > 0 {
+                let stem = &base[..stem_len];
+                let ext = &base[stem_len..];
+                return format!("{stem} ({n}){ext}");
+            }
+            break;
+        }
+    }
+
+    let path = Path::new(base);
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
+    let ext = path.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+    format!("{stem} ({n}){ext}")
+}
+
+async fn create_new_upload_file(
+    dir: &Path,
+    base: &str,
+) -> Result<(PathBuf, tokio::fs::File), Response> {
+    let mut n = 0u32;
+    loop {
+        let name = if n == 0 { base.to_string() } else { suffixed_upload_name(base, n) };
+        let path = dir.join(name);
+        let parent =
+            path.parent().ok_or_else(|| json_err(StatusCode::BAD_REQUEST, "invalid filename"))?;
+        path_must_be_under(dir, parent)?;
+        match tokio::fs::OpenOptions::new().write(true).create_new(true).open(&path).await {
+            Ok(file) => return Ok((path, file)),
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+                n = n.checked_add(1).ok_or_else(|| {
+                    json_err(StatusCode::CONFLICT, "too many filename collisions")
+                })?;
+            }
+            Err(e) => return Err(upload_io_err(&e)),
+        }
+    }
+}
+
+fn collect_upload_files(base: &Path) -> Result<Vec<UploadFileEntry>, Response> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(base)
+        .map_err(|e| json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?
+    {
+        let entry =
+            entry.map_err(|e| json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == UPLOAD_MARKER {
+            continue;
+        }
+        let file_type = entry
+            .file_type()
+            .map_err(|e| json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+        if !file_type.is_file() {
+            continue;
+        }
+        let metadata = entry
+            .metadata()
+            .map_err(|e| json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+        files.push(UploadFileEntry {
+            path: entry.path(),
+            name,
+            size: metadata.len(),
+            modified: metadata.modified().unwrap_or(UNIX_EPOCH),
+        });
+    }
+    Ok(files)
+}
+
+fn trim_uploads_dir(
+    base: &Path,
+    keep_paths: &[PathBuf],
+    cap_mb: u64,
+    cap_count: u32,
+) -> Result<(), Response> {
+    if !upload_marker_present(base) {
+        return Ok(());
+    }
+
+    let keep: HashSet<PathBuf> = keep_paths.iter().cloned().collect();
+    let files = collect_upload_files(base)?;
+    let mut total_size = files.iter().map(|f| f.size).sum::<u64>();
+    let mut total_count = files.len();
+    let cap_bytes = cap_mb.saturating_mul(1024).saturating_mul(1024);
+    let cap_count = cap_count as usize;
+    let mut candidates: Vec<UploadFileEntry> =
+        files.into_iter().filter(|f| !keep.contains(&f.path)).collect();
+    candidates.sort_by(|a, b| a.modified.cmp(&b.modified).then_with(|| a.name.cmp(&b.name)));
+
+    for candidate in candidates {
+        if total_size <= cap_bytes && total_count <= cap_count {
+            break;
+        }
+        match std::fs::remove_file(&candidate.path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => return Err(json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string())),
+        }
+        total_size = total_size.saturating_sub(candidate.size);
+        total_count = total_count.saturating_sub(1);
+    }
+
+    Ok(())
+}
+
+fn clear_uploads_dir(base: &Path) -> Result<usize, Response> {
+    if !upload_marker_present(base) {
+        return Err(json_err(StatusCode::CONFLICT, "uploads dir is not managed"));
+    }
+    let mut deleted = 0usize;
+    for file in collect_upload_files(base)? {
+        match std::fs::remove_file(&file.path) {
+            Ok(()) => deleted += 1,
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => return Err(json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string())),
+        }
+    }
+    Ok(deleted)
+}
+
+async fn rollback_uploads(written_paths: &[PathBuf], current_path: Option<&Path>) {
+    for path in written_paths {
+        let _ = tokio::fs::remove_file(path).await;
+    }
+    if let Some(path) = current_path {
+        let _ = tokio::fs::remove_file(path).await;
+    }
 }
 
 #[allow(clippy::unused_async)]
@@ -849,7 +1183,7 @@ pub async fn workspace_upload(
                 let sub = try_res!(normalize_join(&dest_dir, &parent.to_string_lossy()));
                 try_res!(path_must_be_under(&root, &sub));
                 if let Err(e) = std::fs::create_dir_all(&sub) {
-                    return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+                    return upload_io_err(&e);
                 }
                 sub
             } else {
@@ -861,19 +1195,26 @@ pub async fn workspace_upload(
             use tokio::io::AsyncWriteExt;
             let mut file = match tokio::fs::File::create(&path).await {
                 Ok(f) => f,
-                Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                Err(e) => return upload_io_err(&e),
             };
             let mut stream = field;
             loop {
                 match stream.chunk().await {
                     Ok(Some(chunk)) => {
                         if let Err(e) = file.write_all(&chunk).await {
-                            return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+                            drop(file);
+                            let _ = std::fs::remove_file(&path);
+                            return upload_io_err(&e);
                         }
                     }
                     Ok(None) => break,
                     Err(e) => return json_err(StatusCode::BAD_REQUEST, &e.to_string()),
                 }
+            }
+            if let Err(e) = file.flush().await {
+                drop(file);
+                let _ = std::fs::remove_file(&path);
+                return upload_io_err(&e);
             }
         }
         if let Some(rel) = rel_from_root(&root, &path) {
@@ -885,6 +1226,220 @@ pub async fn workspace_upload(
         resp["errors"] = serde_json::json!(errors);
     }
     Json(resp).into_response()
+}
+
+#[allow(clippy::too_many_lines)]
+pub async fn workspace_uploads(
+    State((_manager, settings_state)): State<(Arc<SessionManager>, SettingsState)>,
+    mut multipart: Multipart,
+) -> Response {
+    let settings = settings_state.read().await.clone();
+    let settings_for_base = settings.clone();
+    let base =
+        match tokio::task::spawn_blocking(move || prepare_upload_base(&settings_for_base)).await {
+            Ok(Ok(v)) => v,
+            Ok(Err(resp)) => return resp,
+            Err(_) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
+        };
+    let cap_bytes = settings.upload_file_cap_mb.saturating_mul(1024 * 1024);
+    let mut saved: Vec<String> = Vec::new();
+    let mut written_paths: Vec<PathBuf> = Vec::new();
+
+    loop {
+        let field = match multipart.next_field().await {
+            Ok(Some(f)) => f,
+            Ok(None) => break,
+            Err(e) => {
+                rollback_uploads(&written_paths, None).await;
+                return json_err(StatusCode::BAD_REQUEST, &e.to_string());
+            }
+        };
+        if field.name() == Some("path") {
+            rollback_uploads(&written_paths, None).await;
+            return json_err(StatusCode::BAD_REQUEST, "path field is not supported");
+        }
+        let Some(filename) = field.file_name().map(std::string::ToString::to_string) else {
+            continue;
+        };
+        let filename = match sanitize_upload_basename(&filename) {
+            Ok(filename) => filename,
+            Err(resp) => {
+                rollback_uploads(&written_paths, None).await;
+                return resp;
+            }
+        };
+        let (path, mut file) = match create_new_upload_file(&base.path, &filename).await {
+            Ok(created) => created,
+            Err(resp) => {
+                rollback_uploads(&written_paths, None).await;
+                return resp;
+            }
+        };
+        {
+            use tokio::io::AsyncWriteExt;
+            let mut stream = field;
+            let mut written = 0u64;
+            loop {
+                match stream.chunk().await {
+                    Ok(Some(chunk)) => {
+                        if cap_bytes > 0 && written + chunk.len() as u64 > cap_bytes {
+                            drop(file);
+                            rollback_uploads(&written_paths, Some(&path)).await;
+                            return json_err(
+                                StatusCode::PAYLOAD_TOO_LARGE,
+                                "upload file too large",
+                            );
+                        }
+                        written += chunk.len() as u64;
+                        if let Err(e) = file.write_all(&chunk).await {
+                            drop(file);
+                            rollback_uploads(&written_paths, Some(&path)).await;
+                            return upload_io_err(&e);
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(e) => {
+                        drop(file);
+                        rollback_uploads(&written_paths, Some(&path)).await;
+                        return json_err(StatusCode::BAD_REQUEST, &e.to_string());
+                    }
+                }
+            }
+            if let Err(e) = file.flush().await {
+                drop(file);
+                rollback_uploads(&written_paths, Some(&path)).await;
+                return upload_io_err(&e);
+            }
+        }
+        saved.push(path.to_string_lossy().to_string());
+        written_paths.push(path);
+    }
+
+    if base.managed {
+        let base_path = base.path.clone();
+        let keep_paths = written_paths.clone();
+        let upload_cap_mb = settings.upload_cap_mb;
+        let upload_cap_count = settings.upload_cap_count;
+        match tokio::task::spawn_blocking(move || {
+            trim_uploads_dir(&base_path, &keep_paths, upload_cap_mb, upload_cap_count)
+        })
+        .await
+        {
+            Ok(Ok(v)) => v,
+            Ok(Err(resp)) => return resp,
+            Err(_) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
+        }
+    }
+    let base_path = base.path.clone();
+    let status = match tokio::task::spawn_blocking(move || upload_dir_status(&base_path)).await {
+        Ok(Ok(v)) => v,
+        Ok(Err(resp)) => return resp,
+        Err(_) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
+    };
+    Json(UploadOpResponse {
+        ok: true,
+        saved: Some(saved),
+        deleted: None,
+        managed: status.managed,
+        foreign: status.foreign,
+        empty: status.empty,
+    })
+    .into_response()
+}
+
+pub async fn uploads_status(
+    State((_manager, settings_state)): State<(Arc<SessionManager>, SettingsState)>,
+) -> Response {
+    let settings = settings_state.read().await.clone();
+    let base = match tokio::task::spawn_blocking(move || prepare_upload_base(&settings)).await {
+        Ok(Ok(v)) => v,
+        Ok(Err(resp)) => return resp,
+        Err(_) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
+    };
+    let base_path = base.path.clone();
+    let status = match tokio::task::spawn_blocking(move || upload_dir_status(&base_path)).await {
+        Ok(Ok(v)) => v,
+        Ok(Err(resp)) => return resp,
+        Err(_) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
+    };
+    Json(UploadOpResponse {
+        ok: true,
+        saved: None,
+        deleted: None,
+        managed: status.managed,
+        foreign: status.foreign,
+        empty: status.empty,
+    })
+    .into_response()
+}
+
+#[allow(clippy::unused_async)]
+pub async fn uploads_default_dir() -> Response {
+    Json(UploadDefaultDirResponse { default_dir: default_upload_dir() }).into_response()
+}
+
+pub async fn uploads_clear(
+    State((_manager, settings_state)): State<(Arc<SessionManager>, SettingsState)>,
+) -> Response {
+    let settings = settings_state.read().await.clone();
+    let base = match tokio::task::spawn_blocking(move || prepare_upload_base(&settings)).await {
+        Ok(Ok(v)) => v,
+        Ok(Err(resp)) => return resp,
+        Err(_) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
+    };
+    let base_path = base.path.clone();
+    let deleted = match tokio::task::spawn_blocking(move || clear_uploads_dir(&base_path)).await {
+        Ok(Ok(v)) => v,
+        Ok(Err(resp)) => return resp,
+        Err(_) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
+    };
+    let base_path = base.path.clone();
+    let status = match tokio::task::spawn_blocking(move || upload_dir_status(&base_path)).await {
+        Ok(Ok(v)) => v,
+        Ok(Err(resp)) => return resp,
+        Err(_) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
+    };
+    Json(UploadOpResponse {
+        ok: true,
+        saved: None,
+        deleted: Some(deleted),
+        managed: status.managed,
+        foreign: status.foreign,
+        empty: status.empty,
+    })
+    .into_response()
+}
+
+pub async fn uploads_adopt(
+    State((_manager, settings_state)): State<(Arc<SessionManager>, SettingsState)>,
+) -> Response {
+    let settings = settings_state.read().await.clone();
+    let base = match tokio::task::spawn_blocking(move || prepare_upload_base(&settings)).await {
+        Ok(Ok(v)) => v,
+        Ok(Err(resp)) => return resp,
+        Err(_) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
+    };
+    let base_path = base.path.clone();
+    match tokio::task::spawn_blocking(move || write_upload_marker(&base_path)).await {
+        Ok(Ok(v)) => v,
+        Ok(Err(resp)) => return resp,
+        Err(_) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
+    }
+    let base_path = base.path.clone();
+    let status = match tokio::task::spawn_blocking(move || upload_dir_status(&base_path)).await {
+        Ok(Ok(v)) => v,
+        Ok(Err(resp)) => return resp,
+        Err(_) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
+    };
+    Json(UploadOpResponse {
+        ok: true,
+        saved: None,
+        deleted: None,
+        managed: status.managed,
+        foreign: status.foreign,
+        empty: status.empty,
+    })
+    .into_response()
 }
 
 #[cfg(test)]

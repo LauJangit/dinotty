@@ -4,7 +4,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import KeyboardTab from '../components/settings/KeyboardTab.vue'
 import { settings } from '../composables/useSettings'
 import { handleTerminalShortcutKeydown } from '../composables/useTerminal'
-import { keyBindingDefs, keyEventMatchesBinding, useKeybindings } from '../composables/useKeybindings'
+import {
+  keyBindingDefs,
+  keyEventMatchesBinding,
+  useKeybindings,
+} from '../composables/useKeybindings'
 
 vi.mock('../composables/apiBase', () => ({
   apiUrl: (path: string) => path,
@@ -120,6 +124,30 @@ describe('unified keybindings', () => {
     }
   })
 
+  it('prefers trailing path deletion for terminal delete-to-line-start', () => {
+    const pathEvent = keyEvent('Backspace', { metaKey: true })
+    const pathSendData = vi.fn()
+
+    expect(
+      handleTerminalShortcutKeydown(pathEvent, pathSendData, false, () => 'ls /Users/a/b')
+    ).toBe(true)
+    expect(pathSendData).toHaveBeenCalledWith('\x7f'.repeat(11))
+
+    const nonPathEvent = keyEvent('Backspace', { metaKey: true })
+    const nonPathSendData = vi.fn()
+
+    expect(
+      handleTerminalShortcutKeydown(nonPathEvent, nonPathSendData, false, () => 'echo hello')
+    ).toBe(true)
+    expect(nonPathSendData).toHaveBeenCalledWith('\x15')
+
+    const noGetterEvent = keyEvent('Backspace', { metaKey: true })
+    const noGetterSendData = vi.fn()
+
+    expect(handleTerminalShortcutKeydown(noGetterEvent, noGetterSendData)).toBe(true)
+    expect(noGetterSendData).toHaveBeenCalledWith('\x15')
+  })
+
   it('keeps terminal Meta shortcuts explicit unless Windows Alt-as-Cmd is active', () => {
     const altLeft = keyEvent('ArrowLeft', { altKey: true })
     const sendWithoutVirtualMeta = vi.fn()
@@ -143,8 +171,9 @@ describe('unified keybindings', () => {
     expect(keyEventMatchesBinding(keyEvent('+', { code: 'Equal', shiftKey: true }), binding)).toBe(
       true
     )
-    expect(keyEventMatchesBinding(keyEvent('+', { code: 'NumpadAdd', shiftKey: true }), binding))
-      .toBe(false)
+    expect(
+      keyEventMatchesBinding(keyEvent('+', { code: 'NumpadAdd', shiftKey: true }), binding)
+    ).toBe(false)
   })
 
   it('does not match terminal bindings hand-edited to reserved Ctrl+Shift+C/V', () => {

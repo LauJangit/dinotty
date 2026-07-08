@@ -9,6 +9,12 @@
     @touchcancel="onTouchCancel"
   >
     <div ref="wrapperRef" class="terminal-pane"></div>
+    <div v-if="uploadInProgress" class="terminal-upload-progress">
+      <div class="terminal-upload-progress-track">
+        <div class="terminal-upload-progress-fill" :style="{ width: `${uploadProgress}%` }"></div>
+      </div>
+      <span>{{ uploadProgressLabel() }}</span>
+    </div>
     <SearchBar
       v-if="searchVisible && terminal"
       :terminal="terminal"
@@ -54,6 +60,10 @@ import { readText as readClipboardText } from '@tauri-apps/plugin-clipboard-mana
 import SearchBar from './SearchBar.vue'
 import TerminalContextMenu from './TerminalContextMenu.vue'
 import SelectionHandles from './SelectionHandles.vue'
+import { shellEscapePath } from '../../utils/shell'
+import { POSITION, useToast } from 'vue-toastification'
+import { useI18n } from '../../composables/useI18n'
+import { formatMB, useUpload, type UploadProgress } from '../../composables/useUpload'
 
 const props = defineProps<{
   paneId: string
@@ -80,7 +90,18 @@ const wrapperRef = ref<HTMLElement>()
 const containerRef = ref<HTMLElement>()
 let terminal: TerminalInstance | null = null
 let pendingFocus = false
+let paneAlive = true
+let insertQueue = Promise.resolve()
 const searchVisible = ref(false)
+const toast = useToast()
+const { t } = useI18n()
+const { uploadFiles, uploadErrorStatus } = useUpload()
+const uploadInProgress = ref(false)
+const uploadProgress = ref(0)
+const uploadLoaded = ref(0)
+const uploadTotal = ref(0)
+const uploadProcessing = ref(false)
+let activeUploads = 0
 
 // Context menu state
 const menuVisible = ref(false)
@@ -110,6 +131,46 @@ let selWordStartCol = -1
 let selWordEndCol = -1
 let dragHandle: 'start' | 'end' | null = null
 let selectionTouched = false
+
+function beginUploadProgress() {
+  activeUploads += 1
+  uploadInProgress.value = true
+  uploadProcessing.value = false
+  uploadProgress.value = 0
+  uploadLoaded.value = 0
+  uploadTotal.value = 0
+}
+
+function uploadProgressLabel() {
+  if (uploadProcessing.value) return t('settings.uploads.processing')
+  return `${formatMB(uploadLoaded.value)} / ${formatMB(uploadTotal.value)} MB`
+}
+
+function updateUploadProgress(p: UploadProgress) {
+  uploadLoaded.value = p.loaded
+  uploadTotal.value = p.total
+  const pct = Math.max(0, Math.min(100, Math.round((p.loaded / p.total) * 100)))
+  uploadProgress.value = pct
+  uploadProcessing.value = pct >= 100
+}
+
+function finishUploadProgress() {
+  activeUploads = Math.max(0, activeUploads - 1)
+  if (activeUploads === 0) {
+    uploadInProgress.value = false
+    uploadProcessing.value = false
+    uploadProgress.value = 0
+    uploadLoaded.value = 0
+    uploadTotal.value = 0
+  }
+}
+
+function uploadErrorMessage(err: unknown) {
+  const status = uploadErrorStatus(err)
+  if (status === 413) return t('mobileKb.uploadTooLarge')
+  if (status === 507) return t('settings.uploads.toastDiskFull')
+  return t('mobileKb.uploadFailed')
+}
 
 // Edge auto-scroll during selection drag (A4) — repeating scroll while the
 // finger is held in the top/bottom edge band, so selection can extend past the
@@ -773,14 +834,16 @@ function onHandleDragEnd(canceled = false) {
 
 onMounted(() => {
   terminal = new TerminalInstance(props.paneId)
-  if (props.sshHost) terminal.sshHost = props.sshHost
-  terminal.onTitleChange = (tv) => emit('titleChange', tv)
-  terminal.onShellInfo = (s) => emit('shellInfo', s)
-  terminal.onConnect = () => emit('connect')
-  terminal.onDisconnect = () => emit('disconnect')
-  terminal.onInput = (data) => emit('input', data)
-  terminal.onReconnect = () => emit('reconnect')
-  terminal.onFileClick = (path, x, y) => {
+  paneAlive = true
+  const self = terminal
+  if (props.sshHost) self.sshHost = props.sshHost
+  self.onTitleChange = (tv) => emit('titleChange', tv)
+  self.onShellInfo = (s) => emit('shellInfo', s)
+  self.onConnect = () => emit('connect')
+  self.onDisconnect = () => emit('disconnect')
+  self.onInput = (data) => emit('input', data)
+  self.onReconnect = () => emit('reconnect')
+  self.onFileClick = (path, x, y) => {
     emit('linkActivate')
     linkType.value = 'file'
     linkTarget.value = path
@@ -791,7 +854,7 @@ onMounted(() => {
     menuSelectedText.value = ''
     menuVisible.value = true
   }
-  terminal.onPreviewLink = (url, x, y) => {
+  self.onPreviewLink = (url, x, y) => {
     emit('linkActivate')
     linkType.value = 'link'
     linkTarget.value = url
@@ -801,6 +864,38 @@ onMounted(() => {
     }
     menuSelectedText.value = ''
     menuVisible.value = true
+  }
+  self.onFileUpload = async (files) => {
+    // Attach the settle handlers synchronously so a fast-rejecting upload can never
+    // surface as an unhandled rejection while an earlier insert is still queued.
+    beginUploadProgress()
+    const uploadResult = uploadFiles(files, {
+      synthesizeNames: true,
+      onProgress: updateUploadProgress,
+    })
+      .then(
+        (data) => ({ data }),
+        (err) => ({ err })
+      )
+      .finally(finishUploadProgress)
+    const doInsert = async () => {
+      try {
+        const result = await uploadResult
+        if ('err' in result) throw result.err
+        const data = result.data
+        if (!paneAlive) return
+        const saved = data.saved ?? []
+        if (saved.length) self.sendData(saved.map(shellEscapePath).join(' ') + ' ', true)
+        window.dispatchEvent(new CustomEvent('dinotty-upload-status', { detail: data }))
+        toast.success(t('mobileKb.uploadDone'), { position: POSITION.BOTTOM_CENTER })
+      } catch (err) {
+        if (!paneAlive) return
+        toast.error(uploadErrorMessage(err), { position: POSITION.BOTTOM_CENTER })
+      }
+    }
+    const insertTurn = insertQueue.then(() => doInsert()).catch(() => undefined)
+    insertQueue = insertTurn
+    await insertTurn
   }
 
   requestAnimationFrame(() => {
@@ -815,6 +910,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  paneAlive = false
   stopAutoScroll()
   terminal?.destroy()
   terminal = null
@@ -834,5 +930,38 @@ defineExpose({ getTerminal, focus, blur, fit, sendData, setOutputListener, toggl
   width: 100%;
   height: 100%;
   overflow: hidden;
+}
+
+.terminal-upload-progress {
+  position: fixed;
+  right: 16px;
+  bottom: 20vh;
+  z-index: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 180px;
+  padding: 7px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  background: rgba(22, 22, 24, 0.92);
+  color: #d8d8d8;
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.terminal-upload-progress-track {
+  flex: 1;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.terminal-upload-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: #4da3ff;
+  transition: width 0.16s ease;
 }
 </style>
