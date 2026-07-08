@@ -3,4 +3,6 @@ export interface Workspace {
   name: string
   path: string
   order: number
+  /** References an SshProfile.id when this is a remote workspace. */
+  connection_id?: string
 }

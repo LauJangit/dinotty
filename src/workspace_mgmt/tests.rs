@@ -7,10 +7,34 @@ fn test_workspace_serialization_roundtrip() {
         name: "dinotty".to_string(),
         path: "/Users/talentc/rust/dinotty".to_string(),
         order: 0,
+        connection_id: None,
     };
     let json = serde_json::to_string(&ws).unwrap();
     let deserialized: Workspace = serde_json::from_str(&json).unwrap();
     assert_eq!(ws, deserialized);
+}
+
+#[test]
+fn test_workspace_serialization_with_connection_id() {
+    let ws = Workspace {
+        id: "550e8400-e29b-41d4-a716-446655440000".to_string(),
+        name: "remote-project".to_string(),
+        path: "/home/deploy/app".to_string(),
+        order: 0,
+        connection_id: Some("ssh-profile-123".to_string()),
+    };
+    let json = serde_json::to_string(&ws).unwrap();
+    assert!(json.contains("connection_id"));
+    let deserialized: Workspace = serde_json::from_str(&json).unwrap();
+    assert_eq!(ws, deserialized);
+}
+
+#[test]
+fn test_workspace_backward_compat_deserialize_without_connection_id() {
+    // Existing workspaces.json files without connection_id should still parse
+    let json = r#"{"id":"aaa","name":"test","path":"/tmp","order":0}"#;
+    let ws: Workspace = serde_json::from_str(json).unwrap();
+    assert_eq!(ws.connection_id, None);
 }
 
 #[test]
@@ -21,12 +45,14 @@ fn test_workspace_list_serialization() {
             name: "first".to_string(),
             path: "/tmp/first".to_string(),
             order: 0,
+            connection_id: None,
         },
         Workspace {
             id: "bbb".to_string(),
             name: "second".to_string(),
             path: "/tmp/second".to_string(),
             order: 1,
+            connection_id: None,
         },
     ];
     let json = serde_json::to_string(&workspaces).unwrap();

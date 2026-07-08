@@ -50,15 +50,27 @@ export async function validateToken(token: string): Promise<boolean> {
   }
 }
 
-export async function checkTokenConfigured(): Promise<boolean> {
+export async function checkTokenConfigured(): Promise<{ configured: boolean; serverMode: boolean }> {
   try {
     await getApiBase()
     const res = await fetch(apiUrl('/api/token-configured'))
-    if (!res.ok) return true // assume configured on error
+    if (!res.ok) return { configured: true, serverMode: true }
     const data = await res.json()
-    return !!data.configured
+    return { configured: !!data.configured, serverMode: !!data.server_mode }
   } catch {
-    return true // assume configured on error
+    return { configured: true, serverMode: true }
+  }
+}
+
+export async function fetchAutoToken(): Promise<string> {
+  try {
+    await getApiBase()
+    const res = await fetch(apiUrl('/api/auto-token'))
+    if (!res.ok) return ''
+    const data = await res.json()
+    return data.token || ''
+  } catch {
+    return ''
   }
 }
 

@@ -23,8 +23,8 @@ export function useWorkspaces() {
     }
   }
 
-  async function createWorkspace(path: string, name?: string) {
-    const ws = await apiCreateWorkspace(path, name)
+  async function createWorkspace(path: string, name?: string, connectionId?: string) {
+    const ws = await apiCreateWorkspace(path, name, connectionId)
     // Optimistic add; sync will reconcile if needed
     if (!workspaces.value.find((w) => w.id === ws.id)) {
       workspaces.value.push(ws)
@@ -69,12 +69,26 @@ export function useWorkspaces() {
   /**
    * Match a CWD to the best (longest prefix) workspace.
    * Both cwd and workspace.path are assumed to be canonicalized absolute paths from the backend.
+   * For SSH tabs, pass `connectionId` to prefer matching by SSH profile ID.
    */
-  function matchWorkspace(cwd: string): Workspace | null {
+  function matchWorkspace(cwd: string, connectionId?: string, workspaceId?: string): Workspace | null {
+    // Explicit workspace assignment takes priority
+    if (workspaceId) {
+      const explicit = workspaces.value.find((w) => w.id === workspaceId)
+      if (explicit) return explicit
+    }
+    // SSH tab: match only by connection_id, never by path prefix
+    if (connectionId) {
+      return workspaces.value.find((w) => w.connection_id === connectionId) ?? null
+    }
+
     if (!cwd) return null
+
+    // Local tab: path-prefix match
     let best: Workspace | null = null
     let bestLen = 0
     for (const ws of workspaces.value) {
+      if (ws.connection_id) continue // skip remote workspaces for path matching
       if (cwd === ws.path || (cwd.startsWith(ws.path) && cwd[ws.path.length] === '/')) {
         if (ws.path.length > bestLen) {
           best = ws
@@ -89,10 +103,17 @@ export function useWorkspaces() {
    * Filter tabs to only those belonging to the given workspace.
    */
   function filterTabs(tabs: TerminalTab[], workspaceId: string): TerminalTab[] {
+    const ws = workspaces.value.find((w) => w.id === workspaceId)
+    if (!ws) return []
+    if (ws.connection_id) {
+      // Remote workspace: match by connection_id on the tab
+      return tabs.filter((tab) => tab.connectionId === ws.connection_id)
+    }
+    // Local workspace: match by path prefix
     return tabs.filter((tab) => {
       if (!tab.cwd) return false
-      const ws = matchWorkspace(tab.cwd)
-      return ws?.id === workspaceId
+      const matched = matchWorkspace(tab.cwd, undefined, tab.workspaceId)
+      return matched?.id === workspaceId
     })
   }
 

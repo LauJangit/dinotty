@@ -37,7 +37,14 @@ export type ServerMsg = OutputMsg | ShellInfoMsg | ReconnectedMsg | SessionExitM
 // Sync WS messages
 export interface SyncTabList {
   type: 'tab_list'
-  tabs: { tab_id: string; pane_id: string; layout?: any; active_pane_id?: string; cwd?: string }[]
+  tabs: {
+    tab_id: string
+    pane_id: string
+    layout?: any
+    active_pane_id?: string
+    cwd?: string
+    connection_id?: string
+  }[]
   active_pane_id: string | null
 }
 
@@ -47,6 +54,7 @@ export interface SyncTabCreated {
   pane_id: string
   layout?: any
   cwd?: string
+  connection_id?: string
 }
 
 export interface SyncTabClosed {
@@ -80,12 +88,12 @@ export interface SyncSshAuthPrompt {
 
 export interface SyncWorkspaceCreated {
   type: 'workspace_created'
-  workspace: { id: string; name: string; path: string; order: number }
+  workspace: { id: string; name: string; path: string; order: number; connection_id?: string }
 }
 
 export interface SyncWorkspaceUpdated {
   type: 'workspace_updated'
-  workspace: { id: string; name: string; path: string; order: number }
+  workspace: { id: string; name: string; path: string; order: number; connection_id?: string }
 }
 
 export interface SyncWorkspaceDeleted {
@@ -105,7 +113,7 @@ export interface SyncWorkspaceReordered {
 
 export interface SyncWorkspaceList {
   type: 'workspace_list'
-  workspaces: { id: string; name: string; path: string; order: number }[]
+  workspaces: { id: string; name: string; path: string; order: number; connection_id?: string }[]
   active_workspace_id: string | null
 }
 

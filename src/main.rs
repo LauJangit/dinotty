@@ -282,6 +282,17 @@ async fn icon_handler(Path(path): Path<String>) -> impl IntoResponse {
     }
 }
 
+fn generate_random_token() -> String {
+    use rand::RngExt;
+    let mut rng = rand::rng();
+    let bytes: Vec<u8> = (0..32).map(|_| rng.random::<u8>()).collect();
+    bytes.iter().fold(String::with_capacity(64), |mut s, b| {
+        use std::fmt::Write;
+        let _ = write!(s, "{b:02x}");
+        s
+    })
+}
+
 fn parse_port() -> u16 {
     let args: Vec<String> = std::env::args().collect();
     let mut i = 1;
@@ -330,7 +341,23 @@ async fn get_token(State(state): State<AppState>) -> impl IntoResponse {
 
 async fn token_configured(State(state): State<AppState>) -> impl IntoResponse {
     let token = state.auth_token.read().await;
-    Json(serde_json::json!({ "configured": !token.is_empty() }))
+    Json(serde_json::json!({
+        "configured": !token.is_empty(),
+        "server_mode": cfg!(feature = "server"),
+    }))
+}
+
+async fn auto_token(State(state): State<AppState>) -> impl IntoResponse {
+    if cfg!(feature = "server") {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "not available"})))
+            .into_response();
+    }
+    let token = state.auth_token.read().await;
+    if token.is_empty() {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "no token"})))
+            .into_response();
+    }
+    Json(serde_json::json!({ "token": *token })).into_response()
 }
 
 async fn update_token(
@@ -447,11 +474,22 @@ async fn main() {
     // Load token from dedicated file or env var; empty means first-time setup
     let initial_token =
         settings::load_token().or_else(|| std::env::var("DINOTTY_TOKEN").ok()).unwrap_or_default();
-    if initial_token.is_empty() {
-        tracing::info!("No auth token configured — first-time setup required");
+    let initial_token = if initial_token.is_empty() {
+        if cfg!(feature = "server") {
+            tracing::info!("No auth token configured — first-time setup required");
+            String::new()
+        } else {
+            let token = generate_random_token();
+            if let Err(e) = settings::save_token(&token) {
+                tracing::error!("Failed to persist auto-generated token: {}", e);
+            }
+            tracing::info!("Desktop mode: auto-generated auth token");
+            token
+        }
     } else {
         tracing::info!("Auth token loaded (length={})", initial_token.len());
-    }
+        initial_token
+    };
     let auth_token = Arc::new(tokio::sync::RwLock::new(initial_token));
 
     let plugins = Arc::new(plugin::PluginManager::new());
@@ -541,6 +579,7 @@ async fn main() {
             .route("/api/tabs/:tab_id/layout", put(tabs::update_layout))
             .route("/api/auth", post(check_auth))
             .route("/api/token-configured", get(token_configured))
+            .route("/api/auto-token", get(auto_token))
             .route("/api/settings", get(settings::get_settings).put(settings::put_settings))
             .route(
                 "/api/settings/background",

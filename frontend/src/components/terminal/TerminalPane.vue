@@ -22,6 +22,7 @@
     :selected-text="menuSelectedText"
     :link-type="linkType"
     :link-target="linkTarget"
+    :is-ssh="!!props.sshHost"
     @close="closeMenu"
     @copy="onMenuCopy"
     @paste="onMenuPaste"
@@ -31,6 +32,7 @@
     @split-horizontal="emit('splitHorizontal')"
     @split-vertical="emit('splitVertical')"
     @toggle-broadcast="emit('toggleBroadcast')"
+    @new-local-terminal="emit('newLocalTerminal')"
   />
   <SelectionHandles
     :visible="handlesVisible"
@@ -70,6 +72,7 @@ const emit = defineEmits<{
   splitHorizontal: []
   splitVertical: []
   toggleBroadcast: []
+  newLocalTerminal: []
 }>()
 
 const wrapperRef = ref<HTMLElement>()

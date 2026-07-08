@@ -3,7 +3,7 @@ members = ["src-tauri"]
 
 [package]
 name = "dinotty-server"
-version = "0.16.0"
+version = "0.16.1"
 edition = "2021"
 license = "MIT"
 build = "build.rs"
@@ -81,5 +81,9 @@ all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 unwrap_used = "warn"
 expect_used = "warn"
+
+[features]
+default = ["server"]
+server = []
 
 [dev-dependencies]

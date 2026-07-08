@@ -25,6 +25,10 @@ pub struct Workspace {
     pub name: String,
     pub path: String,
     pub order: u32,
+    /// References an `SshProfile.id` when this is a remote workspace.
+    /// `None` means local workspace (the original behavior).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_id: Option<String>,
 }
 
 /// Shared state for workspace management.
@@ -121,6 +125,9 @@ pub struct CreateWorkspaceReq {
     pub path: String,
     #[serde(default)]
     pub name: Option<String>,
+    /// References an `SshProfile.id` for remote workspaces.
+    #[serde(default)]
+    pub connection_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -129,6 +136,8 @@ pub struct UpdateWorkspaceReq {
     pub name: Option<String>,
     #[serde(default)]
     pub path: Option<String>,
+    #[serde(default)]
+    pub connection_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -149,21 +158,37 @@ pub async fn create_workspace(
     State((state, manager)): State<(WorkspacesState, Arc<SessionManager>)>,
     Json(req): Json<CreateWorkspaceReq>,
 ) -> impl IntoResponse {
-    let canonical = match validate_workspace_path(&req.path) {
-        Ok(p) => p,
-        Err(e) => {
-            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e })))
+    let (path_str, name) = if req.connection_id.is_some() {
+        // Remote workspace: accept path as-is (remote path), skip local validation
+        let path = req.path.trim().to_string();
+        if path.is_empty() {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "path cannot be empty" })),
+            )
                 .into_response();
         }
+        let name = req.name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| derive_name(&path));
+        (path, name)
+    } else {
+        // Local workspace: validate as before
+        let canonical = match validate_workspace_path(&req.path) {
+            Ok(p) => p,
+            Err(e) => {
+                return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e })))
+                    .into_response();
+            }
+        };
+        let path_str = canonical.to_string_lossy().to_string();
+        let name =
+            req.name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| derive_name(&path_str));
+        (path_str, name)
     };
-
-    let path_str = canonical.to_string_lossy().to_string();
-    let name = req.name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| derive_name(&path_str));
 
     let mut ws = state.write().await;
 
-    // Duplicate path check
-    if ws.iter().any(|w| w.path == path_str) {
+    // Duplicate check: same path AND same connection_id
+    if ws.iter().any(|w| w.path == path_str && w.connection_id == req.connection_id) {
         return (
             StatusCode::CONFLICT,
             Json(serde_json::json!({ "error": "workspace with this path already exists" })),
@@ -173,7 +198,13 @@ pub async fn create_workspace(
 
     #[allow(clippy::cast_possible_truncation)]
     let order = ws.len() as u32;
-    let workspace = Workspace { id: uuid::Uuid::new_v4().to_string(), name, path: path_str, order };
+    let workspace = Workspace {
+        id: uuid::Uuid::new_v4().to_string(),
+        name,
+        path: path_str,
+        order,
+        connection_id: req.connection_id,
+    };
 
     ws.push(workspace.clone());
     if let Err(e) = save_workspaces(&ws) {
@@ -200,24 +231,57 @@ pub async fn update_workspace(
             .into_response();
     };
 
+    // Update connection_id if provided
+    if req.connection_id.is_some() {
+        ws[idx].connection_id.clone_from(&req.connection_id);
+    }
+
     if let Some(new_path) = &req.path {
-        let canonical = match validate_workspace_path(new_path) {
-            Ok(p) => p,
-            Err(e) => {
-                return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e })))
+        let effective_connection = req.connection_id.as_ref().or(ws[idx].connection_id.as_ref());
+        if effective_connection.is_some() {
+            // Remote workspace: accept path as-is
+            let path = new_path.trim().to_string();
+            if path.is_empty() {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": "path cannot be empty" })),
+                )
                     .into_response();
             }
-        };
-        let path_str = canonical.to_string_lossy().to_string();
-        // Duplicate check (excluding self)
-        if ws.iter().enumerate().any(|(i, w)| i != idx && w.path == path_str) {
-            return (
-                StatusCode::CONFLICT,
-                Json(serde_json::json!({ "error": "workspace with this path already exists" })),
-            )
-                .into_response();
+            // Duplicate check (excluding self)
+            let conn_id = ws[idx].connection_id.clone();
+            if ws
+                .iter()
+                .enumerate()
+                .any(|(i, w)| i != idx && w.path == path && w.connection_id == conn_id)
+            {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({ "error": "workspace with this path already exists" })),
+                )
+                    .into_response();
+            }
+            ws[idx].path = path;
+        } else {
+            // Local workspace: validate as before
+            let canonical = match validate_workspace_path(new_path) {
+                Ok(p) => p,
+                Err(e) => {
+                    return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e })))
+                        .into_response();
+                }
+            };
+            let path_str = canonical.to_string_lossy().to_string();
+            // Duplicate check (excluding self)
+            if ws.iter().enumerate().any(|(i, w)| i != idx && w.path == path_str) {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({ "error": "workspace with this path already exists" })),
+                )
+                    .into_response();
+            }
+            ws[idx].path = path_str;
         }
-        ws[idx].path = path_str;
         // Auto-update name from new path if name wasn't explicitly provided
         if req.name.is_none() {
             ws[idx].name = derive_name(&ws[idx].path);

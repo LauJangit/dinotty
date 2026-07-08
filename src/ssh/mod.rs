@@ -538,6 +538,10 @@ pub struct SshConnectRequest {
     pub auth: SshAuthMethod,
     #[serde(default)]
     pub default_command: Option<String>,
+    /// Optional profile ID — set when connecting from a saved profile
+    /// so the session can be linked back to the profile for workspace matching.
+    #[serde(default)]
+    pub profile_id: Option<String>,
 }
 
 fn default_ssh_port() -> u16 {
@@ -557,6 +561,7 @@ impl SshConnectRequest {
             username: self.username.clone(),
             auth_method: self.auth.clone(),
             default_command: self.default_command.clone(),
+            profile_id: self.profile_id.clone(),
         }
     }
 }

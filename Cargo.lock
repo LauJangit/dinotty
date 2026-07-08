@@ -1577,7 +1577,7 @@ dependencies = [
 
 [[package]]
 name = "dinotty-desktop"
-version = "0.16.0"
+version = "0.16.1"
 dependencies = [
  "axum 0.7.9",
  "base64 0.22.1",
@@ -1585,6 +1585,7 @@ dependencies = [
  "local-ip-address",
  "mime_guess",
  "portable-pty",
+ "rand 0.10.1",
  "reqwest 0.12.28",
  "rfd",
  "rust-embed",
@@ -1604,7 +1605,7 @@ dependencies = [
 
 [[package]]
 name = "dinotty-server"
-version = "0.16.0"
+version = "0.16.1"
 dependencies = [
  "axum 0.7.9",
  "axum-extra",

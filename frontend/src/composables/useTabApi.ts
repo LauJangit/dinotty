@@ -5,6 +5,7 @@ export interface CreateTabResult {
   pane_id: string
   layout: any
   cwd?: string
+  connection_id?: string
 }
 
 export interface SplitPaneResult {
@@ -20,7 +21,7 @@ export interface ClosePaneResult {
 }
 
 export interface ListTabsResult {
-  tabs: Array<{ tab_id: string; pane_id: string; layout?: any; active_pane_id?: string; cwd?: string }>
+  tabs: Array<{ tab_id: string; pane_id: string; layout?: any; active_pane_id?: string; cwd?: string; connection_id?: string }>
   active_pane_id: string | null
 }
 
@@ -48,12 +49,14 @@ export async function apiCloseTab(tabId: string): Promise<void> {
 export async function apiSplitPane(
   tabId: string,
   paneId: string,
-  direction: string
+  direction: string,
+  forceLocal?: boolean,
+  cwd?: string
 ): Promise<SplitPaneResult> {
   const res = await authFetch(apiUrl(`/api/tabs/${tabId}/pane`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pane_id: paneId, direction }),
+    body: JSON.stringify({ pane_id: paneId, direction, force_local: forceLocal ?? false, cwd }),
   })
   if (!res.ok) throw new Error(`split pane failed: ${res.status}`)
   return res.json()

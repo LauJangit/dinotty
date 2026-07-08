@@ -124,7 +124,7 @@ describe('useWorkspaces', () => {
 
   describe('visibleTabList pattern (TabInfo filtering)', () => {
     // Simulates the visibleTabList computed in App.vue:
-    // filters TabInfo[] by matching raw tab cwd against active workspace
+    // filters TabInfo[] by matching raw tab against active workspace
 
     function makeTabInfo(paneId: string): TabInfo {
       return { paneId, title: 'Terminal', index: 1, type: 'terminal' }
@@ -135,20 +135,24 @@ describe('useWorkspaces', () => {
       rawTabs: TerminalTab[],
       workspaceId: string | null
     ): TabInfo[] {
-      if (!workspaceId) return tabInfos
       return tabInfos.filter((info) => {
         const rawTab = rawTabs.find((t) => t.paneId === info.paneId)
-        if (!rawTab || rawTab.type !== 'terminal' || !rawTab.cwd) return false
-        const ws = matchWorkspace(rawTab.cwd)
-        return ws?.id === workspaceId
+        if (!rawTab || rawTab.type !== 'terminal') return false
+        const ws = matchWorkspace(rawTab.cwd ?? '', rawTab.connectionId, rawTab.workspaceId)
+        if (workspaceId) {
+          return ws?.id === workspaceId
+        }
+        return !ws
       })
     }
 
-    it('no active workspace returns all tabs', () => {
+    it('no active workspace returns only unclaimed tabs', () => {
       const infos = [makeTabInfo('t1'), makeTabInfo('t2')]
       const raws = [makeTab('t1', '/Users/talentc/rust/dinotty'), makeTab('t2', '/other')]
       const result = filterByWorkspace(infos, raws, null)
-      expect(result).toHaveLength(2)
+      // t1 matches ws1 → filtered out; t2 doesn't match any workspace → shown
+      expect(result).toHaveLength(1)
+      expect(result[0].paneId).toBe('t2')
     })
 
     it('filters tabs by active workspace', () => {
@@ -176,6 +180,58 @@ describe('useWorkspaces', () => {
       const result = filterByWorkspace(infos, raws, 'ws1')
       expect(result).toHaveLength(1)
       expect(result[0].paneId).toBe('t1')
+    })
+
+    it('SSH tab with workspaceId matches that workspace', () => {
+      const sshTab: TerminalTab = {
+        ...makeTab('ssh1', '/root'),
+        connectionId: 'profile-abc',
+        workspaceId: 'ws1',
+      }
+      const infos = [makeTabInfo('ssh1')]
+      const raws = [sshTab]
+      const result = filterByWorkspace(infos, raws, 'ws1')
+      expect(result).toHaveLength(1)
+    })
+
+    it('SSH tab with workspaceId does not appear in other workspaces', () => {
+      const sshTab: TerminalTab = {
+        ...makeTab('ssh1', '/root'),
+        connectionId: 'profile-abc',
+        workspaceId: 'ws1',
+      }
+      const infos = [makeTabInfo('ssh1')]
+      const raws = [sshTab]
+      const result = filterByWorkspace(infos, raws, 'ws2')
+      expect(result).toHaveLength(0)
+    })
+
+    it('SSH tab without workspaceId and no matching connection_id is unclaimed', () => {
+      const sshTab: TerminalTab = {
+        ...makeTab('ssh1', '/root'),
+        connectionId: 'profile-abc',
+      }
+      const infos = [makeTabInfo('ssh1')]
+      const raws = [sshTab]
+      // No workspace has connection_id 'profile-abc' → unclaimed
+      const resultWs1 = filterByWorkspace(infos, raws, 'ws1')
+      expect(resultWs1).toHaveLength(0)
+      const resultDefault = filterByWorkspace(infos, raws, null)
+      expect(resultDefault).toHaveLength(1)
+    })
+
+    it('SSH tab with matching connection_id goes to that workspace', () => {
+      workspaces.value.push({ id: 'ws-ssh', name: 'server', path: '/root', order: 3, connection_id: 'profile-abc' })
+      const sshTab: TerminalTab = {
+        ...makeTab('ssh1', '/root'),
+        connectionId: 'profile-abc',
+      }
+      const infos = [makeTabInfo('ssh1')]
+      const raws = [sshTab]
+      const resultWs1 = filterByWorkspace(infos, raws, 'ws1')
+      expect(resultWs1).toHaveLength(0)
+      const resultSsh = filterByWorkspace(infos, raws, 'ws-ssh')
+      expect(resultSsh).toHaveLength(1)
     })
   })
 })

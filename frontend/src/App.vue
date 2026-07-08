@@ -97,6 +97,7 @@
             @split-horizontal="splitPane.splitPane('horizontal')"
             @split-vertical="splitPane.splitPane('vertical')"
             @toggle-broadcast="splitPane.toggleBroadcast()"
+            @new-local-terminal="splitPane.splitPane('horizontal', true, activeWorkspacePath ?? undefined)"
             @reorder="
               (src: string, tgt: string, pos: 'left' | 'right' | 'top' | 'bottom') =>
                 splitPane.reorderPane(src, tgt, pos)
@@ -200,6 +201,7 @@
       @activate="onOverviewActivate"
       @close-tab="onOverviewCloseTab"
       @new-tab="onOverviewNewTab"
+      @new-tab-ssh="onOverviewNewTabSsh"
       @rename-tab="onOverviewRenameTab"
     />
   </div>
@@ -240,6 +242,7 @@ import { initializePaneMru } from './types/paneMru'
 import {
   getApiBase,
   checkTokenConfigured,
+  fetchAutoToken,
   setAuthToken,
 } from './composables/apiBase'
 import { isTauri, tauriInvoke } from './composables/useTransport'
@@ -257,6 +260,7 @@ import { usePluginLoader } from './composables/usePluginLoader'
 import PluginView from './components/plugin/PluginView.vue'
 import {
   apiCreateTab,
+  apiCreateSshTab,
   apiCloseTab,
   apiClosePane,
   apiActivatePane,
@@ -277,7 +281,7 @@ import { useSettingsStore } from './stores/settingsStore'
 
 // ── Stores ──────────────────────────────────────────────────────
 const session = useSessionStore()
-const { tabs, activePaneId, tabList, activeTabType, isBroadcastActive, canBroadcast, paneLabels } =
+const { tabs, activePaneId, tabList, activeTabType, activeTab, isBroadcastActive, canBroadcast, paneLabels } =
   storeToRefs(session)
 
 const ui = useUiStore()
@@ -319,9 +323,12 @@ const visibleTabList = computed(() => {
   const list = tabList.value.filter((info) => {
     const rawTab = tabs.value.find((t) => t.paneId === info.paneId)
     if (!rawTab) return false
-    // Plugin tabs are global — always visible regardless of workspace
     if (rawTab.type === 'plugin') return true
-    const ws = rawTab.cwd ? matchWorkspace(rawTab.cwd) : null
+    // Terminal tab: match by connectionId (SSH) or cwd (local)
+    const ws =
+      rawTab.type === 'terminal'
+        ? matchWorkspace(rawTab.cwd ?? '', rawTab.connectionId, rawTab.type === 'terminal' ? rawTab.workspaceId : undefined)
+        : null
     if (activeWorkspaceId.value) {
       // Specific workspace: only tabs matching this workspace
       return ws?.id === activeWorkspaceId.value
@@ -380,6 +387,40 @@ function onOverviewCloseTab(tabId: string) {
 async function onOverviewNewTab(cwd?: string) {
   overviewOpen.value = false
   await newTab(cwd)
+}
+
+async function onOverviewNewTabSsh(connectionId: string) {
+  overviewOpen.value = false
+  try {
+    const result = await apiCreateSshTab(connectionId)
+    const existing = tabs.value.find((t) => t.type === 'terminal' && t.paneId === result.tab_id)
+    if (existing) {
+      activePaneId.value = result.tab_id
+      persist()
+      nextTick(() => focusActive())
+      return
+    }
+    const layout = ensureSplitRoot(result.layout)
+    tabs.value.push({
+      type: 'terminal',
+      paneId: result.tab_id,
+      layout,
+      activePaneId: result.pane_id,
+      paneMru: [result.pane_id],
+      broadcastMode: false,
+      broadcastActivity: 0,
+      previewVisible: false,
+      previewAddress: '',
+      previewUrl: '',
+      previewKind: 'web',
+      connectionId,
+    })
+    activePaneId.value = result.tab_id
+    persist()
+    nextTick(() => focusActive())
+  } catch (e) {
+    console.error('Failed to create SSH tab:', e)
+  }
 }
 
 function onOverviewRenameTab(paneId: string, title: string) {
@@ -558,6 +599,7 @@ function persistNow() {
         previewUrl: t.previewUrl,
         previewKind: t.previewKind,
         customTitle: t.customTitle,
+        connectionId: t.connectionId,
       }
     }
     return {
@@ -565,6 +607,7 @@ function persistNow() {
       paneId: t.paneId,
       title: t.title,
       pluginId: t.pluginId,
+      workspaceId: t.workspaceId,
     }
   })
   const activeIdx = tabs.value.findIndex((t) => t.paneId === activePaneId.value)
@@ -586,7 +629,8 @@ const DEFAULT_PREVIEW_URL = ''
 
 async function newTab(cwd?: string) {
   try {
-    const result = await apiCreateTab(cwd ?? activeWorkspacePath.value)
+    const effectiveCwd = cwd ?? activeWorkspacePath.value
+    const result = await apiCreateTab(effectiveCwd)
     // Dedup: broadcast_sync echoes back to sender — tab_created handler may
     // have already added this tab if the sync message arrived before the
     // REST response.
@@ -953,9 +997,21 @@ function onServerConnect(host: string, port: number) {
   window.location.href = `${proto}//${host}:${port}/`
 }
 
-async function onSshConnect(result: { tab_id: string; pane_id: string; layout: any }) {
+async function onSshConnect(result: { tab_id: string; pane_id: string; layout: any; connection_id?: string }) {
+  // If API didn't return connection_id, inherit from the active workspace
+  const resolvedConnectionId = result.connection_id
+    ?? workspaces.value.find((w) => w.id === activeWorkspaceId.value)?.connection_id
+
   const existing = tabs.value.find((t) => t.paneId === result.tab_id)
   if (existing) {
+    if (existing.type === 'terminal') {
+      if (resolvedConnectionId && !existing.connectionId) {
+        existing.connectionId = resolvedConnectionId
+      }
+      if (!existing.workspaceId && activeWorkspaceId.value) {
+        existing.workspaceId = activeWorkspaceId.value
+      }
+    }
     activePaneId.value = result.tab_id
     persist()
     nextTick(() => focusActive())
@@ -974,6 +1030,8 @@ async function onSshConnect(result: { tab_id: string; pane_id: string; layout: a
     previewAddress: '',
     previewUrl: '',
     previewKind: 'web',
+    connectionId: resolvedConnectionId,
+    workspaceId: activeWorkspaceId.value ?? undefined,
   })
   activePaneId.value = result.tab_id
   persist()
@@ -995,7 +1053,8 @@ function onSshAuthCancel() {
 
 function openPlugin(pluginId: string) {
   try {
-    const paneId = `plugin:${pluginId}`
+    const wsId = activeWorkspaceId.value ?? ''
+    const paneId = `plugin:${pluginId}:${wsId}`
     const existing = tabs.value.find((t) => t.paneId === paneId)
     if (existing) {
       activateTab(paneId)
@@ -1018,6 +1077,7 @@ function openPlugin(pluginId: string) {
       paneId,
       title: plugin.manifest.name,
       pluginId,
+      workspaceId: activeWorkspaceId.value ?? undefined,
     }
     tabs.value.push(newTab)
     activePaneId.value = paneId
@@ -1132,6 +1192,13 @@ const paletteCommands = computed<Command[]>(() => {
       subtitle: t('palette.sshConnectDesc'),
       action: () => sshPanelRef.value?.open(),
     },
+    // Only show "New Local Terminal" when active tab is an SSH session
+    ...(activeTab.value?.type === 'terminal' && activeTab.value.connectionId ? [{
+      icon: '⌂',
+      title: t('palette.newLocalTerminal'),
+      subtitle: t('palette.newLocalTerminalDesc'),
+      action: () => splitPane.splitPane('horizontal', true, activeWorkspacePath.value),
+    }] : []),
   ]
 
   // Plugin-registered commands
@@ -1338,6 +1405,7 @@ onMounted(async () => {
               previewAddress: '',
               previewUrl: '',
               previewKind: 'web',
+              connectionId: tab.connection_id,
             })
           }
           if (data.active_pane_id) {
@@ -1362,10 +1430,17 @@ onMounted(async () => {
   } else {
     // No local token — check if server has one configured
     await getApiBase()
-    const configured = await checkTokenConfigured()
+    const { configured, serverMode } = await checkTokenConfigured()
     if (!configured) {
-      // First-time setup: show setup page
+      // First-time setup: show setup page (server mode only)
       needsSetup.value = true
+    } else if (!serverMode) {
+      // Desktop mode with auto-generated token — fetch and authenticate
+      const autoToken = await fetchAutoToken()
+      if (autoToken) {
+        setAuthToken(autoToken)
+        await onLoginSuccess()
+      }
     }
   }
 })

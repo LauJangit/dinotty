@@ -7,20 +7,60 @@
           <button class="cw-close" @click="$emit('close')">&times;</button>
         </div>
         <div class="cw-body">
-          <label class="cw-label">{{ t('workspace.path') }}</label>
-          <div class="cw-path-row">
+          <!-- Mode toggle (only when creating) -->
+          <template v-if="!isEdit">
+            <div class="cw-mode-toggle">
+              <button
+                :class="['cw-mode-btn', { active: mode === 'local' }]"
+                @click="mode = 'local'"
+              >
+                {{ t('workspace.modeLocal') }}
+              </button>
+              <button
+                :class="['cw-mode-btn', { active: mode === 'remote' }]"
+                @click="mode = 'remote'"
+              >
+                {{ t('workspace.modeRemote') }}
+              </button>
+            </div>
+          </template>
+
+          <!-- SSH connection selector (remote mode) -->
+          <template v-if="mode === 'remote'">
+            <label class="cw-label">{{ t('workspace.connection') }}</label>
+            <select v-model="selectedConnectionId" class="cw-input cw-select">
+              <option value="" disabled>{{ t('workspace.connectionNone') }}</option>
+              <option v-for="profile in sshProfiles" :key="profile.id" :value="profile.id">
+                {{ profile.name || profile.username + '@' + profile.host }}
+              </option>
+            </select>
+
+            <label class="cw-label">{{ t('workspace.remotePath') }}</label>
             <input
-              ref="pathInput"
-              v-model="path"
+              v-model="remotePath"
               class="cw-input"
-              :disabled="isEdit"
-              placeholder="/Users/me/projects/my-app"
+              placeholder="/home/user/project"
               @keydown.enter="onSubmit"
             />
-            <button v-if="!isEdit" class="cw-browse-btn" @click="toggleBrowser">
-              <FolderOpen :size="14" />
-            </button>
-          </div>
+          </template>
+
+          <!-- Local path (local mode or edit) -->
+          <template v-if="mode === 'local'">
+            <label class="cw-label">{{ t('workspace.path') }}</label>
+            <div class="cw-path-row">
+              <input
+                ref="pathInput"
+                v-model="path"
+                class="cw-input"
+                :disabled="isEdit"
+                placeholder="/Users/me/projects/my-app"
+                @keydown.enter="onSubmit"
+              />
+              <button v-if="!isEdit" class="cw-browse-btn" @click="toggleBrowser">
+                <FolderOpen :size="14" />
+              </button>
+            </div>
+          </template>
 
           <label class="cw-label">{{ t('workspace.name') }} <span class="cw-optional">({{ t('workspace.path').toLowerCase() }})</span></label>
           <input
@@ -56,11 +96,15 @@ import { ref, computed, watch, nextTick } from 'vue'
 import { FolderOpen } from 'lucide-vue-next'
 import { useI18n } from '../../composables/useI18n'
 import { useWorkspaces } from '../../composables/useWorkspaces'
+import { useSettings } from '../../composables/useSettings'
 import type { Workspace } from '../../types/workspace'
 import FilePickerModal from '../preview/FilePickerModal.vue'
 
 const { t } = useI18n()
 const { createWorkspace, updateWorkspace } = useWorkspaces()
+const { settings } = useSettings()
+
+const sshProfiles = computed(() => settings.ssh_profiles ?? [])
 
 const props = defineProps<{
   visible: boolean
@@ -74,6 +118,9 @@ const emit = defineEmits<{
 
 const isEdit = computed(() => !!props.workspace)
 
+const mode = ref<'local' | 'remote'>('local')
+const selectedConnectionId = ref('')
+const remotePath = ref('/home')
 const path = ref('')
 const name = ref('')
 const error = ref('')
@@ -82,6 +129,7 @@ const showPicker = ref(false)
 
 const canSubmit = computed(() => {
   if (isEdit.value) return !!name.value.trim()
+  if (mode.value === 'remote') return !!selectedConnectionId.value && !!remotePath.value.trim()
   return !!path.value.trim()
 })
 
@@ -90,9 +138,15 @@ watch(() => props.visible, (v) => {
     if (props.workspace) {
       path.value = props.workspace.path
       name.value = props.workspace.name
+      mode.value = props.workspace.connection_id ? 'remote' : 'local'
+      selectedConnectionId.value = props.workspace.connection_id ?? ''
+      remotePath.value = props.workspace.path
     } else {
       path.value = ''
       name.value = ''
+      mode.value = 'local'
+      selectedConnectionId.value = ''
+      remotePath.value = '/home'
     }
     error.value = ''
     nextTick(() => pathInput.value?.focus())
@@ -119,6 +173,12 @@ function autoFillName() {
   }
 }
 
+function autoFillNameFromRemote(profile?: { name?: string; host?: string }) {
+  if (!name.value.trim() && profile) {
+    name.value = profile.name || profile.host || ''
+  }
+}
+
 watch(path, () => {
   if (!name.value.trim()) {
     autoFillName()
@@ -131,6 +191,15 @@ async function onSubmit() {
   try {
     if (isEdit.value && props.workspace) {
       await updateWorkspace(props.workspace.id, { name: name.value.trim() })
+    } else if (mode.value === 'remote') {
+      const profile = sshProfiles.value.find((p: any) => p.id === selectedConnectionId.value)
+      autoFillNameFromRemote(profile)
+      const ws = await createWorkspace(
+        remotePath.value.trim(),
+        name.value.trim() || undefined,
+        selectedConnectionId.value
+      )
+      emit('created', ws.id)
     } else {
       const p = path.value.trim()
       autoFillName()
@@ -248,6 +317,35 @@ async function onSubmit() {
   font-size: 12px;
   color: var(--color-red, #ef4444);
   margin: 2px 0 0;
+}
+.cw-mode-toggle {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border, #444);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+.cw-mode-btn {
+  flex: 1;
+  padding: 6px 12px;
+  border: none;
+  background: var(--bg-input, #2a2a2a);
+  color: var(--fg-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.cw-mode-btn.active {
+  background: var(--accent, #007acc);
+  color: #fff;
+}
+.cw-mode-btn:not(.active):hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.cw-select {
+  appearance: auto;
+  cursor: pointer;
 }
 .cw-footer {
   display: flex;

@@ -49,6 +49,13 @@
           <span class="tcm-label">{{ t('terminal.ctxBroadcast') }}</span>
           <span class="tcm-hint">{{ shortcutHint('toggleBroadcast') }}</span>
         </button>
+        <template v-if="isSsh">
+          <div class="tcm-sep" />
+          <button class="tcm-item" role="menuitem" @click="onNewLocalTerminal">
+            <Monitor :size="12" class="tcm-icon" />
+            <span class="tcm-label">{{ t('terminal.ctxNewLocalTerminal') }}</span>
+          </button>
+        </template>
       </div>
     </div>
 
@@ -112,6 +119,7 @@ import {
   Columns2,
   Rows2,
   Radio,
+  Monitor,
 } from 'lucide-vue-next'
 import { useSettings } from '../../composables/useSettings'
 import { useI18n } from '../../composables/useI18n'
@@ -126,6 +134,7 @@ const props = defineProps<{
   selectedText: string
   linkType?: 'file' | 'link'
   linkTarget?: string
+  isSsh?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -138,6 +147,7 @@ const emit = defineEmits<{
   splitHorizontal: []
   splitVertical: []
   toggleBroadcast: []
+  newLocalTerminal: []
 }>()
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
@@ -163,8 +173,12 @@ const menuStyle = computed(() => {
   const MENU_WIDTH = 200
   const BASE_HEIGHT = 290
   const LINK_ITEM_HEIGHT = 36
+  const SSH_ITEM_HEIGHT = 36 + 9 // button + separator
   const SEP_HEIGHT = 9
-  const menuHeight = BASE_HEIGHT + (props.linkType ? LINK_ITEM_HEIGHT + SEP_HEIGHT : 0)
+  const menuHeight =
+    BASE_HEIGHT +
+    (props.linkType ? LINK_ITEM_HEIGHT + SEP_HEIGHT : 0) +
+    (props.isSsh ? SSH_ITEM_HEIGHT : 0)
   const PAD = 8
   let x = props.x
   let y = props.y
@@ -246,6 +260,11 @@ function onSplitDown() {
 
 function onBroadcast() {
   emit('toggleBroadcast')
+  close()
+}
+
+function onNewLocalTerminal() {
+  emit('newLocalTerminal')
   close()
 }
 </script>
