@@ -96,6 +96,7 @@ const emit = defineEmits<{
   activate: [paneId: string]
   'close-tab': [paneId: string]
   'new-tab': [cwd?: string]
+  'new-tab-ssh': [connectionId: string]
   'rename-tab': [paneId: string, title: string]
 }>()
 
@@ -177,9 +178,7 @@ const tabCounts = computed(() => {
   }
   for (const tab of session.tabs) {
     if (tab.type !== 'terminal') continue
-    const cwd = tab.cwd
-    if (!cwd) continue
-    const ws = matchWorkspace(cwd)
+    const ws = matchWorkspace(tab.cwd ?? '', tab.connectionId, tab.type === 'terminal' ? tab.workspaceId : undefined)
     if (ws) counts[ws.id] = (counts[ws.id] || 0) + 1
   }
   return counts
@@ -192,9 +191,7 @@ const ungroupedCount = computed(() => {
 function getCardWorkspace(card: TabCard): string | null {
   const tab = session.tabs.find((t) => t.paneId === card.paneId)
   if (!tab || tab.type !== 'terminal') return null
-  const cwd = tab.cwd
-  if (!cwd) return null
-  const ws = matchWorkspace(cwd)
+  const ws = matchWorkspace(tab.cwd ?? '', tab.connectionId, tab.type === 'terminal' ? tab.workspaceId : undefined)
   return ws?.id ?? null
 }
 
@@ -279,7 +276,11 @@ function onNewTabForSelected() {
     emit('new-tab')
   } else {
     const ws = workspaces.value.find((w) => w.id === sel)
-    emit('new-tab', ws?.path)
+    if (ws?.connection_id) {
+      emit('new-tab-ssh', ws.connection_id)
+    } else {
+      emit('new-tab', ws?.path)
+    }
   }
 }
 

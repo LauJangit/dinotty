@@ -326,7 +326,11 @@ const visibleTabList = computed(() => {
       }
       return !rawTab.workspaceId
     }
-    const ws = rawTab.cwd ? matchWorkspace(rawTab.cwd) : null
+    // Terminal tab: match by connectionId (SSH) or cwd (local)
+    const ws =
+      rawTab.type === 'terminal'
+        ? matchWorkspace(rawTab.cwd ?? '', rawTab.connectionId, rawTab.type === 'terminal' ? rawTab.workspaceId : undefined)
+        : null
     if (activeWorkspaceId.value) {
       // Specific workspace: only tabs matching this workspace
       return ws?.id === activeWorkspaceId.value
