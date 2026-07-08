@@ -241,6 +241,7 @@ import { initializePaneMru } from './types/paneMru'
 import {
   getApiBase,
   checkTokenConfigured,
+  fetchAutoToken,
   setAuthToken,
 } from './composables/apiBase'
 import { isTauri, tauriInvoke } from './composables/useTransport'
@@ -1424,10 +1425,17 @@ onMounted(async () => {
   } else {
     // No local token — check if server has one configured
     await getApiBase()
-    const configured = await checkTokenConfigured()
+    const { configured, serverMode } = await checkTokenConfigured()
     if (!configured) {
-      // First-time setup: show setup page
+      // First-time setup: show setup page (server mode only)
       needsSetup.value = true
+    } else if (!serverMode) {
+      // Desktop mode with auto-generated token — fetch and authenticate
+      const autoToken = await fetchAutoToken()
+      if (autoToken) {
+        setAuthToken(autoToken)
+        await onLoginSuccess()
+      }
     }
   }
 })

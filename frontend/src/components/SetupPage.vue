@@ -4,6 +4,7 @@
       <img src="/logo.png" alt="Dinotty" class="login-logo" />
       <h1 class="login-title">Dinotty</h1>
       <p class="login-subtitle">{{ t('setup.subtitle') }}</p>
+      <p class="setup-desc">{{ t('setup.desc') }}</p>
       <form @submit.prevent="onSubmit">
         <div class="setup-input-row">
           <input
@@ -127,6 +128,14 @@ async function onSubmit() {
   color: #858585;
   margin: 0;
   text-align: center;
+}
+
+.setup-desc {
+  font-size: 12px;
+  color: #666;
+  margin: 0;
+  text-align: center;
+  line-height: 1.5;
 }
 
 .login-input {

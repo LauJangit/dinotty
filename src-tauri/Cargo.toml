@@ -8,7 +8,7 @@ license = "MIT"
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-shell = "2"
 tauri-plugin-global-shortcut = "2"
-dinotty-server = { path = ".." }
+dinotty-server = { path = "..", default-features = false }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -23,6 +23,7 @@ mime_guess = "2"
 local-ip-address = "0.6"
 urlencoding = "2"
 base64 = "0.22"
+rand = "0.10.1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "multipart"] }
 rfd = "0.15"
 

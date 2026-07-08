@@ -1585,6 +1585,7 @@ dependencies = [
  "local-ip-address",
  "mime_guess",
  "portable-pty",
+ "rand 0.10.1",
  "reqwest 0.12.28",
  "rfd",
  "rust-embed",
