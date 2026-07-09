@@ -236,7 +236,31 @@ pub async fn create_ssh_session(
             .map_err(|_| "Command exec timed out".to_string())?
             .map_err(|e| format!("Exec failed: {e}"))?;
     } else {
-        channel.request_shell(true).await.map_err(|e| format!("Shell request failed: {e}"))?;
+        let initial_cwd = params.initial_cwd.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty());
+        if let Some(cwd) = initial_cwd {
+            let escaped = cwd.replace('\'', "'\\''");
+            // Inject PROMPT_COMMAND so bash reports its CWD via OSC 0 title
+            // sequences (`\033]0;user@host:path\007`). The backend's
+            // `sniff_cwd_from_title_osc` parses this to track cwd changes,
+            // which the file browser and workspace matcher rely on. This
+            // mirrors the local PTY shell integration in `pty.rs`.
+            // We send `${PWD}` (absolute) rather than `${PWD/#$HOME/~}` because
+            // the backend's `parse_title_cwd` resolves `~` against the *local*
+            // home, which is wrong for SSH sessions.
+            // Note: only bash honors PROMPT_COMMAND; zsh falls back to no
+            // tracking (initial cd still works via `exec $SHELL -l`).
+            let prompt_command = r#"history -a; history -r; printf "\033]0;%s@%s:%s\007" "${USER}" "${HOSTNAME%%.*}" "${PWD}"; printf "\033]133;A\033\\"; printf "\033]133;D;%d\033\\" $?"#;
+            let cmd = format!(
+                "cd '{escaped}' && export PROMPT_COMMAND='{prompt_command}' && exec \"${{SHELL:-/bin/bash}}\" -l"
+            );
+            info!("SSH exec command for {}: {}", pane_id, cmd);
+            tokio::time::timeout(timeouts.command_exec, channel.exec(true, cmd.as_bytes()))
+                .await
+                .map_err(|_| "Command exec timed out".to_string())?
+                .map_err(|e| format!("Exec failed: {e}"))?;
+        } else {
+            channel.request_shell(true).await.map_err(|e| format!("Shell request failed: {e}"))?;
+        }
     }
 
     info!("SSH channel opened for {}", pane_id);
@@ -276,6 +300,11 @@ pub async fn create_ssh_session(
     };
     info!("Remote home for {}: {}", pane_id, remote_home.display());
 
+    // Initial cwd: prefer the workspace-specified path, fall back to remote $HOME.
+    let initial_cwd_path =
+        params.initial_cwd.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()).map(PathBuf::from);
+    let effective_cwd = initial_cwd_path.unwrap_or(remote_home);
+
     // 8. 构造 Session
     let (resize_tx, resize_rx) = watch::channel(None);
     let (output_tx, output_rx) = mpsc::unbounded_channel();
@@ -292,7 +321,7 @@ pub async fn create_ssh_session(
         exited: std::sync::Mutex::new(false),
         shell_type: "ssh".to_string(),
         tauri_on_exit: std::sync::Mutex::new(tauri_on_exit),
-        cwd_state: std::sync::Mutex::new(CwdState { cwd: remote_home, sniff_buf: Vec::new() }),
+        cwd_state: std::sync::Mutex::new(CwdState { cwd: effective_cwd, sniff_buf: Vec::new() }),
         sync_active: std::sync::atomic::AtomicBool::new(false),
         sync_buffer: std::sync::Mutex::new(Vec::new()),
         sync_buffer_bytes: std::sync::atomic::AtomicUsize::new(0),
@@ -542,6 +571,10 @@ pub struct SshConnectRequest {
     /// so the session can be linked back to the profile for workspace matching.
     #[serde(default)]
     pub profile_id: Option<String>,
+    /// Optional initial remote directory. When set, the shell runs `cd` to this
+    /// path after startup. Ignored if `default_command` is set.
+    #[serde(default)]
+    pub initial_cwd: Option<String>,
 }
 
 fn default_ssh_port() -> u16 {
@@ -562,6 +595,7 @@ impl SshConnectRequest {
             auth_method: self.auth.clone(),
             default_command: self.default_command.clone(),
             profile_id: self.profile_id.clone(),
+            initial_cwd: self.initial_cwd.clone(),
         }
     }
 }
@@ -570,4 +604,8 @@ impl SshConnectRequest {
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct SshProfileConnectRequest {
     pub profile_id: String,
+    /// Optional initial remote directory. When set, the shell runs `cd` to this
+    /// path after startup. Ignored if the profile has a `default_command`.
+    #[serde(default)]
+    pub initial_cwd: Option<String>,
 }
