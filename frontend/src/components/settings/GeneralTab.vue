@@ -68,9 +68,6 @@
           </div>
           <div v-if="accessUrl" class="qr-code-wrap">
             <canvas ref="qrCanvasRef"></canvas>
-            <button class="qr-refresh-btn" @click="refreshQrCode" :title="t('settings.refreshQrCode')">
-              <RefreshCw :size="12" />
-            </button>
           </div>
           <p class="settings-hint">{{ t('settings.accessUrlHint') }}</p>
         </div>
@@ -365,7 +362,6 @@ const logContent = ref('')
 const logLoading = ref(false)
 const copied = ref(false)
 const qrCanvasRef = ref<HTMLCanvasElement | null>(null)
-const qrCode = ref('')
 const currentToken = ref('')
 const uploadBusy = ref<'' | 'status' | 'clear' | 'adopt'>('')
 const uploadStatus = ref({ managed: false, foreign: false, empty: true })
@@ -488,28 +484,15 @@ function onUploadStatusEvent(ev: Event) {
   setUploadStatus((ev as CustomEvent<UploadResponse>).detail ?? {})
 }
 
-watch([accessUrl, qrCanvasRef, qrCode], ([url, canvas, code]) => {
+watch([accessUrl, qrCanvasRef], ([url, canvas]) => {
   if (url && canvas) {
-    const qrUrl = code ? `${url}/?code=${code}` : url
-    QRCode.toCanvas(canvas, qrUrl, {
+    QRCode.toCanvas(canvas, url, {
       width: 160,
       margin: 2,
       color: { dark: '#C7C7C7', light: '#00000000' },
     })
   }
 })
-
-async function refreshQrCode() {
-  try {
-    const res = await authFetch(apiUrl('/api/qr-code'), { method: 'POST' })
-    if (res.ok) {
-      const data = await res.json()
-      qrCode.value = data.code
-    }
-  } catch {
-    // QR code generation failed — canvas will show URL without code
-  }
-}
 
 async function fetchAccessUrl() {
   try {
@@ -527,13 +510,11 @@ async function fetchAccessUrl() {
 
 async function refreshAccessUrlAndQr() {
   await fetchAccessUrl()
-  await refreshQrCode()
 }
 
 onMounted(async () => {
   await fetchAccessUrl()
   currentToken.value = (await fetchServerToken()) || getAuthToken()
-  await refreshQrCode()
   await refreshUploadStatus()
 })
 
@@ -549,16 +530,12 @@ function onVisibilityChange() {
   }
 }
 
-// Auto-refresh QR code before the 5-minute TTL expires
-let qrRefreshTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
-  qrRefreshTimer = setInterval(refreshQrCode, 4 * 60 * 1000)
   window.addEventListener('online', onNetworkChange)
   document.addEventListener('visibilitychange', onVisibilityChange)
   window.addEventListener('dinotty-upload-status', onUploadStatusEvent)
 })
 onUnmounted(() => {
-  if (qrRefreshTimer) clearInterval(qrRefreshTimer)
   window.removeEventListener('online', onNetworkChange)
   document.removeEventListener('visibilitychange', onVisibilityChange)
   window.removeEventListener('dinotty-upload-status', onUploadStatusEvent)
