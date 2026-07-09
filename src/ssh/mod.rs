@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, watch};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// SSH 连接超时配置
 pub struct SshTimeouts {
@@ -498,6 +498,7 @@ async fn ssh_reader_task(
                         }
                     }
                     Some(SshCmd::Resize(cols, rows)) => {
+                        debug!("SSH window_change: {cols}x{rows}, pane={pane_id}");
                         if let Err(e) = channel.window_change(u32::from(cols), u32::from(rows), 0, 0).await {
                             error!("SSH resize failed: {e}, pane={}", pane_id);
                         }
@@ -530,7 +531,14 @@ async fn ssh_reader_task(
     info!("SSH reader task exited, pane={}", pane_id);
 }
 
-/// Resize debounce task
+/// Resize debounce task — coalesces rapid resize events before sending
+/// SSH `window-change`, similar to how the local kernel coalesces SIGWINCH.
+///
+/// Pattern: `borrow()` + conditional apply after 300ms sleep.
+/// During a divider drag the frontend sends a resize every ~25ms.
+/// The300ms window lets intermediate values collapse: if the value
+/// changes during sleep, we skip and re-enter the loop. Only when
+/// the drag stops (no new values for 300ms) do we apply the final size.
 async fn resize_debounce_task(
     session: Arc<Session>,
     mut resize_rx: watch::Receiver<Option<(u16, u16)>>,
@@ -542,12 +550,10 @@ async fn resize_debounce_task(
         }
         let size = *resize_rx.borrow();
         if let Some((cols, rows)) = size {
-            // 等待 25ms 去抖
-            tokio::time::sleep(Duration::from_millis(25)).await;
-
-            // 检查是否有更新的值
+            tokio::time::sleep(Duration::from_millis(300)).await;
             let latest = *resize_rx.borrow();
             if latest == Some((cols, rows)) {
+                debug!("SSH resize debounce: applying {cols}x{rows}, pane={pane_id}");
                 if let Err(e) = session.resize_async(cols, rows).await {
                     error!("SSH resize failed: {}, pane={}", e, pane_id);
                 }
@@ -608,4 +614,157 @@ pub struct SshProfileConnectRequest {
     /// path after startup. Ignored if the profile has a `default_command`.
     #[serde(default)]
     pub initial_cwd: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Test: borrow() + conditional apply with 300ms debounce.
+    /// Simulates rapid frontend resize messages during a divider drag,
+    /// then verifies only one resize is applied after the drag stops.
+    #[tokio::test]
+    async fn test_resize_debounce_conditional_300ms() {
+        let (tx, mut rx) = watch::channel(None::<(u16, u16)>);
+        let apply_count = Arc::new(AtomicUsize::new(0));
+        let last_applied = Arc::new(std::sync::Mutex::new(None::<(u16, u16)>));
+
+        let ac = Arc::clone(&apply_count);
+        let la = Arc::clone(&last_applied);
+
+        // Same pattern as resize_debounce_task: borrow() + conditional apply
+        tokio::spawn(async move {
+            loop {
+                if rx.changed().await.is_err() {
+                    break;
+                }
+                let size = *rx.borrow();
+                if let Some((cols, rows)) = size {
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    let latest = *rx.borrow();
+                    if latest == Some((cols, rows)) {
+                        ac.fetch_add(1, Ordering::SeqCst);
+                        *la.lock().unwrap() = Some((cols, rows));
+                    }
+                }
+            }
+        });
+
+        // Phase 1: Simulate drag — rapid resizes every 25ms for 500ms
+        for i in 0..20 {
+            let cols = 100 + i;
+            let _ = tx.send(Some((cols, 24)));
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+
+        // Phase 2: Drag stopped — wait for debounce to settle (300ms + buffer)
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let count = apply_count.load(Ordering::SeqCst);
+        let final_size = *last_applied.lock().unwrap();
+
+        println!("Conditional 300ms - apply count: {count}, final size: {final_size:?}");
+
+        // Should apply exactly once — the final size after drag stops
+        assert_eq!(count, 1, "Expected exactly 1 apply, got {count}");
+        assert_eq!(final_size, Some((119, 24)));
+    }
+
+    /// Test: simulate a realistic 3-second divider drag with resize every 25ms.
+    /// Verifies that only a handful of resizes are applied (not one per message).
+    #[tokio::test]
+    async fn test_resize_debounce_realistic_drag() {
+        let (tx, mut rx) = watch::channel(None::<(u16, u16)>);
+        let apply_count = Arc::new(AtomicUsize::new(0));
+        let applied_sizes = Arc::new(std::sync::Mutex::new(Vec::<(u16, u16)>::new()));
+
+        let ac = Arc::clone(&apply_count);
+        let sizes = Arc::clone(&applied_sizes);
+
+        tokio::spawn(async move {
+            loop {
+                if rx.changed().await.is_err() {
+                    break;
+                }
+                let size = *rx.borrow();
+                if let Some((cols, rows)) = size {
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    let latest = *rx.borrow();
+                    if latest == Some((cols, rows)) {
+                        ac.fetch_add(1, Ordering::SeqCst);
+                        sizes.lock().unwrap().push((cols, rows));
+                    }
+                }
+            }
+        });
+
+        // Simulate a3-second drag: resize every 25ms, cols from80 to200
+        let total_steps = (3000 / 25) as u16; //120 steps
+        for i in 0..total_steps {
+            let cols = 80 + i;
+            let _ = tx.send(Some((cols, 24)));
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+
+        // Wait for debounce to settle
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let count = apply_count.load(Ordering::SeqCst);
+        let applied = applied_sizes.lock().unwrap().clone();
+
+        println!("Realistic drag - total messages: {total_steps}, applies: {count}");
+        println!("Applied sizes: {applied:?}");
+
+        // Should apply only once — the final size (80+119=199, 24)
+        assert_eq!(count, 1, "Expected exactly 1 apply during drag, got {count}");
+        assert_eq!(applied[0], (199, 24));
+    }
+
+    /// Test: drag and return to original size (edge case).
+    /// Verifies that even if the final size equals the initial size,
+    /// the resize is still applied.
+    #[tokio::test]
+    async fn test_resize_debounce_return_to_original() {
+        let (tx, mut rx) = watch::channel(None::<(u16, u16)>);
+        let apply_count = Arc::new(AtomicUsize::new(0));
+        let last_applied = Arc::new(std::sync::Mutex::new(None::<(u16, u16)>));
+
+        let ac = Arc::clone(&apply_count);
+        let la = Arc::clone(&last_applied);
+
+        tokio::spawn(async move {
+            loop {
+                if rx.changed().await.is_err() {
+                    break;
+                }
+                let size = *rx.borrow();
+                if let Some((cols, rows)) = size {
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    let latest = *rx.borrow();
+                    if latest == Some((cols, rows)) {
+                        ac.fetch_add(1, Ordering::SeqCst);
+                        *la.lock().unwrap() = Some((cols, rows));
+                    }
+                }
+            }
+        });
+
+        // Drag right, then back to original
+        let _ = tx.send(Some((100, 24)));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let _ = tx.send(Some((110, 24)));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let _ = tx.send(Some((100, 24))); // back to original
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let count = apply_count.load(Ordering::SeqCst);
+        let final_size = *last_applied.lock().unwrap();
+
+        println!("Return to original - apply count: {count}, final size: {final_size:?}");
+
+        // tmux also applies twice for the "return to original" edge case
+        assert!(count >= 1 && count <= 2, "Expected 1-2 applies, got {count}");
+        assert_eq!(final_size, Some((100, 24)));
+    }
 }
