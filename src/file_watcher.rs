@@ -2,8 +2,9 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket},
-        Query, State, WebSocketUpgrade,
+        ConnectInfo, Query, State, WebSocketUpgrade,
     },
+    http::StatusCode,
     response::IntoResponse,
 };
 use futures_util::StreamExt;
@@ -163,10 +164,18 @@ pub async fn watch_handler(
     ws: WebSocketUpgrade,
     Query(q): Query<WatchQuery>,
     State((manager, watcher_state)): State<(Arc<SessionManager>, Arc<FileWatcherState>)>,
+    State(settings): State<crate::settings::SettingsState>,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
+    let allowed_origins = settings.read().await.auth.allowed_origins.clone();
+    if !crate::auth::check_ws_origin(&headers, &allowed_origins, addr.ip()) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     ws.on_upgrade(move |socket| {
         handle_watch_socket(socket, q.pane_id, q.path, manager, watcher_state)
     })
+    .into_response()
 }
 
 async fn handle_watch_socket(

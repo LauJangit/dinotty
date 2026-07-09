@@ -2,7 +2,7 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket},
-        State, WebSocketUpgrade,
+        ConnectInfo, State, WebSocketUpgrade,
     },
     http::StatusCode,
     response::IntoResponse,
@@ -330,8 +330,15 @@ pub async fn delete_history(
 pub async fn ws_history_handler(
     ws: WebSocketUpgrade,
     State(state): State<HistoryState>,
+    State(settings): State<crate::settings::SettingsState>,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_history_ws(socket, state))
+    let allowed_origins = settings.read().await.auth.allowed_origins.clone();
+    if !crate::auth::check_ws_origin(&headers, &allowed_origins, addr.ip()) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    ws.on_upgrade(move |socket| handle_history_ws(socket, state)).into_response()
 }
 
 async fn handle_history_ws(mut socket: WebSocket, state: HistoryState) {
