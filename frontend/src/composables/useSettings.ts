@@ -29,6 +29,10 @@ export interface SettingsData {
   recent_files: RecentEntry[]
   recent_urls: RecentEntry[]
   action_keyboard: ActionKeyboardConfig | null
+  upload_dir: string
+  upload_cap_mb: number
+  upload_file_cap_mb: number
+  upload_cap_count: number
   keyboard_sound: boolean
   show_virtual_keyboard: boolean
   confirm_before_close_tab: boolean
@@ -199,6 +203,10 @@ export const settings = reactive<SettingsData>({
   recent_files: [],
   recent_urls: [],
   action_keyboard: null,
+  upload_dir: '',
+  upload_cap_mb: 200,
+  upload_file_cap_mb: 0,
+  upload_cap_count: 100,
   keyboard_sound: false,
   show_virtual_keyboard: false,
   confirm_before_close_tab: true,
@@ -279,6 +287,15 @@ function restoreActionIcons() {
   }
 }
 
+function syncActionKeyboardStorage() {
+  if (typeof localStorage === 'undefined') return
+  if (settings.action_keyboard) {
+    localStorage.setItem('dinotty_action_keyboard', JSON.stringify(settings.action_keyboard))
+  } else {
+    localStorage.removeItem('dinotty_action_keyboard')
+  }
+}
+
 async function loadSettings() {
   if (!hasAuthToken()) return
   try {
@@ -290,9 +307,7 @@ async function loadSettings() {
       restoreActionIcons()
       applyCurrentTheme()
       // Sync action keyboard to localStorage for static mobile-keyboard.js
-      if (settings.action_keyboard) {
-        localStorage.setItem('dinotty_action_keyboard', JSON.stringify(settings.action_keyboard))
-      }
+      syncActionKeyboardStorage()
     }
   } catch (e) {
     console.error('[settings] load failed:', e)
@@ -304,11 +319,7 @@ export async function saveSettings() {
     // Wait for initial load to complete before saving, to avoid overwriting server data with defaults
     if (loadPromise) await loadPromise
     // Sync action keyboard to localStorage for static mobile-keyboard.js
-    if (settings.action_keyboard) {
-      localStorage.setItem('dinotty_action_keyboard', JSON.stringify(settings.action_keyboard))
-    } else {
-      localStorage.removeItem('dinotty_action_keyboard')
-    }
+    syncActionKeyboardStorage()
     await getApiBase()
     const res = await authFetch(apiUrl('/api/settings'), {
       method: 'PUT',

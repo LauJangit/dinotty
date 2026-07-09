@@ -50,7 +50,10 @@ export async function validateToken(token: string): Promise<boolean> {
   }
 }
 
-export async function checkTokenConfigured(): Promise<{ configured: boolean; serverMode: boolean }> {
+export async function checkTokenConfigured(): Promise<{
+  configured: boolean
+  serverMode: boolean
+}> {
   try {
     await getApiBase()
     const res = await fetch(apiUrl('/api/token-configured'))
@@ -111,11 +114,17 @@ export function apiUrl(path: string): string {
   return cached ? `${cached}${p}` : p
 }
 
+export function authHeaders(): Record<string, string> {
+  const token = getAuthToken()
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
 export async function authFetch(url: string, init?: RequestInit): Promise<Response> {
   if (isTauri()) {
-    const token = getAuthToken()
-    const headers: [string, string][] = []
-    if (token) headers.push(['Authorization', `Bearer ${token}`])
+    if (init?.body != null && typeof init.body !== 'string') {
+      return new Response('desktop bridge does not support binary/multipart body', { status: 400 })
+    }
+    const headers = Object.entries(authHeaders())
     if (init?.headers) {
       const h = new Headers(init.headers)
       h.forEach((v, k) => headers.push([k, v]))
@@ -131,9 +140,8 @@ export async function authFetch(url: string, init?: RequestInit): Promise<Respon
       headers: resp.headers,
     })
   }
-  const token = getAuthToken()
   const headers = new Headers(init?.headers)
-  if (token) headers.set('Authorization', `Bearer ${token}`)
+  Object.entries(authHeaders()).forEach(([key, value]) => headers.set(key, value))
   return fetch(url, { ...init, headers })
 }
 

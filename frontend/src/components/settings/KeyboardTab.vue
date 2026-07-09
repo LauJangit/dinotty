@@ -119,9 +119,11 @@
           >
           <div class="kb-shortcut-ctrl">
             <span v-if="kbRecording !== def.id" class="kb-keys">
-              <kbd v-for="(k, i) in formatBinding(getBinding(def.id), def.kind ?? 'app')" :key="i">{{
-                k
-              }}</kbd>
+              <kbd
+                v-for="(k, i) in formatBinding(getBinding(def.id), def.kind ?? 'app')"
+                :key="i"
+                >{{ k }}</kbd
+              >
             </span>
             <span v-else class="kb-keys recording">{{ t('keybinding.pressKeys') }}</span>
             <button
@@ -433,15 +435,16 @@ function startKbRecord(id: string) {
       kbRecordError.value = t('keybinding.terminalReservedError')
       return
     }
-    const binding: KeyBinding = kind === 'terminal'
-      ? {
-          key,
-          shift: e.shiftKey,
-          meta: e.metaKey,
-          ctrl: e.ctrlKey,
-          alt: e.altKey,
-        }
-      : { key, shift: e.shiftKey }
+    const binding: KeyBinding =
+      kind === 'terminal'
+        ? {
+            key,
+            shift: e.shiftKey,
+            meta: e.metaKey,
+            ctrl: e.ctrlKey,
+            alt: e.altKey,
+          }
+        : { key, shift: e.shiftKey }
     settings.keybindings[id] = binding
     stopKbRecord()
   }

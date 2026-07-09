@@ -595,6 +595,17 @@ async fn main() {
                     .route("/api/workspace/upload", post(workspace::workspace_upload))
                     .layer(axum::extract::DefaultBodyLimit::max(512 * 1024 * 1024)),
             )
+            .merge(
+                Router::new()
+                    .route(
+                        "/api/uploads",
+                        post(workspace::workspace_uploads).get(workspace::uploads_status),
+                    )
+                    .layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024 * 1024)),
+            )
+            .route("/api/uploads/clear", post(workspace::uploads_clear))
+            .route("/api/uploads/adopt", post(workspace::uploads_adopt))
+            .route("/api/uploads/default-dir", get(workspace::uploads_default_dir))
             .route("/api/workspace/create", post(workspace::workspace_create_entry))
             .route("/api/workspace/file", put(workspace::workspace_put_file))
             .route("/api/workspace/delete", delete(workspace::workspace_delete))

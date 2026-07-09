@@ -27,9 +27,11 @@
           :class="{ 'mkb-text-input-focused': textInputFocused }"
           :placeholder="t('mobileKb.actionPlaceholder')"
           enterkeyhint="send"
+          rows="1"
           v-model="textInput"
           @focus="onTextInputFocus"
           @blur="onTextInputBlur"
+          @input="resizeTextInput"
           @keydown.enter.exact.prevent="sendTextInput"
         />
       </div>
@@ -46,17 +48,92 @@
 
     <!-- Toolbar (visible when textarea focused) -->
     <div class="mkb-toolbar" v-show="textInputFocused">
-      <button class="mkb-tool-btn" @mousedown.prevent="showFilePicker = true">
+      <button
+        type="button"
+        class="mkb-tool-btn"
+        :title="t('mobileKb.insertMacFile')"
+        @mousedown.prevent="showFilePicker = true"
+      >
         <FolderOpen :size="18" />
+      </button>
+      <input
+        v-if="!isTauri()"
+        ref="phoneFileInputRef"
+        type="file"
+        accept="*/*"
+        multiple
+        hidden
+        @change="onPhoneFileInputChange"
+      />
+      <button
+        v-if="!isTauri()"
+        type="button"
+        class="mkb-tool-btn"
+        :title="t('mobileKb.insertPhoneFile')"
+        :disabled="phoneUploading"
+        @mousedown.prevent="openPhoneFilePicker"
+      >
+        <LoaderCircle v-if="phoneUploading" :size="18" class="mkb-spin" />
+        <Upload v-else :size="18" />
+      </button>
+      <button
+        v-if="pasteSupported"
+        type="button"
+        class="mkb-tool-btn"
+        :title="t('mobileKb.phonePaste')"
+        @mousedown.prevent="onPhonePaste"
+      >
+        <ClipboardPaste :size="18" />
       </button>
       <button
         v-if="globalSelectedPath"
+        type="button"
         class="mkb-tool-btn mkb-path-chip"
         @mousedown.prevent="onFilePickerSelect(globalSelectedPath!)"
       >
         <FileText :size="14" />
         <span class="mkb-path-label">{{ globalSelectedPath!.split('/').pop() }}</span>
       </button>
+      <button
+        type="button"
+        class="mkb-tool-btn"
+        :title="t('mobileKb.newline')"
+        @mousedown.prevent="insertTextAtCaret('\n')"
+      >
+        <CornerDownLeft :size="18" />
+        <span class="mkb-btn-label">{{ t('mobileKb.newline') }}</span>
+      </button>
+      <button
+        type="button"
+        class="mkb-tool-btn mkb-btn-danger"
+        :title="t('mobileKb.deleteLine')"
+        @mousedown.prevent="deleteSelectedOrLogicalLine"
+      >
+        <Trash2 :size="18" />
+        <span class="mkb-btn-label">{{ t('mobileKb.deleteLine') }}</span>
+      </button>
+      <span
+        class="mkb-target-hint"
+        style="
+          margin-left: auto;
+          color: var(--fg-muted);
+          font-size: 11px;
+          line-height: 1.2;
+          text-align: right;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        "
+      >
+        {{ t('mobileKb.targetHint') }}
+      </span>
+    </div>
+
+    <div v-if="phoneUploading" class="mkb-upload-progress">
+      <div class="mkb-upload-progress-track">
+        <div class="mkb-upload-progress-fill" :style="{ width: `${phoneUploadProgress}%` }"></div>
+      </div>
+      <span>{{ phoneUploadProgressLabel() }}</span>
     </div>
 
     <!-- Swipeable panels container -->
@@ -225,12 +302,32 @@ import SuggestionBar from './SuggestionBar.vue'
 import HistoryPanel from './HistoryPanel.vue'
 import FilePickerModal from '../preview/FilePickerModal.vue'
 import type { KeyDef, ModState } from './mkbTypes'
-import { useSettings, DEFAULT_ACTION_KEYBOARD } from '../../composables/useSettings'
+import {
+  useSettings,
+  DEFAULT_ACTION_KEYBOARD,
+  onThemeChange,
+  onTextChange,
+} from '../../composables/useSettings'
 import { useI18n } from '../../composables/useI18n'
 import { useHistory } from '../../composables/useHistory'
 import { mapActionKeys } from '../../utils/actionKeyDef'
-import { Keyboard, SquareTerminal, FolderOpen, FileText } from 'lucide-vue-next'
+import {
+  Keyboard,
+  SquareTerminal,
+  FolderOpen,
+  FileText,
+  Upload,
+  LoaderCircle,
+  CornerDownLeft,
+  ClipboardPaste,
+  Trash2,
+} from 'lucide-vue-next'
 import { useSelectedPath } from '../../composables/useFileNavigation'
+import { shellEscapePath, trailingPathDeleteLen } from '../../utils/shell'
+import { isTauri } from '../../composables/useTransport'
+import { formatMB, useUpload, type UploadProgress } from '../../composables/useUpload'
+import type { UploadResponse } from '../../types/uploads'
+import { POSITION, useToast } from 'vue-toastification'
 
 const props = defineProps<{
   visible: boolean
@@ -245,12 +342,20 @@ const emit = defineEmits<{
 
 const { settings } = useSettings()
 const { t } = useI18n()
+const toast = useToast()
 const { suggestions, fetchSuggestions, fetchDebounced } = useHistory()
 const { selectedPath: globalSelectedPath } = useSelectedPath()
+const { uploadFiles, uploadErrorStatus } = useUpload()
 
 const showHistoryPanel = ref(false)
 const allSuggestions = ref<import('../../composables/useHistory').SuggestionItem[]>([])
 const showFilePicker = ref(false)
+const phoneFileInputRef = ref<HTMLInputElement>()
+const phoneUploading = ref(false)
+const phoneUploadProgress = ref(0)
+const phoneUploadLoaded = ref(0)
+const phoneUploadTotal = ref(0)
+const phoneUploadProcessing = ref(false)
 const barRef = ref<HTMLElement>()
 const swipeContainerRef = ref<HTMLElement>()
 const textInputRef = ref<HTMLTextAreaElement>()
@@ -258,6 +363,104 @@ const textInput = ref('')
 const textInputFocused = ref(false)
 const kbMode = ref<'default' | 'action'>('action')
 const inputBuffer = ref('')
+let blurTimer: ReturnType<typeof setTimeout> | null = null
+
+interface TextareaMetrics {
+  padTop: number
+  padBottom: number
+  borderTop: number
+  borderBottom: number
+  chromeFloor: number
+  one: number
+  max: number
+}
+
+let textareaMetrics: TextareaMetrics | null = null
+
+function resetTextareaMetrics() {
+  textareaMetrics = null
+}
+
+const unsubThemeMetrics = onThemeChange(resetTextareaMetrics)
+const unsubTextMetrics = onTextChange(resetTextareaMetrics)
+
+function px(value: string) {
+  const n = Number.parseFloat(value)
+  return Number.isFinite(n) ? n : 0
+}
+
+function getTextareaMetrics() {
+  if (textareaMetrics) return textareaMetrics
+  const el = textInputRef.value
+  if (!el) return null
+
+  const style = getComputedStyle(el)
+  const fontSize = px(style.fontSize)
+  let lineHeight = px(style.lineHeight)
+  if (!lineHeight) lineHeight = fontSize * 1.4
+
+  const padTop = px(style.paddingTop)
+  const padBottom = px(style.paddingBottom)
+  const borderTop = px(style.borderTopWidth)
+  const borderBottom = px(style.borderBottomWidth)
+  const chromeFloor = padTop + padBottom + borderTop + borderBottom
+  textareaMetrics = {
+    padTop,
+    padBottom,
+    borderTop,
+    borderBottom,
+    chromeFloor,
+    one: Math.ceil(lineHeight + chromeFloor),
+    max: Math.ceil(lineHeight * 3 + chromeFloor),
+  }
+  return textareaMetrics
+}
+
+function restoreTextInputPadding(el: HTMLTextAreaElement, metrics: TextareaMetrics) {
+  el.style.paddingTop = `${metrics.padTop}px`
+  el.style.paddingBottom = `${metrics.padBottom}px`
+}
+
+function resetTextInputHeight() {
+  const el = textInputRef.value
+  const metrics = getTextareaMetrics()
+  if (!el || !metrics) return
+  restoreTextInputPadding(el, metrics)
+  el.style.height = `${metrics.one}px`
+  el.style.overflowY = 'hidden'
+}
+
+function resizeTextInput() {
+  const el = textInputRef.value
+  const metrics = getTextareaMetrics()
+  if (!el || !metrics) return
+
+  const previousHeight = el.getBoundingClientRect().height
+  restoreTextInputPadding(el, metrics)
+  el.style.height = `${metrics.one}px`
+
+  const needed = el.scrollHeight + metrics.borderTop + metrics.borderBottom
+  const barHeight =
+    barRef.value?.getBoundingClientRect().height ?? el.getBoundingClientRect().height
+  const reserved = Math.max(0, barHeight - el.offsetHeight)
+  const viewportHeight = window.visualViewport?.height ?? window.innerHeight
+  const availPx = viewportHeight - reserved
+  const cap = Math.min(metrics.max, Math.max(0, availPx))
+  const next = Math.min(cap, Math.max(0, needed))
+
+  el.style.height = `${next}px`
+  if (next < metrics.chromeFloor) {
+    el.style.paddingTop = '0'
+    el.style.paddingBottom = '0'
+  } else {
+    restoreTextInputPadding(el, metrics)
+  }
+  el.style.overflowY = needed > next + 1 ? 'auto' : 'hidden'
+
+  if (Math.abs(el.getBoundingClientRect().height - previousHeight) > 0.5) {
+    updateHeight()
+  }
+}
 
 // Swipe gesture state
 const swipeStartX = ref(0)
@@ -444,6 +647,10 @@ const actionFollowingRows = computed(() => {
   return tail.map((r, i) => mapActionKeys(r ?? [], i === tail.length - 1))
 })
 
+const pasteSupported = computed(
+  () => window.isSecureContext && typeof navigator.clipboard?.readText === 'function'
+)
+
 const actionArrowUp: KeyDef = { l: '↑', s: '\x1b[A', cls: 'mkb-mod mkb-action-arrow', repeat: true }
 
 const actionArrowBot: KeyDef[] = [
@@ -461,12 +668,25 @@ const actionContinue: KeyDef = {
 }
 
 function onTextInputFocus() {
+  if (blurTimer) {
+    clearTimeout(blurTimer)
+    blurTimer = null
+  }
   textInputFocused.value = true
+  nextTick(resizeTextInput)
 }
 
 function onTextInputBlur() {
-  setTimeout(() => {
+  if (blurTimer) clearTimeout(blurTimer)
+  blurTimer = setTimeout(() => {
+    if (document.activeElement === textInputRef.value) {
+      blurTimer = null
+      return
+    }
     textInputFocused.value = false
+    resetTextInputHeight()
+    nextTick(updateHeight)
+    blurTimer = null
   }, 100)
 }
 
@@ -476,6 +696,7 @@ function sendTextInput() {
   props.getSendFn()?.(text + '\r')
   textInput.value = ''
   textInputRef.value?.focus()
+  nextTick(resizeTextInput)
 }
 
 function onKeyPress(ch: string) {
@@ -551,7 +772,10 @@ function onSuggestionEdit(command: string) {
   if (kbMode.value === 'action') {
     inputBuffer.value = command
     textInput.value = command
-    nextTick(() => textInputRef.value?.focus())
+    nextTick(() => {
+      textInputRef.value?.focus()
+      nextTick(resizeTextInput)
+    })
   } else {
     if (sendFn && inputBuffer.value.length > 0) {
       sendFn('\x15')
@@ -584,20 +808,121 @@ function onHistoryPanelDelete(command: string) {
   allSuggestions.value = allSuggestions.value.filter((s) => s.command !== command)
 }
 
-function onFilePickerSelect(path: string) {
+function replaceTextInputRange(start: number, end: number, replacement: string) {
   const el = textInputRef.value
+  const caret = start + replacement.length
+  textInput.value = textInput.value.slice(0, start) + replacement + textInput.value.slice(end)
   if (el) {
-    const start = el.selectionStart ?? textInput.value.length
-    const end = el.selectionEnd ?? start
-    textInput.value = textInput.value.slice(0, start) + path + textInput.value.slice(end)
     nextTick(() => {
-      el.selectionStart = el.selectionEnd = start + path.length
+      el.selectionStart = el.selectionEnd = caret
       el.focus()
+      nextTick(resizeTextInput)
     })
   } else {
-    textInput.value += path
+    nextTick(resizeTextInput)
   }
+}
+
+function insertTextAtCaret(text: string) {
+  const el = textInputRef.value
+  const start = el?.selectionStart ?? textInput.value.length
+  const end = el?.selectionEnd ?? start
+  replaceTextInputRange(start, end, text)
+}
+
+function onFilePickerSelect(path: string) {
+  insertTextAtCaret(shellEscapePath(path))
   showFilePicker.value = false
+}
+
+function openPhoneFilePicker() {
+  if (!phoneUploading.value) phoneFileInputRef.value?.click()
+}
+
+function phoneUploadProgressLabel() {
+  if (phoneUploadProcessing.value) return t('settings.uploads.processing')
+  return `${formatMB(phoneUploadLoaded.value)} / ${formatMB(phoneUploadTotal.value)} MB`
+}
+
+function updatePhoneUploadProgress(p: UploadProgress) {
+  phoneUploadLoaded.value = p.loaded
+  phoneUploadTotal.value = p.total
+  const pct = Math.max(0, Math.min(100, Math.round((p.loaded / p.total) * 100)))
+  phoneUploadProgress.value = pct
+  phoneUploadProcessing.value = pct >= 100
+}
+
+function uploadErrorMessage(err: unknown) {
+  const status = uploadErrorStatus(err)
+  if (status === 413) return t('mobileKb.uploadTooLarge')
+  if (status === 507) return t('settings.uploads.toastDiskFull')
+  return t('mobileKb.uploadFailed')
+}
+
+async function onPhoneFileInputChange(ev: Event) {
+  const input = ev.target as HTMLInputElement
+  const files = Array.from(input.files ?? [])
+  input.value = ''
+  if (!files.length || phoneUploading.value) return
+
+  phoneUploading.value = true
+  phoneUploadProgress.value = 0
+  phoneUploadLoaded.value = 0
+  phoneUploadTotal.value = 0
+  phoneUploadProcessing.value = false
+  try {
+    const data: UploadResponse = await uploadFiles(files, { onProgress: updatePhoneUploadProgress })
+    const paths = data.saved ?? []
+    if (paths.length) insertTextAtCaret(paths.map(shellEscapePath).join(' '))
+    window.dispatchEvent(new CustomEvent('dinotty-upload-status', { detail: data }))
+    toast.success(t('mobileKb.uploadDone'), { position: POSITION.BOTTOM_CENTER })
+  } catch (err) {
+    toast.error(uploadErrorMessage(err), { position: POSITION.BOTTOM_CENTER })
+  } finally {
+    phoneUploading.value = false
+    phoneUploadProgress.value = 0
+    phoneUploadLoaded.value = 0
+    phoneUploadTotal.value = 0
+    phoneUploadProcessing.value = false
+    input.value = ''
+  }
+}
+
+async function onPhonePaste() {
+  if (!pasteSupported.value) return
+  try {
+    const text = await navigator.clipboard.readText()
+    if (text) insertTextAtCaret(text)
+  } catch {
+    // clipboard read may be denied
+  }
+}
+
+function deleteSelectedOrLogicalLine() {
+  const value = textInput.value
+  const el = textInputRef.value
+  const start = el?.selectionStart ?? value.length
+  const end = el?.selectionEnd ?? start
+  if (start !== end) {
+    replaceTextInputRange(start, end, '')
+    return
+  }
+
+  const caret = start
+  const before = value.slice(0, caret)
+  const pathLen = trailingPathDeleteLen(before)
+  if (pathLen > 0) {
+    replaceTextInputRange(caret - pathLen, caret, '')
+    return
+  }
+
+  const lineStart = value.lastIndexOf('\n', caret - 1) + 1
+  // Visual-line delete was considered and deferred; this toolbar uses logical lines.
+  if (lineStart < caret) {
+    replaceTextInputRange(lineStart, caret, '')
+  } else if (caret > 0) {
+    replaceTextInputRange(caret - 1, caret, '')
+  }
 }
 
 let updateHeightRaf = 0
@@ -633,7 +958,7 @@ function onViewportChange() {
   const off = window.innerHeight - (window.visualViewport.offsetTop + vh)
   sysKbOpen = naturalVH - vh > 120
   // Set --kb-open: either system keyboard or custom keyboard is visible
-  document.documentElement.style.setProperty('--kb-open', (sysKbOpen || props.visible) ? '1' : '0')
+  document.documentElement.style.setProperty('--kb-open', sysKbOpen || props.visible ? '1' : '0')
   if (barRef.value) {
     if (!props.visible) {
       barRef.value.style.display = 'none'
@@ -648,6 +973,7 @@ function onViewportChange() {
       barRef.value.style.bottom = `${Math.max(0, off)}px`
     }
   }
+  if (textInputFocused.value) resizeTextInput()
   updateHeight()
 }
 
@@ -655,7 +981,7 @@ watch(
   () => props.visible,
   (v) => {
     // Keep --kb-open in sync when custom keyboard opens/closes
-    document.documentElement.style.setProperty('--kb-open', (v || sysKbOpen) ? '1' : '0')
+    document.documentElement.style.setProperty('--kb-open', v || sysKbOpen ? '1' : '0')
     nextTick(applyHeight)
   }
 )
@@ -676,6 +1002,7 @@ function onTerminalScrollCollapse() {
 
 onMounted(() => {
   fetchSuggestions()
+  resetTextInputHeight()
 
   if (window.visualViewport) {
     naturalVH = window.visualViewport.height
@@ -699,8 +1026,11 @@ onMounted(() => {
 let roAf = 0
 let resizeObserver: ResizeObserver | null = null
 function onOrientationChange() {
+  resetTextareaMetrics()
   setTimeout(() => {
     naturalVH = window.visualViewport!.height
+    if (textInputFocused.value) resizeTextInput()
+    updateHeight()
   }, 300)
 }
 
@@ -712,7 +1042,62 @@ onBeforeUnmount(() => {
   window.removeEventListener('orientationchange', onOrientationChange)
   document.removeEventListener('terminal-scroll', onTerminalScrollCollapse)
   resizeObserver?.disconnect()
+  unsubThemeMetrics()
+  unsubTextMetrics()
   document.documentElement.style.setProperty('--mkb-height', '0px')
   document.documentElement.style.setProperty('--kb-open', '0')
 })
 </script>
+
+<style scoped>
+.mkb-toolbar .mkb-tool-btn {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 32px;
+  padding: 0 8px;
+}
+
+.mkb-btn-label {
+  font-size: 12px;
+  white-space: nowrap;
+  margin-left: 5px;
+}
+
+.mkb-btn-danger {
+  color: #ff9a9a;
+  border-color: #5a3a3a;
+}
+
+.mkb-upload-progress {
+  position: absolute;
+  right: 12px;
+  bottom: calc(100% + 12vh);
+  z-index: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 132px;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  background: rgba(22, 22, 24, 0.92);
+  color: #d8d8d8;
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.mkb-upload-progress-track {
+  flex: 1;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.mkb-upload-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: #4da3ff;
+  transition: width 0.16s ease;
+}
+</style>
