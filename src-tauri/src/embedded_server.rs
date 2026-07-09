@@ -1,4 +1,4 @@
-use axum::extract::State as AxumState;
+use axum::extract::{ConnectInfo, State as AxumState};
 use axum::Json;
 use axum::{
     body::Body,
@@ -10,12 +10,12 @@ use axum::{
     Router,
 };
 use rust_embed::Embed;
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use dinotty_server::auth;
+use dinotty_server::auth::session::SessionStore;
 use dinotty_server::file_watcher::{self, FileWatcherState};
 use dinotty_server::history;
 use dinotty_server::history::HistoryState;
@@ -23,7 +23,6 @@ use dinotty_server::monitor::{self, MonitorState};
 use dinotty_server::notification::{self, NotificationBroadcast};
 use dinotty_server::plugin::{self, PluginManager, PluginManagerState};
 use dinotty_server::proxy;
-use dinotty_server::qr_code;
 use dinotty_server::session::SessionManager;
 use dinotty_server::settings;
 use dinotty_server::tabs;
@@ -53,13 +52,19 @@ pub struct AppState {
     pub plugins: PluginManagerState,
     pub port: u16,
     pub git_info: GitInfo,
-    pub qr_codes: Arc<qr_code::QrCodeState>,
+    pub sessions: Arc<SessionStore>,
     pub workspaces: workspace_mgmt::WorkspacesState,
 }
 
 impl axum::extract::FromRef<AppState> for Arc<SessionManager> {
     fn from_ref(state: &AppState) -> Self {
         state.manager.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for settings::SettingsState {
+    fn from_ref(state: &AppState) -> Self {
+        state.settings.clone()
     }
 }
 
@@ -105,9 +110,15 @@ impl axum::extract::FromRef<AppState> for (PluginManagerState, Arc<SessionManage
     }
 }
 
-impl axum::extract::FromRef<AppState> for Arc<qr_code::QrCodeState> {
+impl axum::extract::FromRef<AppState> for Arc<SessionStore> {
     fn from_ref(state: &AppState) -> Self {
-        state.qr_codes.clone()
+        state.sessions.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<tokio::sync::RwLock<String>> {
+    fn from_ref(state: &AppState) -> Self {
+        state.auth_token.clone()
     }
 }
 
@@ -169,31 +180,12 @@ async fn static_handler(Path(path): Path<String>) -> impl IntoResponse {
     }
 }
 
-async fn index(
-    axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
-    AxumState(state): AxumState<AppState>,
-) -> impl IntoResponse {
+async fn index() -> impl IntoResponse {
     let content = StaticFiles::get("index.html").expect("index.html must exist in frontend/dist/");
     let html = String::from_utf8_lossy(&content.data);
-
-    let stored_token = state.auth_token.read().await.clone();
-
-    // Accept either ?code=xxx (one-time QR code) or ?token=xxx (direct token)
-    let token_value = if let Some(code) = params.get("code") {
-        state.qr_codes.consume(code).unwrap_or_default()
-    } else {
-        params
-            .get("token")
-            .filter(|t| urlencoding::decode(t).map(|d| d == stored_token).unwrap_or(false))
-            .map(|_| stored_token)
-            .unwrap_or_default()
-    };
-
-    let tag = format!("<meta name=\"auth-token\" content=\"{}\">\n</head>", token_value);
-    let html = html.replace("</head>", &tag);
     (
         [(header::CACHE_CONTROL, axum::http::HeaderValue::from_static("no-store"))],
-        axum::response::Html(html),
+        axum::response::Html(html.to_string()),
     )
 }
 
@@ -273,8 +265,98 @@ async fn server_info(AxumState(state): AxumState<AppState>) -> Json<serde_json::
     }))
 }
 
-async fn check_auth(AxumState(_state): AxumState<AppState>) -> StatusCode {
+async fn check_auth(
+    AxumState(state): AxumState<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let real_ip = {
+        let s = state.settings.read().await;
+        auth::real_client_ip(&headers, addr.ip(), &s.auth.trusted_proxies)
+    };
+
+    // Brute-force lockout check
+    let lockout_strategy = {
+        let s = state.settings.read().await;
+        s.auth.lockout_strategy.clone()
+    };
+    if let Some(retry_after) = auth::check_lockout(real_ip, &lockout_strategy) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            [(
+                header::RETRY_AFTER,
+                axum::http::HeaderValue::from_str(&retry_after.to_string()).unwrap(),
+            )],
+            Json(serde_json::json!({"error": "too many failed attempts, please try again later"})),
+        )
+            .into_response();
+    }
+
+    let stored = state.auth_token.read().await.clone();
+    let token = body.get("token").and_then(|v| v.as_str()).unwrap_or("");
+    if !auth::constant_time_eq(token.trim(), &stored) {
+        auth::record_auth_failure(real_ip);
+        return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "unauthorized"})))
+            .into_response();
+    }
+    let session_id = state.sessions.create(Some(real_ip), None);
+    let cookie = format!(
+        "{}={}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800",
+        auth::SESSION_COOKIE_NAME,
+        session_id
+    );
+    (
+        StatusCode::OK,
+        [(header::SET_COOKIE, axum::http::HeaderValue::from_str(&cookie).unwrap())],
+        Json(serde_json::json!({"ok": true})),
+    )
+        .into_response()
+}
+
+async fn check_auth_session(AxumState(_state): AxumState<AppState>) -> StatusCode {
+    // If we reach here, the auth middleware already validated the session.
     StatusCode::OK
+}
+
+async fn logout(
+    AxumState(state): AxumState<AppState>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if let Some(cookie_header) = headers.get(header::COOKIE).and_then(|v| v.to_str().ok()) {
+        for pair in cookie_header.split(';') {
+            let pair = pair.trim();
+            if let Some(sid) = pair.strip_prefix(&format!("{}=", auth::SESSION_COOKIE_NAME)) {
+                state.sessions.revoke(sid);
+                break;
+            }
+        }
+    }
+    let clear_cookie =
+        format!("{}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0", auth::SESSION_COOKIE_NAME);
+    (
+        [(header::SET_COOKIE, axum::http::HeaderValue::from_str(&clear_cookie).unwrap())],
+        StatusCode::OK,
+    )
+}
+
+async fn list_sessions_handler(AxumState(state): AxumState<AppState>) -> Json<serde_json::Value> {
+    let sessions = state.sessions.list();
+    Json(serde_json::json!({ "sessions": sessions }))
+}
+
+async fn revoke_session_handler(
+    AxumState(state): AxumState<AppState>,
+    Path(id): Path<String>,
+) -> StatusCode {
+    state.sessions.revoke(&id);
+    StatusCode::NO_CONTENT
+}
+
+async fn revoke_other_sessions(AxumState(state): AxumState<AppState>) -> StatusCode {
+    // Desktop mode: single user, revoke all sessions.
+    state.sessions.revoke_all();
+    StatusCode::NO_CONTENT
 }
 
 async fn get_token(AxumState(state): AxumState<AppState>) -> impl IntoResponse {
@@ -290,7 +372,17 @@ async fn token_configured(AxumState(state): AxumState<AppState>) -> impl IntoRes
     }))
 }
 
-async fn auto_token(AxumState(state): AxumState<AppState>) -> impl IntoResponse {
+async fn auto_token(
+    AxumState(state): AxumState<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> impl IntoResponse {
+    if !addr.ip().is_loopback() {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": "auto-token is only available from localhost"})),
+        )
+            .into_response();
+    }
     let token = state.auth_token.read().await;
     if token.is_empty() {
         return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "no token"})))
@@ -328,19 +420,6 @@ async fn update_token(
     StatusCode::OK.into_response()
 }
 
-async fn generate_qr_code(AxumState(state): AxumState<AppState>) -> impl IntoResponse {
-    let token = state.auth_token.read().await;
-    if token.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "no token configured"})),
-        )
-            .into_response();
-    }
-    let code = state.qr_codes.generate(&token);
-    Json(serde_json::json!({ "code": code })).into_response()
-}
-
 pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
     let monitor_state = MonitorState::new();
     monitor_state.clone().start_collector();
@@ -368,8 +447,10 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
     let auth_token = Arc::new(tokio::sync::RwLock::new(initial_token));
 
     let git_info = read_git_info();
-    let qr_codes = Arc::new(qr_code::QrCodeState::new());
-    qr_codes.clone().start_cleanup_task();
+
+    let session_ttl_days = settings::load_settings().auth.session_ttl_days;
+    let sessions = Arc::new(SessionStore::new(session_ttl_days));
+    sessions.clone().start_cleanup_task();
 
     let workspaces_state = workspace_mgmt::create_workspaces_state();
 
@@ -384,7 +465,7 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
         plugins,
         port,
         git_info,
-        qr_codes,
+        sessions,
         workspaces: workspaces_state,
     };
 
@@ -456,10 +537,13 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
         .route("/api/history", get(history::get_history).delete(history::delete_history))
         .route("/api/info", get(server_info))
         .route("/api/auth", post(check_auth))
+        .route("/api/auth/check", get(check_auth_session))
+        .route("/api/auth/logout", post(logout))
+        .route("/api/sessions", get(list_sessions_handler).delete(revoke_other_sessions))
+        .route("/api/sessions/:id", delete(revoke_session_handler))
         .route("/api/token-configured", get(token_configured))
         .route("/api/auto-token", get(auto_token))
         .route("/api/token", get(get_token).put(update_token))
-        .route("/api/qr-code", post(generate_qr_code))
         .route("/api/plugins", get(plugin::list_plugins))
         .route("/api/plugins/market", get(plugin::get_market_registry))
         .route("/api/plugins/market/:id/readme", get(plugin::get_market_readme))
@@ -523,10 +607,32 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
                     .get::<axum::extract::ConnectInfo<SocketAddr>>()
                     .map(|ci| ci.ip())
                     .unwrap_or_else(|| "127.0.0.1".parse().unwrap());
-                auth::auth_middleware(req, next, &token, &s.settings, client_ip).await
+                auth::auth_middleware(req, next, &token, &s.settings, &s.sessions, client_ip).await
             },
         ))
-        .layer(CorsLayer::permissive())
+        .layer({
+            // Desktop mode: restrict CORS to Tauri webview origins to prevent
+            // CSRF from malicious websites on the same machine.
+            let allowed = [
+                "tauri://localhost",
+                "https://tauri.localhost",
+                "http://tauri.localhost",
+                "http://localhost",
+                "https://localhost",
+            ];
+            let origins: Vec<axum::http::HeaderValue> =
+                allowed.iter().filter_map(|o| o.parse().ok()).collect();
+            CorsLayer::new()
+                .allow_origin(AllowOrigin::list(origins))
+                .allow_credentials(true)
+                .allow_methods([
+                    axum::http::Method::GET,
+                    axum::http::Method::POST,
+                    axum::http::Method::PUT,
+                    axum::http::Method::DELETE,
+                ])
+                .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
+        })
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
