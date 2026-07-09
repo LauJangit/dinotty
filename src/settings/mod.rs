@@ -15,7 +15,7 @@ use zeroize::Zeroize;
 
 use crate::session::SessionManager;
 
-pub const CURRENT_SETTINGS_VERSION: u32 = 2;
+pub const CURRENT_SETTINGS_VERSION: u32 = 3;
 const LEGACY_UPLOAD_DIR: &str = "~/.dinotty/uploads";
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -79,6 +79,47 @@ pub struct Settings {
     pub ssh_profiles: Vec<SshProfile>,
     #[serde(default)]
     pub active_workspace_id: Option<String>,
+    #[serde(default)]
+    pub auth: AuthConfig,
+    #[serde(default)]
+    pub preview: PreviewConfig,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct AuthConfig {
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
+    #[serde(default)]
+    pub trusted_proxies: Vec<String>,
+    #[serde(default = "default_lockout_strategy")]
+    pub lockout_strategy: String,
+    #[serde(default = "default_session_ttl_days")]
+    pub session_ttl_days: u64,
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            allowed_origins: vec![],
+            trusted_proxies: vec![],
+            lockout_strategy: default_lockout_strategy(),
+            session_ttl_days: default_session_ttl_days(),
+        }
+    }
+}
+
+fn default_lockout_strategy() -> String {
+    "ip".into()
+}
+
+fn default_session_ttl_days() -> u64 {
+    7
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct PreviewConfig {
+    #[serde(default)]
+    pub allow_external: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -549,6 +590,8 @@ impl Default for Settings {
             log: LogConfig::default(),
             ssh_profiles: vec![],
             active_workspace_id: None,
+            auth: AuthConfig::default(),
+            preview: PreviewConfig::default(),
         }
     }
 }
@@ -579,7 +622,14 @@ pub fn load_token() -> Option<String> {
 pub fn save_token(token: &str) -> Result<(), String> {
     let dir = config_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    std::fs::write(token_path(), token).map_err(|e| e.to_string())
+    let path = token_path();
+    std::fs::write(&path, token).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
 }
 
 fn bg_image_path() -> PathBuf {
@@ -619,6 +669,7 @@ fn migrate_settings(settings: &mut Settings) -> bool {
     {
         settings.upload_dir = default_upload_dir();
     }
+    // v3: auth + preview sections added with serde defaults - no explicit migration needed.
     settings.settings_version = CURRENT_SETTINGS_VERSION;
     true
 }
