@@ -199,29 +199,15 @@ fn check_token_bearer_wrong_token() {
 }
 
 #[test]
-fn check_token_query_param() {
-    let req =
-        Request::builder().uri("/api/something?token=my-secret-token").body(Body::empty()).unwrap();
-    assert!(check_token(&req, "my-secret-token"));
-}
-
-#[test]
-fn check_token_query_param_wrong() {
-    let req = Request::builder().uri("/api/something?token=wrong").body(Body::empty()).unwrap();
-    assert!(!check_token(&req, "my-secret-token"));
-}
-
-#[test]
 fn check_token_no_auth_returns_false() {
     let req = Request::builder().uri("/api/something").body(Body::empty()).unwrap();
     assert!(!check_token(&req, "my-secret-token"));
 }
 
 #[test]
-fn check_token_url_encoded_query() {
-    let req = Request::builder()
-        .uri("/api/something?token=my%2Dsecret%2Dtoken")
-        .body(Body::empty())
-        .unwrap();
-    assert!(check_token(&req, "my-secret-token"));
+fn check_token_query_param_ignored() {
+    // ?token= is no longer accepted; only Bearer header works.
+    let req =
+        Request::builder().uri("/api/something?token=my-secret-token").body(Body::empty()).unwrap();
+    assert!(!check_token(&req, "my-secret-token"));
 }
