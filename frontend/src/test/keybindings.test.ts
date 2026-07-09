@@ -33,7 +33,7 @@ const APP_DEFAULTS = [
   ['searchTerminal', 'f', false, false],
   ['switchTab', '1', false, true],
   ['missionControl', 'm', true, false],
-  ['sshConnect', 't', true, false],
+  ['sshConnect', 'n', true, false],
   ['fontSizeUp', '=', true, false],
   ['fontSizeDown', '-', false, false],
   ['fontSizeReset', '0', false, false],

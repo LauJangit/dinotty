@@ -45,6 +45,15 @@ export interface SettingsData {
   open_api: OpenApiConfig
   auth_token?: string
   ip_whitelist: string[]
+  auth: {
+    allowed_origins: string[]
+    trusted_proxies: string[]
+    lockout_strategy: string
+    session_ttl_days: number
+  }
+  preview: {
+    allow_external: boolean
+  }
   keybindings: Record<string, KeyBinding>
   log: LogConfig
   ssh_profiles: SshProfile[]
@@ -247,6 +256,15 @@ export const settings = reactive<SettingsData>({
     enabled: false,
   },
   ip_whitelist: ['127.0.0.1', '::1'],
+  auth: {
+    allowed_origins: [],
+    trusted_proxies: [],
+    lockout_strategy: 'ip',
+    session_ttl_days: 7,
+  },
+  preview: {
+    allow_external: false,
+  },
   keybindings: {},
   log: {
     enabled: true,

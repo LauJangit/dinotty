@@ -84,7 +84,6 @@ describe('useUpload', () => {
   it('uses XMLHttpRequest progress when onProgress is supplied', async () => {
     const progress = vi.fn()
     const requests: MockXHR[] = []
-    uploadMocks.authHeaders.mockReturnValue({ Authorization: 'Bearer test-token' })
     vi.stubGlobal(
       'XMLHttpRequest',
       class extends MockXHR {
@@ -105,7 +104,9 @@ describe('useUpload', () => {
     expect(progress).toHaveBeenCalledWith({ loaded: 100, total: 100 })
     expect(requests[0].method).toBe('POST')
     expect(requests[0].url).toBe('/api/uploads')
-    expect(requests[0].headers.Authorization).toBe('Bearer test-token')
+    // Browser mode: uses withCredentials for cookie-based auth, no Bearer header.
+    expect(requests[0].withCredentials).toBe(true)
+    expect(requests[0].headers.Authorization).toBeUndefined()
   })
 
   it('formats raw byte counts as one-decimal MB values', () => {
@@ -131,6 +132,7 @@ class MockXHR {
   onerror: (() => void) | null = null
   status = MockXHR.nextStatus
   responseText = MockXHR.nextResponseText
+  withCredentials = false
   method = ''
   url = ''
   headers: Record<string, string> = {}

@@ -25,7 +25,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { setAuthToken, validateToken } from '../composables/apiBase'
+import { validateToken } from '../composables/apiBase'
 import { useI18n } from '../composables/useI18n'
 
 const emit = defineEmits<{ (e: 'success'): void }>()
@@ -46,7 +46,6 @@ async function onSubmit() {
   const ok = await validateToken(val)
   loading.value = false
   if (ok) {
-    setAuthToken(val)
     emit('success')
   } else {
     error.value = t('login.invalid')

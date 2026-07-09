@@ -36,7 +36,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { setAuthToken, apiUrl, authFetch } from '../composables/apiBase'
+import { validateToken, apiUrl, authFetch } from '../composables/apiBase'
 import { useI18n } from '../composables/useI18n'
 import { RefreshCw } from 'lucide-vue-next'
 
@@ -70,7 +70,8 @@ async function onSubmit() {
       body: JSON.stringify({ token: val }),
     })
     if (res.ok) {
-      setAuthToken(val)
+      // Token saved server-side; now authenticate to get a session cookie.
+      await validateToken(val)
       emit('success')
     } else {
       error.value = t('setup.saveFailed')
