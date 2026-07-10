@@ -13,6 +13,7 @@ pub struct HookShellSpec {
     pub args: Vec<String>,
 }
 
+#[must_use]
 pub fn resolve_command(program: &str) -> Option<PathBuf> {
     resolve_command_impl(program)
 }
@@ -144,8 +145,7 @@ fn notification_hook_shell_impl(script: &str) -> HookShellSpec {
     }
 
     let program = resolve_command("cmd.exe")
-        .map(|path| path.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "cmd.exe".into());
+        .map_or_else(|| "cmd.exe".into(), |path| path.to_string_lossy().into_owned());
     HookShellSpec { program, args: vec!["/C".into(), script.into()] }
 }
 
@@ -208,7 +208,7 @@ fn command_candidates(program: &str) -> Vec<String> {
 }
 
 fn powershell_integration_script() -> String {
-    r#"$global:__DinottyOriginalPrompt = if (Test-Path Function:\prompt) { (Get-Command prompt).ScriptBlock } else { { 'PS ' + (Get-Location) + '> ' } }; function global:prompt { $promptText = & $global:__DinottyOriginalPrompt; $esc = [char]27; $bel = [char]7; $cwd = (Get-Location).ProviderPath; [Console]::Out.Write($esc + ']0;' + $env:USERNAME + '@' + $env:COMPUTERNAME + ':' + $cwd + $bel); [Console]::Out.Write($esc + ']133;A' + $esc + '\'); $promptText }"#.to_string()
+    r"$global:__DinottyOriginalPrompt = if (Test-Path Function:\prompt) { (Get-Command prompt).ScriptBlock } else { { 'PS ' + (Get-Location) + '> ' } }; function global:prompt { $promptText = & $global:__DinottyOriginalPrompt; $esc = [char]27; $bel = [char]7; $cwd = (Get-Location).ProviderPath; [Console]::Out.Write($esc + ']0;' + $env:USERNAME + '@' + $env:COMPUTERNAME + ':' + $cwd + $bel); [Console]::Out.Write($esc + ']133;A' + $esc + '\'); $promptText }".to_string()
 }
 
 #[cfg(windows)]

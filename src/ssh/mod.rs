@@ -162,7 +162,7 @@ fn path_within_or_equal(path: &Path, dir: &Path) -> bool {
         let path = normalize_windows_path_for_compare(path);
         let dir = normalize_windows_path_for_compare(dir);
         let dir_with_sep = format!("{dir}\\");
-        return path == dir || path.starts_with(&dir_with_sep);
+        path == dir || path.starts_with(&dir_with_sep)
     }
 
     #[cfg(not(windows))]

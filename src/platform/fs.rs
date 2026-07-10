@@ -1,25 +1,55 @@
 use std::path::Path;
 
+/// Creates a directory symlink from `link` to `src`.
+///
+/// # Errors
+///
+/// Returns an error if the platform cannot create the symlink or the OS denies
+/// the operation.
 pub fn create_dir_symlink(src: &Path, link: &Path) -> Result<(), String> {
-    create_dir_symlink_impl(src, link).map_err(format_symlink_error)
+    create_dir_symlink_impl(src, link).map_err(|e| format_symlink_error(&e))
 }
 
+/// Returns true when the path exists or is a symlink, including a broken one.
+#[must_use]
 pub fn path_exists_or_symlink(path: &Path) -> bool {
     path.exists() || std::fs::symlink_metadata(path).is_ok()
 }
 
+/// Removes a symlink or plain file while refusing to remove real directories.
+///
+/// # Errors
+///
+/// Returns an error if metadata lookup or removal fails, or if `path` is a real
+/// directory.
 pub fn remove_symlink_or_file(path: &Path) -> Result<(), String> {
     remove_symlink_or_file_impl(path).map_err(|e| format!("remove symlink failed: {e}"))
 }
 
+/// Marks a file executable on platforms that support executable bits.
+///
+/// # Errors
+///
+/// Returns an error if permissions cannot be read or updated.
 pub fn set_executable(path: &Path) -> Result<(), String> {
     set_executable_impl(path).map_err(|e| e.to_string())
 }
 
+/// Validates private key file permissions.
+///
+/// # Errors
+///
+/// Returns an error when file metadata cannot be read or permissions are too
+/// open on platforms that enforce private key modes.
 pub fn validate_private_key_permissions(path: &Path) -> Result<(), String> {
     validate_private_key_permissions_impl(path)
 }
 
+/// Applies private-file permissions to a path.
+///
+/// # Errors
+///
+/// Returns an error if the platform fails to update the file permissions.
 #[cfg(unix)]
 pub fn set_private_file_permissions(path: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
@@ -27,6 +57,11 @@ pub fn set_private_file_permissions(path: &Path) -> std::io::Result<()> {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
 }
 
+/// Applies private-file permissions to a path.
+///
+/// # Errors
+///
+/// This no-op implementation currently does not fail on non-Unix platforms.
 #[cfg(not(unix))]
 pub fn set_private_file_permissions(_path: &Path) -> std::io::Result<()> {
     Ok(())
@@ -105,6 +140,7 @@ fn set_executable_impl(path: &Path) -> std::io::Result<()> {
 }
 
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)]
 fn set_executable_impl(_path: &Path) -> std::io::Result<()> {
     Ok(())
 }
@@ -123,11 +159,12 @@ fn validate_private_key_permissions_impl(path: &Path) -> Result<(), String> {
 }
 
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)]
 fn validate_private_key_permissions_impl(_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn format_symlink_error(e: std::io::Error) -> String {
+fn format_symlink_error(e: &std::io::Error) -> String {
     #[cfg(windows)]
     {
         if e.kind() == std::io::ErrorKind::PermissionDenied {
@@ -250,7 +287,7 @@ mod tests {
     #[test]
     fn symlink_permission_denied_error_mentions_developer_mode_or_admin() {
         let err = std::io::Error::new(ErrorKind::PermissionDenied, "denied");
-        let message = super::format_symlink_error(err);
+        let message = super::format_symlink_error(&err);
 
         assert!(message.contains("Developer Mode"));
         assert!(message.contains("Administrator"));
