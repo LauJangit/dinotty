@@ -465,7 +465,7 @@ fn main() {
                 tauri::DragDropEvent::Enter { .. } => {
                     let _ = window.emit("file-drop-active", true);
                 }
-                tauri::DragDropEvent::Leave { .. } => {
+                tauri::DragDropEvent::Leave => {
                     let _ = window.emit("file-drop-active", false);
                 }
                 tauri::DragDropEvent::Drop { paths, .. } => {
