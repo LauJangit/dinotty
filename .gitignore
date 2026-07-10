@@ -6,6 +6,7 @@ node_modules/
 .codegraph/
 openspec/
 CLAUDE.md
+AGENTS.md
 *.tsbuildinfo
 .pnpm-store/
 .DS_Store
