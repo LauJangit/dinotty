@@ -49,6 +49,7 @@ describe('GeneralTab - confirm-before-close-tab toggle', () => {
   beforeEach(() => {
     // Reset the shared reactive settings to the documented default.
     settings.confirm_before_close_tab = true
+    settings.space_confirms_dialogs = false
     settings.upload_dir = ''
     generalMocks.uploadStatus = 200
     generalMocks.defaultDir = '/tmp/dinotty'
@@ -135,6 +136,34 @@ describe('GeneralTab - confirm-before-close-tab toggle', () => {
     settings.confirm_before_close_tab = true
     await nextTick()
     expect(input.element.checked).toBe(true)
+  })
+
+  it('renders the Space-confirm toggle defaulted off with its hint', () => {
+    const wrapper = mount(GeneralTab)
+    const input = wrapper.find<HTMLInputElement>(
+      'input[type="checkbox"][data-setting="space-confirms-dialogs"]'
+    )
+
+    expect(input.exists()).toBe(true)
+    expect(input.element.checked).toBe(false)
+    expect(wrapper.find('[data-hint="space-confirms-dialogs"]').text().trim()).not.toBe('')
+  })
+
+  it('persists space_confirms_dialogs when its toggle is enabled', async () => {
+    const wrapper = mount(GeneralTab)
+    const input = wrapper.find<HTMLInputElement>('[data-setting="space-confirms-dialogs"]')
+
+    await input.setValue(true)
+    await flush()
+
+    expect(settings.space_confirms_dialogs).toBe(true)
+    const putCall = generalMocks.authFetch.mock.calls.find(
+      ([url, init]) => url === '/api/settings' && init?.method === 'PUT'
+    )
+    expect(putCall).toBeDefined()
+    expect(JSON.parse(putCall![1]!.body as string)).toMatchObject({
+      space_confirms_dialogs: true,
+    })
   })
 
   it('shows an inline upload_dir error when status validation returns 400', async () => {

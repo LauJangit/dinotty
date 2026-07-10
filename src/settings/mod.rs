@@ -57,6 +57,8 @@ pub struct Settings {
     pub windows_alt_as_cmd: bool,
     #[serde(default = "default_true")]
     pub confirm_before_close_tab: bool,
+    #[serde(default)]
+    pub space_confirms_dialogs: bool,
     #[serde(default = "default_locale")]
     pub locale: String,
     #[serde(default)]
@@ -646,6 +648,7 @@ impl Default for Settings {
             show_virtual_keyboard: false,
             windows_alt_as_cmd: false,
             confirm_before_close_tab: true,
+            space_confirms_dialogs: false,
             locale: default_locale(),
             panel_position: PanelPosition::default(),
             monitor: MonitorConfig::default(),
@@ -1004,3 +1007,25 @@ pub async fn get_log(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod space_confirms_dialogs_tests {
+    use super::Settings;
+
+    #[test]
+    fn space_confirms_dialogs_defaults_to_false() {
+        let settings: Settings = serde_json::from_str(r"{}").unwrap();
+        assert!(!settings.space_confirms_dialogs);
+    }
+
+    #[test]
+    fn space_confirms_dialogs_round_trips() {
+        let settings: Settings =
+            serde_json::from_str(r#"{"space_confirms_dialogs":true}"#).unwrap();
+        assert!(settings.space_confirms_dialogs);
+
+        let serialized = serde_json::to_string(&settings).unwrap();
+        let round_tripped: Settings = serde_json::from_str(&serialized).unwrap();
+        assert!(round_tripped.space_confirms_dialogs);
+    }
+}
