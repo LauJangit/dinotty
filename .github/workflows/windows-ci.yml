@@ -54,6 +54,10 @@ jobs:
         working-directory: frontend
         run: pnpm install --frozen-lockfile
 
+      - name: Type-check frontend
+        working-directory: frontend
+        run: pnpm exec vue-tsc --noEmit
+
       - name: Test frontend
         working-directory: frontend
         run: pnpm test
@@ -62,5 +66,17 @@ jobs:
         working-directory: frontend
         run: pnpm run build
 
+      - name: Check Rust formatting
+        run: cargo fmt --check
+
+      - name: Lint Rust
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
       - name: Test Rust workspace
         run: cargo test --workspace --all-targets
+
+      - name: Build server binary
+        run: cargo build --bin dinotty-server
+
+      - name: Smoke test Windows server
+        run: .\scripts\windows-smoke-test.ps1

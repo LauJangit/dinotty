@@ -230,6 +230,36 @@ mod tests {
         ));
     }
 
+    // 验证 .ssh_evil 这类前缀相似目录不能绕过 .ssh 边界。
+    #[cfg(windows)]
+    #[test]
+    fn allowed_key_path_rejects_windows_ssh_prefix_sibling() {
+        assert!(!is_allowed_key_path(
+            Path::new(r"C:\Users\me\.ssh_evil\id_ed25519"),
+            Path::new(r"C:\Users\me\.ssh"),
+        ));
+    }
+
+    // 验证 Windows 路径比较兼容大小写差异和 /、\ 混用。
+    #[cfg(windows)]
+    #[test]
+    fn allowed_key_path_accepts_windows_case_and_separator_variants() {
+        assert!(is_allowed_key_path(
+            Path::new(r"C:/USERS/me/.SSH/id_ed25519"),
+            Path::new(r"c:\users\ME\.ssh"),
+        ));
+    }
+
+    // 验证带 \\?\ 前缀的相似目录仍不能绕过 .ssh 边界。
+    #[cfg(windows)]
+    #[test]
+    fn allowed_key_path_rejects_windows_long_path_prefix_sibling() {
+        assert!(!is_allowed_key_path(
+            Path::new(r"\\?\C:\Users\me\.ssh_evil\id_ed25519"),
+            Path::new(r"C:\Users\me\.ssh"),
+        ));
+    }
+
     #[cfg(windows)]
     #[test]
     fn validate_key_path_rejects_key_outside_home_ssh() {
@@ -241,6 +271,26 @@ mod tests {
 
             assert!(err.contains("%USERPROFILE%"));
         });
+    }
+
+    // 验证 Windows 下 USERPROFILE 优先于 HOME，HOME\.ssh 中的 key 不应放行。
+    #[cfg(windows)]
+    #[test]
+    fn validate_key_path_prefers_userprofile_over_home() {
+        let _env = crate::test_support::EnvGuard::new(&["HOME", "USERPROFILE"]);
+        let tmp = tempfile::tempdir().unwrap();
+        let userprofile = tmp.path().join("userprofile");
+        let home = tmp.path().join("home");
+        std::fs::create_dir_all(userprofile.join(".ssh")).unwrap();
+        std::fs::create_dir_all(home.join(".ssh")).unwrap();
+        std::env::set_var("USERPROFILE", &userprofile);
+        std::env::set_var("HOME", &home);
+        let home_key = home.join(".ssh").join("id_ed25519");
+        std::fs::write(&home_key, "key").unwrap();
+
+        let err = validate_key_path(&home_key.to_string_lossy()).unwrap_err();
+
+        assert!(err.contains("%USERPROFILE%"), "unexpected error: {err}");
     }
 
     #[cfg(unix)]
