@@ -117,6 +117,7 @@ fn set_executable_impl(path: &Path) -> std::io::Result<()> {
 }
 
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)]
 fn set_executable_impl(_path: &Path) -> std::io::Result<()> {
     Ok(())
 }
@@ -135,6 +136,7 @@ fn validate_private_key_permissions_impl(path: &Path) -> Result<(), String> {
 }
 
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)]
 fn validate_private_key_permissions_impl(_path: &Path) -> Result<(), String> {
     Ok(())
 }
@@ -150,4 +152,72 @@ fn format_symlink_error(e: &std::io::Error) -> String {
     }
 
     format!("symlink failed: {e}")
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
+
+    use super::{create_dir_symlink, path_exists_or_symlink, remove_symlink_or_file};
+
+    fn create_dir_symlink_or_skip(src: &std::path::Path, link: &std::path::Path) -> bool {
+        match create_dir_symlink(src, link) {
+            Ok(()) => true,
+            Err(e) if e.contains("symlink failed") || e.contains("not supported") => {
+                eprintln!("skipping symlink-dependent assertion: {e}");
+                false
+            }
+            Err(e) => panic!("unexpected symlink creation error: {e}"),
+        }
+    }
+
+    // 验证 remove_symlink_or_file 不会删除真实目录，避免误删插件源目录。
+    #[test]
+    fn remove_symlink_or_file_rejects_real_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let real_dir = tmp.path().join("real-dir");
+        std::fs::create_dir(&real_dir).unwrap();
+
+        let err = remove_symlink_or_file(&real_dir).unwrap_err();
+
+        assert!(err.contains("refusing to remove a real directory"), "unexpected error: {err}");
+        assert!(real_dir.is_dir());
+    }
+
+    // 验证删除目录 symlink 只移除链接本身，不影响目标目录。
+    #[test]
+    fn remove_symlink_or_file_removes_directory_symlink_without_touching_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("target");
+        let link = tmp.path().join("link");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("sentinel.txt"), "still here").unwrap();
+
+        if !create_dir_symlink_or_skip(&target, &link) {
+            return;
+        }
+
+        remove_symlink_or_file(&link).unwrap();
+
+        assert!(!path_exists_or_symlink(&link));
+        assert!(target.join("sentinel.txt").is_file());
+    }
+
+    // 验证 broken symlink 仍被视为存在，便于后续扫描和清理。
+    #[test]
+    fn path_exists_or_symlink_treats_broken_symlink_as_existing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("target");
+        let link = tmp.path().join("broken-link");
+        std::fs::create_dir(&target).unwrap();
+
+        if !create_dir_symlink_or_skip(&target, &link) {
+            return;
+        }
+        std::fs::remove_dir(&target).unwrap();
+
+        assert!(path_exists_or_symlink(&link));
+
+        remove_symlink_or_file(&link).unwrap();
+    }
 }

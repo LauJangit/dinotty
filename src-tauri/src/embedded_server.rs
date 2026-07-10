@@ -247,7 +247,7 @@ fn read_git_info() -> GitInfo {
                 url.trim_end_matches(".git").to_string()
             }
         })
-        .unwrap_or_else(|| env!("CARGO_PKG_REPOSITORY").to_string());
+        .unwrap_or_default();
 
     GitInfo { version, repo_url }
 }

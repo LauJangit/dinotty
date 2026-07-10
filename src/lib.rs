@@ -1,12 +1,14 @@
 #![cfg_attr(
     test,
     allow(
+        clippy::expect_used,
         clippy::cast_precision_loss,
         clippy::manual_string_new,
         clippy::match_wildcard_for_single_variants,
         clippy::missing_panics_doc,
         clippy::must_use_candidate,
         clippy::needless_pass_by_value,
+        clippy::needless_raw_string_hashes,
         clippy::redundant_closure_for_method_calls,
         clippy::uninlined_format_args,
         clippy::unwrap_used
