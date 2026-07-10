@@ -15,7 +15,7 @@ env:
 jobs:
   test:
     name: Tests
-    runs-on: windows-latest
+    runs-on: [self-hosted, Windows]
 
     steps:
       - uses: actions/checkout@v4
