@@ -493,14 +493,6 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
         .route("/ws/monitor", get(monitor::ws_monitor_handler))
         .route("/ws/notify", get(ws::notification_ws_handler))
         .route("/ws/history", get(history::ws_history_handler))
-        // HTTP fallback for reverse proxies without WebSocket support
-        .route("/http/term", get(dinotty_server::http_fallback::sse_terminal))
-        .route("/http/input", post(dinotty_server::http_fallback::post_input))
-        .route("/http/resize", post(dinotty_server::http_fallback::post_resize))
-        .route("/http/sync", get(dinotty_server::http_fallback::sse_sync))
-        .route("/http/sync/send", post(dinotty_server::http_fallback::post_sync_command))
-        .route("/http/monitor", get(dinotty_server::http_fallback::sse_monitor))
-        .route("/http/history", get(dinotty_server::http_fallback::sse_history))
         // Tab/Pane management
         .route("/api/tabs", get(tabs::list_tabs).post(tabs::create_tab))
         // SSH tab routes (must be before :tab_id routes)

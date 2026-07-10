@@ -1,6 +1,9 @@
 <template>
   <SetupPage v-if="!authenticated && needsSetup" @success="onLoginSuccess" />
-  <LoginPage v-else-if="!authenticated" @success="onLoginSuccess" />
+  <LoginPage v-else-if="!authenticated && authProbe === 'done'" @success="onLoginSuccess" />
+  <div v-else-if="!authenticated" class="auth-probe-screen">
+    <RefreshCw :size="20" class="auth-probe-spinner" />
+  </div>
   <div v-else id="app-root">
     <TabBar
       :tabs="visibleTabList"
@@ -296,7 +299,7 @@ const { tabs, activePaneId, tabList, activeTabType, activeTab, isBroadcastActive
   storeToRefs(session)
 
 const ui = useUiStore()
-const { syncConnected, kbVisible, settingsOpen, authenticated, needsSetup } = storeToRefs(ui)
+const { syncConnected, kbVisible, settingsOpen, authenticated, authProbe, needsSetup } = storeToRefs(ui)
 
 const settingsStore = useSettingsStore()
 const appSettings = settingsStore.settings
@@ -1393,7 +1396,8 @@ onMounted(async () => {
     naturalVH = window.visualViewport.height
     window.visualViewport.addEventListener('resize', onViewportResize)
   }
-  if (authenticated.value) {
+  try {
+    if (authenticated.value) {
     await getApiBase()
     await settingsStore.load()
     void syncWs.connectSyncWS()
@@ -1460,13 +1464,25 @@ onMounted(async () => {
       // First-time setup: show setup page (server mode only)
       needsSetup.value = true
     } else if (!serverMode) {
-      // Desktop mode with auto-generated token — authenticate to get a session cookie
-      // so non-loopback access (e.g. LAN IP) works.
-      const autoToken = await fetchAutoToken()
-      if (autoToken) {
-        const ok = await validateToken(autoToken)
-        if (ok) {
-          await onLoginSuccess()
+      // Desktop mode: honor an existing cookie session first (e.g. LAN
+      // access after manual login). Fall back to loopback auto-token only
+      // when the cookie is absent/invalid.
+      let cookieOk = false
+      try {
+        const res = await fetch(apiUrl('/api/settings'), { credentials: 'include' })
+        cookieOk = res.ok
+      } catch {
+        // network error - fall through to auto-token
+      }
+      if (cookieOk) {
+        await onLoginSuccess()
+      } else {
+        const autoToken = await fetchAutoToken()
+        if (autoToken) {
+          const r = await validateToken(autoToken)
+          if (r.ok) {
+            await onLoginSuccess()
+          }
         }
       }
     } else {
@@ -1481,6 +1497,9 @@ onMounted(async () => {
         // Network error — show LoginPage
       }
     }
+  }
+  } finally {
+    ui.markAuthProbeDone()
   }
 })
 
@@ -1502,6 +1521,22 @@ onBeforeUnmount(() => {
 </script>
 
 <style>
+.auth-probe-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  background: var(--bg, #1a1a1a);
+}
+.auth-probe-spinner {
+  color: var(--fg-muted, #888);
+  animation: auth-probe-spin 1s linear infinite;
+}
+@keyframes auth-probe-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
 #app-root {
   display: flex;
   flex-direction: column;

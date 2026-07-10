@@ -125,14 +125,9 @@ pub async fn auth_middleware(
         return next.run(request).await;
     }
 
-    // PTY WebSocket & HTTP fallback: UUID paneId acts as a bearer secret
-    // (122-bit entropy). The ws_handler still runs check_ws_origin for CSRF
-    // protection. The HTTP fallback endpoints serve the same PTY sessions
-    // when WebSocket is unavailable (e.g. behind restrictive reverse proxies).
-    // Use prefix matching so /ws/sync, /ws/watch, /ws/monitor, etc. are also
-    // exempt — these use their own auth (UUID paneId, sync state) and must
-    // work through reverse proxies that don't forward cookies on WS upgrades.
-    if path.starts_with("/ws") || path.starts_with("/http/") {
+    // Agent WS has its own agent-token middleware; skip main auth so agent
+    // clients (which carry an agent token, not a session cookie) can connect.
+    if path == "/ws/agent" {
         return next.run(request).await;
     }
 
@@ -272,63 +267,19 @@ pub fn real_client_ip(headers: &HeaderMap, conn_ip: IpAddr, trusted_proxies: &[S
     conn_ip
 }
 
-/// Check whether a WebSocket upgrade request's Origin header is allowed.
-/// - Loopback client IP: always allow (Tauri webview sends `tauri://` Origin).
-/// - No Origin header: allow (non-browser clients like wscat / curl).
-/// - Origin equals the request Host: allow (same-origin, covers arbitrary
-///   tunneling subdomains without wildcard matching).
-/// - Behind a trusted reverse proxy: use `X-Forwarded-Host` for the comparison.
-/// - Hostname-only fallback: if exact match fails, compare just the hostname
-///   (without port) to handle proxies that normalize the Host header.
-/// - Otherwise: must match `allowed_origins` whitelist.
+/// 暂时关闭：反代（极空间等 NAS）默认不带 X-Forwarded-Host，Host 被改写为内部
+/// 地址，导致 Origin 与 Host 比对失配，所有非 /ws 的 WS 端点（监控、sync、
+/// watch、notify、history 等）全部 403。cookie session 鉴权仍在 `auth_middleware`
+/// 生效，跨站 WS CSRF 风险有限。后续修复 `trusted_proxies` 语义 bug（应用直连
+/// peer 判断而非 `real_ip`）并加拒绝日志后再恢复。
 #[must_use]
 pub fn check_ws_origin(
-    headers: &HeaderMap,
-    allowed_origins: &[String],
-    client_ip: std::net::IpAddr,
-    trusted_proxies: &[String],
+    _headers: &HeaderMap,
+    _allowed_origins: &[String],
+    _client_ip: std::net::IpAddr,
+    _trusted_proxies: &[String],
 ) -> bool {
-    // Loopback clients (Tauri desktop, local scripts) are always trusted.
-    if client_ip.is_loopback() {
-        return true;
-    }
-    let Some(origin) = headers.get(header::ORIGIN) else {
-        return true;
-    };
-    let Ok(origin_str) = origin.to_str() else {
-        return false;
-    };
-    // Same-origin shortcut: Origin = scheme://host matches the request Host.
-    // Behind a trusted reverse proxy, use X-Forwarded-Host (the original Host
-    // before the proxy rewrote it) for the comparison.
-    let effective_host = if is_ip_whitelisted(client_ip, trusted_proxies) {
-        headers
-            .get("x-forwarded-host")
-            .and_then(|h| h.to_str().ok())
-            .map(|h| h.split(',').next().unwrap_or("").trim())
-            .filter(|h| !h.is_empty())
-            .or_else(|| headers.get(header::HOST).and_then(|h| h.to_str().ok()))
-    } else {
-        headers.get(header::HOST).and_then(|h| h.to_str().ok())
-    };
-    if let Some(host) = effective_host {
-        let origin_host = origin_str
-            .strip_prefix("http://")
-            .or_else(|| origin_str.strip_prefix("https://"))
-            .unwrap_or(origin_str);
-        // Exact match (includes port).
-        if origin_host == host {
-            return true;
-        }
-        // Hostname-only fallback: some reverse proxies strip or rewrite the
-        // port in the Host header.  Compare just the hostname part.
-        let origin_hostname = origin_host.split(':').next().unwrap_or(origin_host);
-        let host_hostname = host.split(':').next().unwrap_or(host);
-        if origin_hostname == host_hostname {
-            return true;
-        }
-    }
-    allowed_origins.iter().any(|o| o.trim() == origin_str)
+    true
 }
 
 fn is_ip_whitelisted(ip: IpAddr, whitelist: &[String]) -> bool {

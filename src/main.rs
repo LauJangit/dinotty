@@ -1,8 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 
 use dinotty_server::{
-    agent, audit, auth, file_watcher, history, http_fallback, mcp, monitor, notification, openapi,
-    plugin, proxy, session, settings, tabs, token, webhook, workspace, workspace_mgmt, ws,
+    agent, audit, auth, file_watcher, history, mcp, monitor, notification, openapi, plugin, proxy,
+    session, settings, tabs, token, webhook, workspace, workspace_mgmt, ws,
 };
 
 use axum::{
@@ -409,13 +409,46 @@ async fn login(
             .into_response();
     }
 
-    let (real_ip, global_lockout_secs) = {
+    let (
+        real_ip,
+        lockout_strategy,
+        max_failures,
+        lockout_secs,
+        global_max_failures,
+        global_lockout_secs,
+    ) = {
         let s = state.settings.read().await;
         (
             auth::real_client_ip(&headers, addr.ip(), &s.auth.trusted_proxies),
+            s.auth.lockout_strategy.clone(),
+            s.auth.lockout_max_failures,
+            s.auth.lockout_secs,
+            s.auth.global_lockout_max_failures,
             s.auth.global_lockout_secs,
         )
     };
+
+    // Brute-force lockout check before token validation. The login endpoint is
+    // exempt from the middleware's check (so unauthenticated users can reach
+    // it), so we must enforce it here.
+    if let Some(retry_after) = auth::check_lockout(
+        real_ip,
+        &lockout_strategy,
+        max_failures,
+        lockout_secs,
+        global_max_failures,
+        global_lockout_secs,
+    ) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            [
+                (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
+                (header::RETRY_AFTER, HeaderValue::from_str(&retry_after.to_string()).unwrap()),
+            ],
+            Json(serde_json::json!({"error": "too many failed attempts, please try again later"})),
+        )
+            .into_response();
+    }
 
     if !auth::constant_time_eq(body.token.trim(), &stored) {
         auth::record_auth_failure(real_ip, global_lockout_secs);
@@ -763,14 +796,6 @@ async fn main() {
             .route("/ws/watch", get(file_watcher::watch_handler))
             .route("/ws/monitor", get(monitor::ws_monitor_handler))
             .route("/ws/notify", get(ws::notification_ws_handler))
-            // HTTP fallback for reverse proxies without WebSocket support
-            .route("/http/term", get(http_fallback::sse_terminal))
-            .route("/http/input", post(http_fallback::post_input))
-            .route("/http/resize", post(http_fallback::post_resize))
-            .route("/http/sync", get(http_fallback::sse_sync))
-            .route("/http/sync/send", post(http_fallback::post_sync_command))
-            .route("/http/monitor", get(http_fallback::sse_monitor))
-            .route("/http/history", get(http_fallback::sse_history))
             .route("/api/notify", post(notification::post_notify))
             .route("/api/input", post(ws::post_input))
             // Open API

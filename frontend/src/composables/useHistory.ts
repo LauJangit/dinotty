@@ -11,9 +11,7 @@ export interface SuggestionItem {
 const suggestions = ref<SuggestionItem[]>([])
 let fetchTimer: ReturnType<typeof setTimeout> | null = null
 let ws: WebSocket | null = null
-let sse: EventSource | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
-let fallbackTimer: ReturnType<typeof setTimeout> | null = null
 
 function handleMessage(e: { data: string }) {
   try {
@@ -24,22 +22,8 @@ function handleMessage(e: { data: string }) {
   } catch {}
 }
 
-function connectSse() {
-  console.log('[history] WebSocket unavailable, falling back to HTTP SSE')
-  if (ws) {
-    ws.close()
-    ws = null
-  }
-  sse = new EventSource('/http/history')
-  sse.onmessage = handleMessage
-  sse.onerror = () => {
-    // EventSource auto-reconnects
-  }
-}
-
 async function connectWs() {
   if (ws && ws.readyState <= WebSocket.OPEN) return
-  if (sse) return
 
   let url: string
   if (typeof window !== 'undefined' && '__TAURI__' in window) {
@@ -54,37 +38,16 @@ async function connectWs() {
 
   ws = new WebSocket(wsUrlWithToken(url))
 
-  ws.onopen = () => {
-    if (fallbackTimer) {
-      clearTimeout(fallbackTimer)
-      fallbackTimer = null
-    }
-  }
-
   ws.onmessage = (e) => handleMessage(e)
 
   ws.onclose = () => {
-    if (fallbackTimer) {
-      clearTimeout(fallbackTimer)
-      fallbackTimer = null
-    }
     ws = null
-    // Don't reconnect if already using SSE fallback
-    if (sse) return
     reconnectTimer = setTimeout(connectWs, 3000)
   }
 
   ws.onerror = () => {
     ws?.close()
   }
-
-  // If WS doesn't connect within 3 seconds, fall back to SSE
-  fallbackTimer = setTimeout(() => {
-    fallbackTimer = null
-    if (ws && ws.readyState !== WebSocket.OPEN) {
-      connectSse()
-    }
-  }, 3000)
 }
 
 export function useHistory() {

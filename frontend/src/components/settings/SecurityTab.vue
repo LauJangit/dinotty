@@ -39,6 +39,56 @@
         </div>
       </div>
 
+      <div class="settings-group" v-if="settings.auth.lockout_strategy === 'ip'">
+        <div class="settings-row">
+          <label>{{ t('security.lockoutMaxFailures') }}</label>
+          <input
+            type="number"
+            v-model.number="settings.auth.lockout_max_failures"
+            @change="saveSettings()"
+            min="1"
+            max="100"
+            class="settings-input-number"
+          />
+        </div>
+        <div class="settings-row">
+          <label>{{ t('security.lockoutSecs') }}</label>
+          <input
+            type="number"
+            v-model.number="settings.auth.lockout_secs"
+            @change="saveSettings()"
+            min="10"
+            max="3600"
+            class="settings-input-number"
+          />
+        </div>
+      </div>
+
+      <div class="settings-group" v-if="settings.auth.lockout_strategy === 'global'">
+        <div class="settings-row">
+          <label>{{ t('security.globalLockoutMaxFailures') }}</label>
+          <input
+            type="number"
+            v-model.number="settings.auth.global_lockout_max_failures"
+            @change="saveSettings()"
+            min="1"
+            max="1000"
+            class="settings-input-number"
+          />
+        </div>
+        <div class="settings-row">
+          <label>{{ t('security.globalLockoutSecs') }}</label>
+          <input
+            type="number"
+            v-model.number="settings.auth.global_lockout_secs"
+            @change="saveSettings()"
+            min="10"
+            max="86400"
+            class="settings-input-number"
+          />
+        </div>
+      </div>
+
       <div class="settings-group">
         <div class="settings-row">
           <label>{{ t('security.previewAllowExternal') }}</label>
@@ -85,5 +135,15 @@ function onTrustedProxiesInput(e: Event) {
   font-size: 12px;
   font-family: var(--font-mono);
   resize: vertical;
+}
+.settings-input-number {
+  width: 80px;
+  background: var(--bg-input, #1a1a1a);
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  color: var(--fg, #c7c7c7);
+  padding: 6px 8px;
+  font-size: 12px;
+  text-align: center;
 }
 </style>

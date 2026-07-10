@@ -394,7 +394,14 @@ impl Default for MonitorConfig {
 }
 
 fn default_ip_whitelist() -> Vec<String> {
-    vec!["127.0.0.1".into(), "::1".into()]
+    // Server mode: no loopback bypass by default - local access must
+    // authenticate, preventing SSH port-forwarding bypass. Desktop mode keeps
+    // loopback bypass for Tauri zero-config.
+    if cfg!(feature = "server") {
+        vec![]
+    } else {
+        vec!["127.0.0.1".into(), "::1".into()]
+    }
 }
 
 fn default_locale() -> String {

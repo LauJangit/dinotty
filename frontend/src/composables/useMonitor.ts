@@ -86,9 +86,7 @@ export function onMonitorHistory(fn: HistoryListener) {
 }
 
 let ws: WebSocket | null = null
-let sse: EventSource | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
-let fallbackTimer: ReturnType<typeof setTimeout> | null = null
 let attempts = 0
 let started = false
 
@@ -108,26 +106,8 @@ function handleMessage(e: { data: string }) {
   } catch {}
 }
 
-function connectSse() {
-  console.log('[monitor] WebSocket unavailable, falling back to HTTP SSE')
-  if (ws) {
-    ws.close()
-    ws = null
-  }
-  sse = new EventSource('/http/monitor')
-  sse.onopen = () => {
-    monitorConnected.value = true
-    attempts = 0
-  }
-  sse.onmessage = handleMessage
-  sse.onerror = () => {
-    // EventSource auto-reconnects
-  }
-}
-
 async function connect() {
   if (ws && ws.readyState <= WebSocket.OPEN) return
-  if (sse) return
 
   let url: string
   if (isTauri()) {
@@ -141,10 +121,6 @@ async function connect() {
   ws = new WebSocket(wsUrlWithToken(url))
 
   ws.onopen = () => {
-    if (fallbackTimer) {
-      clearTimeout(fallbackTimer)
-      fallbackTimer = null
-    }
     monitorConnected.value = true
     attempts = 0
   }
@@ -152,26 +128,12 @@ async function connect() {
   ws.onmessage = (e) => handleMessage(e)
 
   ws.onclose = () => {
-    if (fallbackTimer) {
-      clearTimeout(fallbackTimer)
-      fallbackTimer = null
-    }
     monitorConnected.value = false
     ws = null
-    // Don't reconnect if already using SSE fallback
-    if (sse) return
     if (started) scheduleReconnect()
   }
 
   ws.onerror = () => {}
-
-  // If WS doesn't connect within 3 seconds, fall back to SSE
-  fallbackTimer = setTimeout(() => {
-    fallbackTimer = null
-    if (ws && ws.readyState !== WebSocket.OPEN) {
-      connectSse()
-    }
-  }, 3000)
 }
 
 function scheduleReconnect() {
@@ -196,17 +158,9 @@ export function stopMonitor() {
     clearTimeout(reconnectTimer)
     reconnectTimer = null
   }
-  if (fallbackTimer) {
-    clearTimeout(fallbackTimer)
-    fallbackTimer = null
-  }
   if (ws) {
     ws.close(1000)
     ws = null
-  }
-  if (sse) {
-    sse.close()
-    sse = null
   }
   monitorConnected.value = false
 }

@@ -12,9 +12,10 @@
           :placeholder="t('login.placeholder')"
           autocomplete="current-password"
           autofocus
+          :disabled="retryIn > 0"
           @focus="error = ''"
         />
-        <button type="submit" class="login-btn" :disabled="loading">
+        <button type="submit" class="login-btn" :disabled="loading || retryIn > 0">
           {{ loading ? t('login.loading') : t('login.submit') }}
         </button>
       </form>
@@ -24,7 +25,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onBeforeUnmount } from 'vue'
 import { validateToken } from '../composables/apiBase'
 import { useI18n } from '../composables/useI18n'
 
@@ -34,6 +35,31 @@ const { t } = useI18n()
 const token = ref('')
 const error = ref('')
 const loading = ref(false)
+const retryIn = ref(0)
+let lockdownTimer: number | undefined
+
+function clearLockdown() {
+  if (lockdownTimer !== undefined) {
+    window.clearInterval(lockdownTimer)
+    lockdownTimer = undefined
+  }
+  retryIn.value = 0
+}
+
+function startLockdown(seconds: number) {
+  clearLockdown()
+  retryIn.value = seconds
+  error.value = t('login.locked', { seconds })
+  lockdownTimer = window.setInterval(() => {
+    retryIn.value -= 1
+    if (retryIn.value <= 0) {
+      clearLockdown()
+      error.value = ''
+      return
+    }
+    error.value = t('login.locked', { seconds: retryIn.value })
+  }, 1000)
+}
 
 async function onSubmit() {
   const val = token.value.trim()
@@ -43,14 +69,20 @@ async function onSubmit() {
   }
   loading.value = true
   error.value = ''
-  const ok = await validateToken(val)
+  const r = await validateToken(val)
   loading.value = false
-  if (ok) {
+  if (r.ok) {
     emit('success')
+    return
+  }
+  if (r.reason === 'locked') {
+    startLockdown(r.retryAfter ?? 60)
   } else {
     error.value = t('login.invalid')
   }
 }
+
+onBeforeUnmount(clearLockdown)
 </script>
 
 <style scoped>

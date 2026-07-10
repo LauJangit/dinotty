@@ -19,7 +19,6 @@ pub mod auth;
 pub mod event_bus;
 pub mod file_watcher;
 pub mod history;
-pub mod http_fallback;
 pub mod mcp;
 pub mod monitor;
 pub mod notification;

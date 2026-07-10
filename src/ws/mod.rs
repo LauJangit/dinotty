@@ -98,9 +98,17 @@ pub async fn ws_handler(
     ConnectInfo(_addr): ConnectInfo<SocketAddr>,
     _headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    // No origin check: UUID paneId acts as bearer secret (122-bit entropy),
-    // not cookie-based auth, so CSRF protection is not applicable.
-    let pane_id = q.pane_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    // paneId must reference a tab created via /api/tabs (or the sync WS
+    // CreateTab message); otherwise an authenticated client could spawn
+    // unbounded orphan PTYs by connecting with random/empty paneIds. Cookie
+    // session auth (auth_middleware) handles access control; this check
+    // prevents resource exhaustion.
+    let Some(pane_id) = q.pane_id else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    if !manager.is_pane_in_any_tab(&pane_id) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     ws.on_upgrade(move |socket| handle_socket(socket, pane_id, manager, history)).into_response()
 }
 

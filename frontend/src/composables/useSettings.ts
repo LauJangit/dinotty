@@ -50,6 +50,10 @@ export interface SettingsData {
     trusted_proxies: string[]
     lockout_strategy: string
     session_ttl_days: number
+    lockout_max_failures: number
+    lockout_secs: number
+    global_lockout_max_failures: number
+    global_lockout_secs: number
   }
   preview: {
     allow_external: boolean
@@ -261,6 +265,10 @@ export const settings = reactive<SettingsData>({
     trusted_proxies: [],
     lockout_strategy: 'ip',
     session_ttl_days: 7,
+    lockout_max_failures: 5,
+    lockout_secs: 60,
+    global_lockout_max_failures: 50,
+    global_lockout_secs: 300,
   },
   preview: {
     allow_external: false,
