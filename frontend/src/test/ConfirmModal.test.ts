@@ -47,6 +47,7 @@ describe('ConfirmModal keyboard support', () => {
     await nextTick()
 
     expect(wrapper.emitted('cancel')).toHaveLength(1)
+    expect(wrapper.emitted('confirm')).toBeUndefined()
   })
 
   it('visible=false + Escape does not emit cancel', async () => {
@@ -55,6 +56,17 @@ describe('ConfirmModal keyboard support', () => {
     dispatchKey({ key: 'Escape' })
     await nextTick()
 
+    expect(wrapper.emitted('cancel')).toBeUndefined()
+    expect(wrapper.emitted('confirm')).toBeUndefined()
+  })
+
+  it('hidden state ignores Arrow, Tab, Enter, and Escape', async () => {
+    const wrapper = mountModal(false)
+
+    for (const key of ['ArrowRight', 'Tab', 'Enter', 'Escape']) dispatchKey({ key })
+    await nextTick()
+
+    expect(wrapper.emitted('confirm')).toBeUndefined()
     expect(wrapper.emitted('cancel')).toBeUndefined()
   })
 
@@ -65,6 +77,41 @@ describe('ConfirmModal keyboard support', () => {
     await nextTick()
 
     expect(wrapper.emitted('cancel')).toHaveLength(1)
+    expect(wrapper.emitted('confirm')).toBeUndefined()
+  })
+
+  it('ArrowRight then Enter emits confirm', async () => {
+    const wrapper = mountModal()
+
+    dispatchKey({ key: 'ArrowRight' })
+    dispatchKey({ key: 'Enter' })
+    await nextTick()
+
+    expect(wrapper.emitted('confirm')).toHaveLength(1)
+    expect(wrapper.emitted('cancel')).toBeUndefined()
+  })
+
+  it('ArrowRight then ArrowLeft then Enter returns to cancel', async () => {
+    const wrapper = mountModal()
+
+    dispatchKey({ key: 'ArrowRight' })
+    dispatchKey({ key: 'ArrowLeft' })
+    dispatchKey({ key: 'Enter' })
+    await nextTick()
+
+    expect(wrapper.emitted('cancel')).toHaveLength(1)
+    expect(wrapper.emitted('confirm')).toBeUndefined()
+  })
+
+  it('Tab toggles from cancel to confirm', async () => {
+    const wrapper = mountModal()
+
+    dispatchKey({ key: 'Tab' })
+    dispatchKey({ key: 'Enter' })
+    await nextTick()
+
+    expect(wrapper.emitted('confirm')).toHaveLength(1)
+    expect(wrapper.emitted('cancel')).toBeUndefined()
   })
 
   it('removes the keydown listener on unmount', () => {

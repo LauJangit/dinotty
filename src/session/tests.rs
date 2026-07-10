@@ -100,6 +100,14 @@ fn parse_title_cwd_whitespace_trimmed() {
     assert_eq!(result, Some(PathBuf::from("/tmp")));
 }
 
+#[cfg(windows)]
+#[test]
+fn parse_title_cwd_windows_drive_path() {
+    let home = PathBuf::from(r"C:\Users\dev");
+    let result = parse_title_cwd(r"user@host:C:\Users\dev\project", &home);
+    assert_eq!(result, Some(PathBuf::from(r"C:\Users\dev\project")));
+}
+
 // ── sniff_cwd_from_title_osc ────────────────────────────────────
 
 #[test]
@@ -153,6 +161,61 @@ fn sniff_cwd_buffers_beyond_cap() {
     let big_data = vec![b'x'; OSC_SNIFF_CAP + 1000];
     sniff_cwd_from_title_osc(&mut buf, &big_data, &home, &mut cwd);
     assert!(buf.len() <= OSC_SNIFF_CAP);
+}
+
+#[cfg(windows)]
+#[test]
+fn sniff_cwd_accepts_powershell_title_with_windows_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().to_path_buf();
+    let target = tmp.path().join("project");
+    std::fs::create_dir(&target).unwrap();
+    let mut cwd = home.clone();
+    let mut buf = Vec::new();
+    let data = format!("\x1b]0;user@host:{}\x07", target.display());
+
+    sniff_cwd_from_title_osc(&mut buf, data.as_bytes(), &home, &mut cwd);
+
+    assert_eq!(cwd, target.canonicalize().unwrap());
+}
+
+#[cfg(windows)]
+#[test]
+fn sniff_cwd_buffers_chunked_powershell_title_with_windows_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().to_path_buf();
+    let target = tmp.path().join("chunked-project");
+    std::fs::create_dir(&target).unwrap();
+    let mut cwd = home.clone();
+    let mut buf = Vec::new();
+
+    sniff_cwd_from_title_osc(&mut buf, b"\x1b]0;user@host:", &home, &mut cwd);
+    assert_eq!(cwd, home);
+    sniff_cwd_from_title_osc(
+        &mut buf,
+        format!("{}\x07", target.display()).as_bytes(),
+        &home,
+        &mut cwd,
+    );
+
+    assert_eq!(cwd, target.canonicalize().unwrap());
+}
+
+#[cfg(windows)]
+#[test]
+fn sniff_cwd_keeps_old_cwd_when_windows_path_is_missing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().to_path_buf();
+    let old_cwd = tmp.path().join("old");
+    std::fs::create_dir(&old_cwd).unwrap();
+    let missing = tmp.path().join("missing");
+    let mut cwd = old_cwd.canonicalize().unwrap();
+    let mut buf = Vec::new();
+    let data = format!("\x1b]0;user@host:{}\x07", missing.display());
+
+    sniff_cwd_from_title_osc(&mut buf, data.as_bytes(), &home, &mut cwd);
+
+    assert_eq!(cwd, old_cwd.canonicalize().unwrap());
 }
 
 // ── collect_leaf_pane_ids ────────────────────────────────────────
