@@ -364,3 +364,127 @@ impl PluginManager {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::PluginManager;
+    use crate::platform::fs as platform_fs;
+    use dashmap::DashMap;
+    use std::path::{Path, PathBuf};
+
+    fn test_manager(root: &Path) -> PluginManager {
+        PluginManager {
+            plugin_dir: root.join("plugins"),
+            data_dir: root.join("plugin-data"),
+            registry: DashMap::new(),
+            processes: DashMap::new(),
+        }
+    }
+
+    fn write_plugin_source(root: &Path, id: &str) -> PathBuf {
+        let src = root.join("src").join(id);
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(
+            src.join("plugin.json"),
+            format!(r#"{{"id":"{id}","name":"Test Plugin","version":"1.0.0"}}"#),
+        )
+        .unwrap();
+        std::fs::write(src.join("source.txt"), "source stays").unwrap();
+        src
+    }
+
+    fn unwrap_or_skip_symlink<T>(result: Result<T, String>) -> Option<T> {
+        match result {
+            Ok(value) => Some(value),
+            Err(e) if e.contains("symlink failed") || e.contains("not supported") => {
+                eprintln!("skipping symlink-dependent assertion: {e}");
+                None
+            }
+            Err(e) => panic!("unexpected error: {e}"),
+        }
+    }
+
+    fn create_broken_plugin_symlink_or_skip(
+        plugin_dir: &Path,
+        id: &str,
+        root: &Path,
+    ) -> Option<PathBuf> {
+        let target = root.join("missing-target");
+        let link = plugin_dir.join(id);
+        std::fs::create_dir_all(plugin_dir).unwrap();
+        std::fs::create_dir(&target).unwrap();
+        unwrap_or_skip_symlink(platform_fs::create_dir_symlink(&target, &link))?;
+        std::fs::remove_dir(&target).unwrap();
+        Some(link)
+    }
+
+    // 验证 dev-link 安装后 registry 会标记 is_dev_link。
+    #[test]
+    fn install_from_dir_dev_link_marks_registry_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = test_manager(tmp.path());
+        let src = write_plugin_source(tmp.path(), "dev-plugin");
+
+        let Some(manifest) = unwrap_or_skip_symlink(manager.install_from_dir(&src, true)) else {
+            return;
+        };
+
+        assert_eq!(manifest.id, "dev-plugin");
+        assert!(manager.plugin_dir.join("dev-plugin").is_symlink());
+        assert!(manager.registry.get("dev-plugin").unwrap().is_dev_link);
+    }
+
+    // 验证删除 dev-link 只移除插件目录中的链接，不删除源目录。
+    #[tokio::test]
+    async fn delete_dev_link_removes_link_without_removing_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = test_manager(tmp.path());
+        let src = write_plugin_source(tmp.path(), "linked-plugin");
+
+        if unwrap_or_skip_symlink(manager.install_from_dir(&src, true)).is_none() {
+            return;
+        }
+        manager.delete("linked-plugin", true).await.unwrap();
+
+        assert!(!platform_fs::path_exists_or_symlink(&manager.plugin_dir.join("linked-plugin")));
+        assert!(src.join("plugin.json").is_file());
+        assert!(src.join("source.txt").is_file());
+        assert!(!manager.registry.contains_key("linked-plugin"));
+    }
+
+    // 验证扫描到 broken symlink 时会清理链接且不会加入 registry。
+    #[test]
+    fn scan_removes_broken_symlink_without_registry_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = test_manager(tmp.path());
+        let Some(link) =
+            create_broken_plugin_symlink_or_skip(&manager.plugin_dir, "broken-plugin", tmp.path())
+        else {
+            return;
+        };
+
+        manager.scan();
+
+        assert!(!platform_fs::path_exists_or_symlink(&link));
+        assert!(!manager.registry.contains_key("broken-plugin"));
+    }
+
+    // 验证已有 broken symlink 时 dev-link 安装会拒绝，避免状态不一致。
+    #[test]
+    fn install_from_dir_dev_link_rejects_existing_broken_symlink() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = test_manager(tmp.path());
+        let src = write_plugin_source(tmp.path(), "stale-plugin");
+        let Some(link) =
+            create_broken_plugin_symlink_or_skip(&manager.plugin_dir, "stale-plugin", tmp.path())
+        else {
+            return;
+        };
+
+        let err = manager.install_from_dir(&src, true).unwrap_err();
+
+        assert!(err.contains("already installed"), "unexpected error: {err}");
+        assert!(platform_fs::path_exists_or_symlink(&link));
+        assert!(src.join("plugin.json").is_file());
+    }
+}

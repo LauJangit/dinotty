@@ -23,6 +23,7 @@ fn settings_empty_json_is_valid() {
     assert_eq!(settings.settings_version, 0);
     assert!(!settings.keyboard_sound);
     assert!(!settings.show_virtual_keyboard);
+    assert!(!settings.windows_alt_as_cmd);
     assert!(settings.confirm_before_close_tab);
     assert!(settings.bookmarks.is_empty());
     if cfg!(feature = "server") {
@@ -31,6 +32,26 @@ fn settings_empty_json_is_valid() {
         assert_eq!(settings.ip_whitelist, vec!["127.0.0.1", "::1"]);
     }
     assert_eq!(settings.upload_dir, default_upload_dir());
+}
+
+// 验证后端能反序列化前端使用的 windowsAltAsCmd camelCase 字段。
+#[test]
+fn settings_deserializes_windows_alt_as_cmd_camel_case() {
+    let settings: Settings = serde_json::from_str(r#"{"windowsAltAsCmd": true}"#).unwrap();
+
+    assert!(settings.windows_alt_as_cmd);
+}
+
+// 验证后端序列化仍输出 windowsAltAsCmd，避免生成 snake_case 配置。
+#[test]
+fn settings_serializes_windows_alt_as_cmd_camel_case() {
+    let mut settings: Settings = serde_json::from_str(r#"{}"#).unwrap();
+    settings.windows_alt_as_cmd = true;
+
+    let serialized = serde_json::to_string(&settings).unwrap();
+
+    assert!(serialized.contains(r#""windowsAltAsCmd":true"#));
+    assert!(!serialized.contains("windows_alt_as_cmd"));
 }
 
 #[test]

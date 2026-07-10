@@ -857,3 +857,56 @@ pub async fn plugin_process_stop_all(
     pm.kill_plugin_processes(&id).await;
     StatusCode::NO_CONTENT.into_response()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::dev_link_plugin;
+    use crate::plugin::manager::PluginManager;
+    use crate::plugin::types::DevLinkRequest;
+    use axum::{extract::State, http::StatusCode, Json};
+    use dashmap::DashMap;
+    use std::path::Path;
+    use std::sync::Arc;
+
+    fn test_manager(root: &Path) -> Arc<PluginManager> {
+        Arc::new(PluginManager {
+            plugin_dir: root.join("plugins"),
+            data_dir: root.join("plugin-data"),
+            registry: DashMap::new(),
+            processes: DashMap::new(),
+        })
+    }
+
+    fn write_plugin_source(root: &Path, id: &str) -> std::path::PathBuf {
+        let src = root.join("src").join(id);
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(
+            src.join("plugin.json"),
+            format!(r#"{{"id":"{id}","name":"Test Plugin","version":"1.0.0"}}"#),
+        )
+        .unwrap();
+        src
+    }
+
+    // 验证 dev-link API 遇到真实目录冲突时不会删除原目录。
+    #[tokio::test]
+    async fn dev_link_plugin_conflicts_with_existing_real_directory_without_deleting_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = test_manager(tmp.path());
+        let src = write_plugin_source(tmp.path(), "real-dir-plugin");
+        let existing = manager.plugin_dir.join("real-dir-plugin");
+        std::fs::create_dir_all(&existing).unwrap();
+        std::fs::write(existing.join("sentinel.txt"), "do not delete").unwrap();
+
+        let response = dev_link_plugin(
+            State(Arc::clone(&manager)),
+            Json(DevLinkRequest { path: src.to_string_lossy().into_owned() }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert!(existing.join("sentinel.txt").is_file());
+        assert!(!existing.is_symlink());
+        assert!(!manager.registry.contains_key("real-dir-plugin"));
+    }
+}
