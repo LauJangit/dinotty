@@ -132,7 +132,7 @@ fn is_allowed_key_path(canonical: &Path, home_ssh: &Path) -> bool {
 
     #[cfg(unix)]
     {
-        return path_within_or_equal(canonical, Path::new("/etc/ssh"));
+        path_within_or_equal(canonical, Path::new("/etc/ssh"))
     }
 
     #[cfg(not(unix))]
