@@ -289,6 +289,7 @@ async fn handle_sync_socket(
                                     pane_id: leaf_id.clone(),
                                     layout: Some(layout.clone()),
                                     cwd: None,
+                                    connection_id: None,
                                 })
                                 .unwrap(),
                             );
@@ -299,6 +300,7 @@ async fn handle_sync_socket(
                                     pane_id: leaf_id,
                                     layout: Some(layout),
                                     cwd: None,
+                                    connection_id: None,
                                 },
                                 &client_id,
                             );

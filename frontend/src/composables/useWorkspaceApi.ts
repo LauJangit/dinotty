@@ -7,18 +7,22 @@ export async function apiListWorkspaces(): Promise<Workspace[]> {
   return data.workspaces ?? []
 }
 
-export async function apiCreateWorkspace(path: string, name?: string): Promise<Workspace> {
+export async function apiCreateWorkspace(
+  path: string,
+  name?: string,
+  connectionId?: string
+): Promise<Workspace> {
   const res = await authFetch(apiUrl('/api/workspaces'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path, name }),
+    body: JSON.stringify({ path, name, connection_id: connectionId }),
   })
   return res.json()
 }
 
 export async function apiUpdateWorkspace(
   id: string,
-  data: { name?: string; path?: string }
+  data: { name?: string; path?: string; connection_id?: string }
 ): Promise<Workspace> {
   const res = await authFetch(apiUrl(`/api/workspaces/${id}`), {
     method: 'PUT',

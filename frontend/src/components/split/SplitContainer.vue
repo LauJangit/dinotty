@@ -82,6 +82,7 @@
       @split-horizontal="emit('splitHorizontal')"
       @split-vertical="emit('splitVertical')"
       @toggle-broadcast="emit('toggleBroadcast')"
+      @new-local-terminal="emit('newLocalTerminal')"
     />
   </div>
 
@@ -112,6 +113,7 @@
         @split-horizontal="emit('splitHorizontal')"
         @split-vertical="emit('splitVertical')"
         @toggle-broadcast="emit('toggleBroadcast')"
+        @new-local-terminal="emit('newLocalTerminal')"
         @divider-drag-end="emit('dividerDragEnd')"
         @reconnect="(id: string) => emit('reconnect', id)"
       />
@@ -161,6 +163,7 @@ const emit = defineEmits<{
   splitHorizontal: []
   splitVertical: []
   toggleBroadcast: []
+  newLocalTerminal: []
 }>()
 
 const { t } = useI18n()

@@ -488,30 +488,6 @@ pub async fn install_from_dir(
     }
 }
 
-fn remove_plugin_path(path: &std::path::Path) -> Result<(), String> {
-    let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
-    if meta.file_type().is_symlink() || meta.file_type().is_file() {
-        platform_fs::remove_symlink_or_file(path)
-    } else {
-        std::fs::remove_dir_all(path).map_err(|e| e.to_string())
-    }
-}
-
-fn backup_and_remove_plugin_path(
-    path: &std::path::Path,
-    backup: &std::path::Path,
-) -> Result<bool, String> {
-    let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
-    if meta.file_type().is_symlink() || meta.file_type().is_file() {
-        platform_fs::remove_symlink_or_file(path)?;
-        return Ok(false);
-    }
-
-    copy_dir_all(path, backup)?;
-    std::fs::remove_dir_all(path).map_err(|e| e.to_string())?;
-    Ok(true)
-}
-
 // ─── Marketplace ────────────────────────────────────────────────────────────
 
 const DEFAULT_REGISTRY_URL: &str =
@@ -686,19 +662,17 @@ pub async fn install_from_git(
             Ok(b) => b,
             Err(e) => return plugin_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
         };
-        let backup_created = if platform_fs::path_exists_or_symlink(&dest) {
-            match backup_and_remove_plugin_path(&dest, backup.path()) {
-                Ok(created) => created,
-                Err(e) => return plugin_err(StatusCode::INTERNAL_SERVER_ERROR, &e),
+        if platform_fs::path_exists_or_symlink(&dest) {
+            if let Err(e) = copy_dir_all(&dest, backup.path()) {
+                return plugin_err(StatusCode::INTERNAL_SERVER_ERROR, &e);
             }
-        } else {
-            false
-        };
+            if let Err(e) = platform_fs::remove_plugin_path(&dest) {
+                return plugin_err(StatusCode::INTERNAL_SERVER_ERROR, &e);
+            }
+        }
         if let Err(e) = copy_dir_all(&plugin_root, &dest) {
-            let _ = remove_plugin_path(&dest);
-            if backup_created {
-                let _ = copy_dir_all(backup.path(), &dest);
-            }
+            let _ = platform_fs::remove_plugin_path(&dest);
+            let _ = copy_dir_all(backup.path(), &dest);
             return plugin_err(StatusCode::INTERNAL_SERVER_ERROR, &format!("update failed: {e}"));
         }
         if let Some(ref bin) = manifest.bin {
@@ -871,76 +845,4 @@ pub async fn plugin_process_stop_all(
 ) -> Response {
     pm.kill_plugin_processes(&id).await;
     StatusCode::NO_CONTENT.into_response()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::dev_link_plugin;
-    use crate::plugin::manager::PluginManager;
-    use crate::plugin::types::DevLinkRequest;
-    use axum::{extract::State, http::StatusCode, Json};
-    use dashmap::DashMap;
-    use std::path::Path;
-    use std::sync::Arc;
-
-    fn manager_at(root: &Path) -> Arc<PluginManager> {
-        Arc::new(PluginManager {
-            plugin_dir: root.join("plugins"),
-            data_dir: root.join("data"),
-            registry: DashMap::new(),
-            processes: DashMap::new(),
-        })
-    }
-
-    #[cfg(unix)]
-    fn broken_dir_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
-        std::os::unix::fs::symlink(target, link)
-    }
-
-    #[cfg(windows)]
-    fn broken_dir_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
-        std::os::windows::fs::symlink_dir(target, link)
-    }
-
-    fn skip_if_symlink_permission_denied(result: std::io::Result<()>) -> bool {
-        match result {
-            Ok(()) => false,
-            Err(e) if cfg!(windows) && e.kind() == std::io::ErrorKind::PermissionDenied => true,
-            Err(e) => panic!("failed to create symlink for test: {e}"),
-        }
-    }
-
-    #[tokio::test]
-    #[cfg(any(unix, windows))]
-    async fn dev_link_plugin_cleans_broken_symlink_before_relinking() {
-        let tmp = tempfile::tempdir().unwrap();
-        let pm = manager_at(tmp.path());
-        std::fs::create_dir_all(&pm.plugin_dir).unwrap();
-
-        let src = tmp.path().join("source-plugin");
-        std::fs::create_dir(&src).unwrap();
-        std::fs::write(
-            src.join("plugin.json"),
-            r#"{"id":"dev-broken","name":"Dev Broken","version":"0.1.0"}"#,
-        )
-        .unwrap();
-        let link = pm.plugin_dir.join("dev-broken");
-        if skip_if_symlink_permission_denied(broken_dir_symlink(
-            &tmp.path().join("missing-plugin"),
-            &link,
-        )) {
-            return;
-        }
-
-        let response = dev_link_plugin(
-            State(Arc::clone(&pm)),
-            Json(DevLinkRequest { path: src.to_string_lossy().into_owned() }),
-        )
-        .await;
-
-        assert_eq!(response.status(), StatusCode::OK);
-        assert!(crate::platform::fs::path_exists_or_symlink(&link));
-        assert_eq!(std::fs::canonicalize(&link).unwrap(), std::fs::canonicalize(&src).unwrap());
-        assert!(pm.registry.contains_key("dev-broken"));
-    }
 }

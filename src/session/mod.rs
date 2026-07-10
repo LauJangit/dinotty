@@ -25,6 +25,8 @@ pub struct SshSessionParams {
     pub username: String,
     pub auth_method: SshAuthMethod,
     pub default_command: Option<String>,
+    /// The `SshProfile.id` when created from a saved profile. `None` for quick-connect.
+    pub profile_id: Option<String>,
 }
 
 /// Session 的传输后端
@@ -695,7 +697,7 @@ fn parse_title_cwd(title: &str, home: &Path) -> Option<PathBuf> {
         home.join(rest)
     } else if path_part == "~" {
         home.to_path_buf()
-    } else if Path::new(path_part).is_absolute() || path_part.starts_with('/') {
+    } else if Path::new(path_part).is_absolute() {
         PathBuf::from(path_part)
     } else {
         home.join(path_part)
@@ -766,6 +768,8 @@ pub enum SyncMsg {
         pane_id: String,
         layout: Option<serde_json::Value>,
         cwd: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        connection_id: Option<String>,
     },
     TabClosed {
         pane_id: String,
@@ -826,6 +830,9 @@ pub struct TabInfo {
     pub active_pane_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    /// The `SshProfile.id` if this tab is an SSH session created from a profile.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connection_id: Option<String>,
 }
 
 impl Default for SessionManager {
@@ -1031,7 +1038,11 @@ impl SessionManager {
                 let cwd = self.sessions.get(&pane_id).and_then(|s| {
                     s.cwd_state.lock().ok().map(|state| state.cwd.to_string_lossy().to_string())
                 });
-                TabInfo { tab_id, pane_id, layout, active_pane_id, cwd }
+                let connection_id = self
+                    .sessions
+                    .get(&pane_id)
+                    .and_then(|s| s.ssh_params.as_ref().and_then(|p| p.profile_id.clone()));
+                TabInfo { tab_id, pane_id, layout, active_pane_id, cwd, connection_id }
             })
             .collect();
 

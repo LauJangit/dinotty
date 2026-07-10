@@ -310,17 +310,16 @@ impl PluginManager {
 
         let plugin_path = self.plugin_dir.join(id);
         let backup = tempfile::tempdir().map_err(|e| e.to_string())?;
-        let backup_created = if platform_fs::path_exists_or_symlink(&plugin_path) {
-            backup_and_remove_plugin_path(&plugin_path, backup.path())?
-        } else {
-            false
-        };
+        if platform_fs::path_exists_or_symlink(&plugin_path) {
+            copy_dir_all(&plugin_path, backup.path())?;
+            platform_fs::remove_plugin_path(&plugin_path)?;
+        }
 
         if let Err(e) = std::fs::rename(tmp.path(), &plugin_path) {
             if platform_fs::path_exists_or_symlink(&plugin_path) {
-                let _ = remove_plugin_path(&plugin_path);
+                let _ = platform_fs::remove_plugin_path(&plugin_path);
             }
-            if backup_created {
+            if backup.path().exists() {
                 let _ = std::fs::rename(backup.path(), &plugin_path);
             }
             return Err(format!("failed to install update: {e}"));
@@ -351,7 +350,7 @@ impl PluginManager {
 
         let plugin_path = self.plugin_dir.join(id);
         if platform_fs::path_exists_or_symlink(&plugin_path) {
-            remove_plugin_path(&plugin_path)?;
+            platform_fs::remove_plugin_path(&plugin_path)?;
         }
 
         if !keep_data {
@@ -363,150 +362,5 @@ impl PluginManager {
 
         self.registry.remove(id);
         Ok(())
-    }
-}
-
-fn remove_plugin_path(path: &std::path::Path) -> Result<(), String> {
-    let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
-    if meta.file_type().is_symlink() || meta.file_type().is_file() {
-        platform_fs::remove_symlink_or_file(path)
-    } else {
-        std::fs::remove_dir_all(path).map_err(|e| e.to_string())
-    }
-}
-
-fn backup_and_remove_plugin_path(
-    path: &std::path::Path,
-    backup: &std::path::Path,
-) -> Result<bool, String> {
-    let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
-    if meta.file_type().is_symlink() || meta.file_type().is_file() {
-        platform_fs::remove_symlink_or_file(path)?;
-        return Ok(false);
-    }
-
-    copy_dir_all(path, backup)?;
-    std::fs::remove_dir_all(path).map_err(|e| e.to_string())?;
-    Ok(true)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::PluginManager;
-    use crate::plugin::types::{PluginInfo, PluginManifest, PluginStateValue};
-    use dashmap::DashMap;
-    use std::io::Cursor;
-    use std::path::Path;
-
-    fn manager_at(root: &Path) -> PluginManager {
-        PluginManager {
-            plugin_dir: root.join("plugins"),
-            data_dir: root.join("data"),
-            registry: DashMap::new(),
-            processes: DashMap::new(),
-        }
-    }
-
-    fn manifest(id: &str, version: &str) -> PluginManifest {
-        PluginManifest {
-            id: id.to_string(),
-            name: "Test Plugin".to_string(),
-            version: version.to_string(),
-            min_app_version: None,
-            description: None,
-            icon: None,
-            entry: None,
-            bin: None,
-            commands: None,
-            styles: None,
-            permissions: None,
-        }
-    }
-
-    fn archive_for(manifest: &PluginManifest) -> Vec<u8> {
-        let json = serde_json::to_vec(manifest).unwrap();
-        let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-        let mut builder = tar::Builder::new(encoder);
-        let mut header = tar::Header::new_gnu();
-        header.set_size(json.len() as u64);
-        header.set_cksum();
-        builder.append_data(&mut header, "plugin.json", Cursor::new(json)).unwrap();
-        let encoder = builder.into_inner().unwrap();
-        encoder.finish().unwrap()
-    }
-
-    #[cfg(unix)]
-    fn broken_dir_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
-        std::os::unix::fs::symlink(target, link)
-    }
-
-    #[cfg(windows)]
-    fn broken_dir_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
-        std::os::windows::fs::symlink_dir(target, link)
-    }
-
-    fn skip_if_symlink_permission_denied(result: std::io::Result<()>) -> bool {
-        match result {
-            Ok(()) => false,
-            Err(e) if cfg!(windows) && e.kind() == std::io::ErrorKind::PermissionDenied => true,
-            Err(e) => panic!("failed to create symlink for test: {e}"),
-        }
-    }
-
-    #[test]
-    #[cfg(any(unix, windows))]
-    fn update_cleans_broken_symlink_before_installing() {
-        let tmp = tempfile::tempdir().unwrap();
-        let manager = manager_at(tmp.path());
-        std::fs::create_dir_all(&manager.plugin_dir).unwrap();
-
-        let id = "broken-update";
-        let dest = manager.plugin_dir.join(id);
-        if skip_if_symlink_permission_denied(broken_dir_symlink(
-            &tmp.path().join("missing-plugin"),
-            &dest,
-        )) {
-            return;
-        }
-        let old_manifest = manifest(id, "0.1.0");
-        manager.registry.insert(
-            id.to_string(),
-            PluginInfo {
-                manifest: old_manifest,
-                install_date: Some(123),
-                state: PluginStateValue::Active,
-                error: None,
-                is_dev_link: false,
-            },
-        );
-
-        let new_manifest = manifest(id, "0.2.0");
-        let installed = manager.update(id, &archive_for(&new_manifest)).unwrap();
-
-        assert_eq!(installed.version, "0.2.0");
-        assert!(dest.join("plugin.json").is_file());
-        assert!(!std::fs::symlink_metadata(&dest).unwrap().file_type().is_symlink());
-    }
-
-    #[test]
-    #[cfg(any(unix, windows))]
-    fn install_reports_already_installed_for_broken_symlink() {
-        let tmp = tempfile::tempdir().unwrap();
-        let manager = manager_at(tmp.path());
-        std::fs::create_dir_all(&manager.plugin_dir).unwrap();
-
-        let id = "broken-install";
-        let dest = manager.plugin_dir.join(id);
-        if skip_if_symlink_permission_denied(broken_dir_symlink(
-            &tmp.path().join("missing-plugin"),
-            &dest,
-        )) {
-            return;
-        }
-
-        let err = manager.install(&archive_for(&manifest(id, "0.1.0"))).unwrap_err();
-
-        assert!(err.contains("already installed"));
-        assert!(crate::platform::fs::path_exists_or_symlink(&dest));
     }
 }

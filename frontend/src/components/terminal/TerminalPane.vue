@@ -22,6 +22,7 @@
     :selected-text="menuSelectedText"
     :link-type="linkType"
     :link-target="linkTarget"
+    :is-ssh="!!props.sshHost"
     @close="closeMenu"
     @copy="onMenuCopy"
     @paste="onMenuPaste"
@@ -31,6 +32,7 @@
     @split-horizontal="emit('splitHorizontal')"
     @split-vertical="emit('splitVertical')"
     @toggle-broadcast="emit('toggleBroadcast')"
+    @new-local-terminal="emit('newLocalTerminal')"
   />
   <SelectionHandles
     :visible="handlesVisible"
@@ -48,6 +50,7 @@ import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import type { Terminal } from '@xterm/xterm'
 import { TerminalInstance } from '../../composables/useTerminal'
 import { copyToClipboard } from '../../utils/clipboard'
+import { readText as readClipboardText } from '@tauri-apps/plugin-clipboard-manager'
 import SearchBar from './SearchBar.vue'
 import TerminalContextMenu from './TerminalContextMenu.vue'
 import SelectionHandles from './SelectionHandles.vue'
@@ -70,6 +73,7 @@ const emit = defineEmits<{
   splitHorizontal: []
   splitVertical: []
   toggleBroadcast: []
+  newLocalTerminal: []
 }>()
 
 const wrapperRef = ref<HTMLElement>()
@@ -191,8 +195,18 @@ function onMenuCopy() {
   // copy already handled in TerminalContextMenu
 }
 
-async function onMenuPaste(text: string) {
-  terminal?.pasteText(text)
+async function onMenuPaste() {
+  if (!terminal?.xterm) return
+  try {
+    const text = await readClipboardText()
+    if (text) terminal.xterm.paste(text)
+  } catch {
+    // Fallback: focus xterm textarea and try execCommand
+    const ta = document.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null
+    if (!ta) return
+    ta.focus()
+    try { document.execCommand('paste') } catch {}
+  }
 }
 
 function onMenuSelectAll() {

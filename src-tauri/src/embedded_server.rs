@@ -226,6 +226,17 @@ async fn manifest_handler() -> impl IntoResponse {
     }
 }
 
+fn generate_random_token() -> String {
+    use rand::RngExt;
+    let mut rng = rand::rng();
+    let bytes: Vec<u8> = (0..32).map(|_| rng.random::<u8>()).collect();
+    bytes.iter().fold(String::with_capacity(64), |mut s, b| {
+        use std::fmt::Write;
+        let _ = write!(s, "{b:02x}");
+        s
+    })
+}
+
 fn read_git_info() -> GitInfo {
     let version = option_env!("DINOTTY_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")).to_string();
 
@@ -273,7 +284,19 @@ async fn get_token(AxumState(state): AxumState<AppState>) -> impl IntoResponse {
 
 async fn token_configured(AxumState(state): AxumState<AppState>) -> impl IntoResponse {
     let token = state.auth_token.read().await;
-    Json(serde_json::json!({ "configured": !token.is_empty() }))
+    Json(serde_json::json!({
+        "configured": !token.is_empty(),
+        "server_mode": false,
+    }))
+}
+
+async fn auto_token(AxumState(state): AxumState<AppState>) -> impl IntoResponse {
+    let token = state.auth_token.read().await;
+    if token.is_empty() {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "no token"})))
+            .into_response();
+    }
+    Json(serde_json::json!({ "token": *token })).into_response()
 }
 
 #[derive(serde::Deserialize)]
@@ -331,11 +354,17 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
 
     let initial_token =
         settings::load_token().or_else(|| std::env::var("DINOTTY_TOKEN").ok()).unwrap_or_default();
-    if initial_token.is_empty() {
-        tracing::info!("No auth token configured — first-time setup required");
+    let initial_token = if initial_token.is_empty() {
+        let token = generate_random_token();
+        if let Err(e) = settings::save_token(&token) {
+            tracing::error!("Failed to persist auto-generated token: {}", e);
+        }
+        tracing::info!("Desktop mode: auto-generated auth token");
+        token
     } else {
         tracing::info!("Auth token loaded (length={})", initial_token.len());
-    }
+        initial_token
+    };
     let auth_token = Arc::new(tokio::sync::RwLock::new(initial_token));
 
     let git_info = read_git_info();
@@ -417,6 +446,7 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
         .route("/api/info", get(server_info))
         .route("/api/auth", post(check_auth))
         .route("/api/token-configured", get(token_configured))
+        .route("/api/auto-token", get(auto_token))
         .route("/api/token", get(get_token).put(update_token))
         .route("/api/qr-code", post(generate_qr_code))
         .route("/api/plugins", get(plugin::list_plugins))

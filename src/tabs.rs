@@ -18,6 +18,12 @@ use crate::ssh;
 pub struct SplitPaneRequest {
     pub pane_id: String,
     pub direction: String, // "horizontal" or "vertical"
+    /// When true, always create a local PTY even if the source pane is SSH.
+    #[serde(default)]
+    pub force_local: bool,
+    /// Optional CWD override for the new pane (used with `force_local`).
+    #[serde(default)]
+    pub cwd: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -95,6 +101,7 @@ pub async fn create_tab(
         pane_id: pane_id.clone(),
         layout: Some(layout.clone()),
         cwd: req.cwd.clone(),
+        connection_id: None,
     });
 
     Json(serde_json::json!({
@@ -179,7 +186,26 @@ pub async fn split_pane(
     let ssh_params = manager.sessions.get(&req.pane_id).and_then(|s| s.ssh_params.clone());
 
     // Create session for new pane (SSH or local PTY)
-    let (_session, _shell_type) = if let Some(params) = ssh_params {
+    let source_cwd = manager
+        .sessions
+        .get(&req.pane_id)
+        .and_then(|s| s.cwd_state.lock().ok().map(|state| state.cwd.clone()));
+
+    let (_session, _shell_type) = if req.force_local {
+        // Force local PTY — use explicit cwd if provided, otherwise inherit from source
+        let local_cwd = req.cwd.map(std::path::PathBuf::from).or(source_cwd);
+        match pty::create_session(&manager, &new_pane_id, None, local_cwd) {
+            Ok(x) => x,
+            Err(e) => {
+                tracing::error!("Failed to create PTY for force-local split: {}", e);
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": e })),
+                )
+                    .into_response();
+            }
+        }
+    } else if let Some(params) = ssh_params {
         // Source is an SSH session — create a new SSH connection to the same host
         match ssh::create_ssh_session(&manager, &new_pane_id, params, None).await {
             Ok(x) => x,
@@ -194,10 +220,6 @@ pub async fn split_pane(
         }
     } else {
         // Local PTY — inherit CWD from source pane
-        let source_cwd = manager
-            .sessions
-            .get(&req.pane_id)
-            .and_then(|s| s.cwd_state.lock().ok().map(|state| state.cwd.clone()));
         match pty::create_session(&manager, &new_pane_id, None, source_cwd) {
             Ok(x) => x,
             Err(e) => {
@@ -480,12 +502,14 @@ pub async fn create_ssh_quick_tab(
         pane_id: pane_id.clone(),
         layout: Some(layout.clone()),
         cwd: None,
+        connection_id: req.profile_id.clone(),
     });
 
     Json(serde_json::json!({
         "tab_id": tab_id,
         "pane_id": pane_id,
         "layout": layout,
+        "connection_id": req.profile_id,
     }))
     .into_response()
 }
@@ -510,6 +534,7 @@ pub async fn create_ssh_tab(
                 username: profile.username.clone(),
                 auth_method: profile.auth_method.clone(),
                 default_command: profile.default_command.clone(),
+                profile_id: Some(profile.id.clone()),
             },
             None => {
                 return (
@@ -564,12 +589,14 @@ pub async fn create_ssh_tab(
         pane_id: pane_id.clone(),
         layout: Some(layout.clone()),
         cwd: None,
+        connection_id: Some(req.profile_id.clone()),
     });
 
     Json(serde_json::json!({
         "tab_id": tab_id,
         "pane_id": pane_id,
         "layout": layout,
+        "connection_id": req.profile_id,
     }))
     .into_response()
 }

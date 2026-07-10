@@ -37,15 +37,25 @@
         <button class="tcm-item" role="menuitem" @click="onSplitRight">
           <Columns2 :size="12" class="tcm-icon" />
           <span class="tcm-label">{{ t('terminal.ctxSplitRight') }}</span>
+          <span class="tcm-hint">{{ shortcutHint('splitHorizontal') }}</span>
         </button>
         <button class="tcm-item" role="menuitem" @click="onSplitDown">
           <Rows2 :size="12" class="tcm-icon" />
           <span class="tcm-label">{{ t('terminal.ctxSplitDown') }}</span>
+          <span class="tcm-hint">{{ shortcutHint('splitVertical') }}</span>
         </button>
         <button class="tcm-item" role="menuitem" @click="onBroadcast">
           <Radio :size="12" class="tcm-icon" />
           <span class="tcm-label">{{ t('terminal.ctxBroadcast') }}</span>
+          <span class="tcm-hint">{{ shortcutHint('toggleBroadcast') }}</span>
         </button>
+        <template v-if="isSsh">
+          <div class="tcm-sep" />
+          <button class="tcm-item" role="menuitem" @click="onNewLocalTerminal">
+            <Monitor :size="12" class="tcm-icon" />
+            <span class="tcm-label">{{ t('terminal.ctxNewLocalTerminal') }}</span>
+          </button>
+        </template>
       </div>
     </div>
 
@@ -109,9 +119,11 @@ import {
   Columns2,
   Rows2,
   Radio,
+  Monitor,
 } from 'lucide-vue-next'
 import { useSettings } from '../../composables/useSettings'
 import { useI18n } from '../../composables/useI18n'
+import { useKeybindings } from '../../composables/useKeybindings'
 import { copyToClipboard } from '../../utils/clipboard'
 import { randomId } from '../../utils/id'
 
@@ -122,24 +134,31 @@ const props = defineProps<{
   selectedText: string
   linkType?: 'file' | 'link'
   linkTarget?: string
+  isSsh?: boolean
 }>()
 
 const emit = defineEmits<{
   close: []
   copy: []
-  paste: [text: string]
+  paste: []
   selectAll: []
   openFile: [path: string]
   openLink: [url: string]
   splitHorizontal: []
   splitVertical: []
   toggleBroadcast: []
+  newLocalTerminal: []
 }>()
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
 
 const { t } = useI18n()
 const { settings, saveSettings } = useSettings()
+const { getBinding, formatBinding } = useKeybindings()
+
+function shortcutHint(id: string): string {
+  return formatBinding(getBinding(id)).join('')
+}
 
 const bookmarkDialogVisible = ref(false)
 const bookmarkName = ref('')
@@ -154,8 +173,12 @@ const menuStyle = computed(() => {
   const MENU_WIDTH = 200
   const BASE_HEIGHT = 290
   const LINK_ITEM_HEIGHT = 36
+  const SSH_ITEM_HEIGHT = 36 + 9 // button + separator
   const SEP_HEIGHT = 9
-  const menuHeight = BASE_HEIGHT + (props.linkType ? LINK_ITEM_HEIGHT + SEP_HEIGHT : 0)
+  const menuHeight =
+    BASE_HEIGHT +
+    (props.linkType ? LINK_ITEM_HEIGHT + SEP_HEIGHT : 0) +
+    (props.isSsh ? SSH_ITEM_HEIGHT : 0)
   const PAD = 8
   let x = props.x
   let y = props.y
@@ -178,13 +201,8 @@ function onCopy() {
   close()
 }
 
-async function onPaste() {
-  try {
-    const text = await navigator.clipboard.readText()
-    if (text) emit('paste', text)
-  } catch {
-    // clipboard read may be denied
-  }
+function onPaste() {
+  emit('paste')
   close()
 }
 
@@ -242,6 +260,11 @@ function onSplitDown() {
 
 function onBroadcast() {
   emit('toggleBroadcast')
+  close()
+}
+
+function onNewLocalTerminal() {
+  emit('newLocalTerminal')
   close()
 }
 </script>

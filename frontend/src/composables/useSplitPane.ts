@@ -53,7 +53,7 @@ export function useSplitPane(opts: {
   }
 
   /** Split the active pane in the given direction */
-  async function splitPane(direction: 'horizontal' | 'vertical') {
+  async function splitPane(direction: 'horizontal' | 'vertical', forceLocal?: boolean, cwd?: string) {
     const tab = getActiveTerminal()
     if (!tab) return
     if (getAllLeaves(tab.layout).length >= 6) {
@@ -62,7 +62,7 @@ export function useSplitPane(opts: {
     }
 
     try {
-      const result = await apiSplitPane(tab.paneId, tab.activePaneId, direction)
+      const result = await apiSplitPane(tab.paneId, tab.activePaneId, direction, forceLocal, cwd)
       // Update local layout with server response
       tab.layout = ensureSplitRoot(result.layout)
       tab.paneMru = reconcilePaneMru(

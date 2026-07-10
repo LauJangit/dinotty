@@ -4,6 +4,7 @@ import type TerminalPane from '../components/terminal/TerminalPane.vue'
 import type { TerminalInstance } from './useTerminal'
 
 const MAX_PREVIEW_ROWS = 28
+const MAX_PREVIEW_COLS = 120 // beyond this, preview chars are <2px wide and invisible
 
 /** Recursive node for split-pane preview layout */
 export interface PanePreviewNode {
@@ -89,7 +90,7 @@ function captureColoredHtml(terminal: TerminalInstance): string {
     const line = buffer.getLine(row)
     if (!line) continue
 
-    const cols = line.length
+    const cols = Math.min(line.length, MAX_PREVIEW_COLS)
     let hasContent = false
 
     for (let col = 0; col < cols; col++) {
