@@ -36,6 +36,7 @@ export interface SettingsData {
   keyboard_sound: boolean
   show_virtual_keyboard: boolean
   confirm_before_close_tab: boolean
+  space_confirms_dialogs: boolean
   windowsAltAsCmd: boolean
   locale: string
   panel_position: 'auto' | 'right' | 'left' | 'top' | 'bottom'
@@ -229,6 +230,7 @@ export const settings = reactive<SettingsData>({
   keyboard_sound: false,
   show_virtual_keyboard: false,
   confirm_before_close_tab: true,
+  space_confirms_dialogs: false,
   windowsAltAsCmd: isWindowsClient,
   locale: 'zh',
   panel_position: 'auto',

@@ -382,6 +382,21 @@
         <p class="settings-hint" data-hint="confirm-before-close-tab">
           {{ t('settings.confirmBeforeCloseTabHint') }}
         </p>
+        <div class="settings-row">
+          <label>{{ t('settings.spaceConfirmsDialogs') }}</label>
+          <label class="toggle">
+            <input
+              type="checkbox"
+              v-model="settings.space_confirms_dialogs"
+              @change="saveSettings()"
+              data-setting="space-confirms-dialogs"
+            />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+        <p class="settings-hint" data-hint="space-confirms-dialogs">
+          {{ t('settings.spaceConfirmsDialogsHint') }}
+        </p>
       </section>
     </div>
 

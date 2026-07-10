@@ -431,6 +431,8 @@ const messages: Record<Locale, Record<string, string>> = {
     'settings.confirmBeforeCloseTab': 'Confirm before closing terminal tab',
     'settings.confirmBeforeCloseTabHint':
       'Show a confirmation dialog before closing a terminal tab',
+    'settings.spaceConfirmsDialogs': 'Use Space to confirm dialogs',
+    'settings.spaceConfirmsDialogsHint': 'Applies to all confirmation dialogs',
     'settings.behavior': 'Behavior',
     'confirm.closeTabTitle': 'Close session?',
     'confirm.closeTabMessage': 'Closing this session will terminate all running processes. Close',
@@ -943,6 +945,8 @@ const messages: Record<Locale, Record<string, string>> = {
     'settings.about.repository': '仓库',
     'settings.confirmBeforeCloseTab': '关闭终端 tab 前显示确认',
     'settings.confirmBeforeCloseTabHint': '关闭终端 tab 前弹出确认对话框',
+    'settings.spaceConfirmsDialogs': '使用空格键确认对话框',
+    'settings.spaceConfirmsDialogsHint': '适用于所有确认对话框',
     'settings.behavior': '行为',
     'confirm.closeTabTitle': '关闭会话？',
     'confirm.closeTabMessage': '关闭此会话将终止所有正在运行的进程。仍要关闭',
