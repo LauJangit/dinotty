@@ -49,7 +49,7 @@ export async function validateToken(token: string): Promise<boolean> {
     }
     const res = await fetch(apiUrl('/api/auth'), init)
     if (res.ok) {
-      if (!isTauri()) loggedIn = true
+      setAuthToken(token)
       return true
     }
     return false

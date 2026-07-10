@@ -1,8 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 
 use dinotty_server::{
-    agent, audit, auth, file_watcher, history, mcp, monitor, notification, openapi, plugin, proxy,
-    session, settings, tabs, token, webhook, workspace, workspace_mgmt, ws,
+    agent, audit, auth, file_watcher, history, http_fallback, mcp, monitor, notification, openapi,
+    plugin, proxy, session, settings, tabs, token, webhook, workspace, workspace_mgmt, ws,
 };
 
 use axum::{
@@ -763,6 +763,14 @@ async fn main() {
             .route("/ws/watch", get(file_watcher::watch_handler))
             .route("/ws/monitor", get(monitor::ws_monitor_handler))
             .route("/ws/notify", get(ws::notification_ws_handler))
+            // HTTP fallback for reverse proxies without WebSocket support
+            .route("/http/term", get(http_fallback::sse_terminal))
+            .route("/http/input", post(http_fallback::post_input))
+            .route("/http/resize", post(http_fallback::post_resize))
+            .route("/http/sync", get(http_fallback::sse_sync))
+            .route("/http/sync/send", post(http_fallback::post_sync_command))
+            .route("/http/monitor", get(http_fallback::sse_monitor))
+            .route("/http/history", get(http_fallback::sse_history))
             .route("/api/notify", post(notification::post_notify))
             .route("/api/input", post(ws::post_input))
             // Open API
