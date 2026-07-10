@@ -250,10 +250,10 @@ fn powershell_history_path(home: &std::path::Path) -> PathBuf {
         .join("PSReadLine")
         .join("ConsoleHost_history.txt");
 
-    if powershell_core.exists() || !windows_powershell.exists() {
-        powershell_core
-    } else {
+    if windows_powershell.exists() || !powershell_core.exists() {
         windows_powershell
+    } else {
+        powershell_core
     }
 }
 
@@ -382,5 +382,73 @@ async fn handle_history_ws(mut socket: WebSocket, state: HistoryState) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_history, powershell_history_path};
+
+    fn write_file(path: &std::path::Path) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "history").unwrap();
+    }
+
+    #[test]
+    fn powershell_history_prefers_windows_powershell_when_both_exist() {
+        let _env = crate::test_support::EnvGuard::new(&["APPDATA"]);
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("APPDATA", tmp.path());
+        let windows_powershell = tmp
+            .path()
+            .join("Microsoft")
+            .join("Windows")
+            .join("PowerShell")
+            .join("PSReadLine")
+            .join("ConsoleHost_history.txt");
+        let powershell_core = tmp
+            .path()
+            .join("Microsoft")
+            .join("PowerShell")
+            .join("PSReadLine")
+            .join("ConsoleHost_history.txt");
+        write_file(&windows_powershell);
+        write_file(&powershell_core);
+
+        assert_eq!(powershell_history_path(tmp.path()), windows_powershell);
+    }
+
+    #[test]
+    fn powershell_history_uses_core_when_windows_powershell_missing() {
+        let _env = crate::test_support::EnvGuard::new(&["APPDATA"]);
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("APPDATA", tmp.path());
+        let powershell_core = tmp
+            .path()
+            .join("Microsoft")
+            .join("PowerShell")
+            .join("PSReadLine")
+            .join("ConsoleHost_history.txt");
+        write_file(&powershell_core);
+
+        assert_eq!(powershell_history_path(tmp.path()), powershell_core);
+    }
+
+    #[test]
+    fn parse_history_ignores_empty_lines_and_counts_powershell_duplicates() {
+        let parsed = parse_history("powershell", "Get-ChildItem\n\n  \nGet-ChildItem\npwd\n");
+
+        assert_eq!(parsed.get("Get-ChildItem"), Some(&2));
+        assert_eq!(parsed.get("pwd"), Some(&1));
+        assert!(!parsed.contains_key(""));
+    }
+
+    #[test]
+    fn parse_history_ignores_empty_lines_and_counts_cmd_duplicates() {
+        let parsed = parse_history("cmd", "dir\r\n\r\n dir \r\necho hi\r\n");
+
+        assert_eq!(parsed.get("dir"), Some(&2));
+        assert_eq!(parsed.get("echo hi"), Some(&1));
+        assert!(!parsed.contains_key(""));
     }
 }
