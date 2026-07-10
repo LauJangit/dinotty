@@ -52,6 +52,11 @@ const mocks = vi.hoisted(() => ({
   reorderPane: vi.fn(),
   onTerminalInput: vi.fn(),
   focusNeighbor: vi.fn(),
+  apiCreateTab: vi.fn(async () => ({
+    tab_id: 't-new',
+    pane_id: 'p-new',
+    layout: { type: 'leaf', paneId: 'p-new', title: 'Terminal', ratio: 1, zoomed: false },
+  })),
   apiCloseTab: vi.fn(async () => {}),
 }))
 
@@ -62,6 +67,8 @@ vi.mock('../composables/apiBase', () => ({
   setAuthToken: () => {},
   getApiBase: async () => 'http://127.0.0.1:7681',
   fetchServerToken: async () => '',
+  fetchAutoToken: async () => '',
+  validateToken: async () => ({ ok: true }),
   hasAuthToken: () => true,
   wsUrlWithToken: (url: string) => url,
   checkTokenConfigured: async () => false,
@@ -98,10 +105,8 @@ vi.mock('../composables/useKeybindings', () => ({
     getBinding: (id: string) => ({ key: BINDING_KEYS[id] ?? 'x', shift: false }),
     formatBinding: (b: any) => b.key,
   }),
-  keyEventMatchesBinding: (e: KeyboardEvent, binding: { key: string; shift: boolean }) => {
-    const cmd = e.metaKey || e.ctrlKey
-    return cmd && e.key.toLowerCase() === binding.key.toLowerCase() && e.shiftKey === binding.shift
-  },
+  keyEventMatchesBinding: (e: KeyboardEvent, binding: { key: string; shift: boolean }) =>
+    e.key.toLowerCase() === binding.key.toLowerCase() && e.shiftKey === binding.shift,
 }))
 vi.mock('../composables/useMonitor', () => ({ initMonitorHistory: () => {} }))
 vi.mock('../composables/useNotification', () => ({
@@ -115,7 +120,7 @@ vi.mock('../composables/useNotification', () => ({
 }))
 vi.mock('../composables/usePluginLoader', () => ({
   usePluginLoader: () => ({
-    loadedPlugins: { value: new Map(), __v_isRef: true },
+    loadedPlugins: new Map(),
     loadAll: vi.fn(),
     getPluginContext: vi.fn(),
     pluginList: { value: [], __v_isRef: true },
@@ -126,11 +131,7 @@ vi.mock('../composables/usePluginLoader', () => ({
 }))
 
 vi.mock('../composables/useTabApi', () => ({
-  apiCreateTab: vi.fn(async () => ({
-    tab_id: 't-new',
-    pane_id: 'p-new',
-    layout: { type: 'leaf', paneId: 'p-new', title: 'P new', ratio: 1, zoomed: false },
-  })),
+  apiCreateTab: mocks.apiCreateTab,
   apiCloseTab: mocks.apiCloseTab,
   apiClosePane: vi.fn(async () => ({ tab_closed: false })),
   apiActivatePane: vi.fn(async () => {}),
@@ -255,8 +256,10 @@ async function mountWithTabs() {
   })
   mountedWrapper = wrapper
   await nextTick()
+  await Promise.resolve()
+  await Promise.resolve()
   // Fast-forward past the 3-second REST fallback timer in App.vue's onMounted.
-  vi.advanceTimersByTime(3500)
+  await vi.advanceTimersByTimeAsync(3500)
   await nextTick()
   await nextTick()
   vi.useRealTimers()
@@ -294,6 +297,7 @@ describe('App.vue - onClosePane routes through confirmation gate', () => {
     mocks.reorderPane.mockReset()
     mocks.onTerminalInput.mockReset()
     mocks.focusNeighbor.mockReset()
+    mocks.apiCreateTab.mockClear()
     mocks.apiCloseTab.mockReset()
     localStorageMock.clear()
   })
@@ -404,6 +408,7 @@ describe('App.vue - Cmd+W routes through confirmation gate in split-pane mode', 
     mocks.reorderPane.mockReset()
     mocks.onTerminalInput.mockReset()
     mocks.focusNeighbor.mockReset()
+    mocks.apiCreateTab.mockClear()
     mocks.apiCloseTab.mockReset()
     localStorageMock.clear()
   })
@@ -480,6 +485,7 @@ describe('App.vue - Cmd+W routes through confirmation gate in split-pane mode', 
     expect(confirmDialog.attributes('data-visible')).toBe('false')
   })
 
+  // 验证 Windows Alt-as-Cmd 不会把 Ctrl+Alt+W 当作应用关闭快捷键。
   it('Windows Alt-as-Cmd enabled + Ctrl+Alt+W → does not trigger app close', async () => {
     settings.windowsAltAsCmd = true
     mocks.closePane.mockResolvedValue(true)
@@ -496,6 +502,95 @@ describe('App.vue - Cmd+W routes through confirmation gate in split-pane mode', 
     )
     await nextTick()
 
+    expect(mocks.closePane).not.toHaveBeenCalled()
+    expect(mocks.apiCloseTab).not.toHaveBeenCalled()
+    const confirmDialog = wrapper.findComponent(ConfirmCloseDialogStub)
+    expect(confirmDialog.attributes('data-visible')).toBe('false')
+  })
+
+  // 验证 Windows Alt-as-Cmd 开启后 Alt+W 会走关闭确认流程。
+  it('Windows Alt-as-Cmd enabled + Alt+W → routes through the close confirmation gate', async () => {
+    settings.windowsAltAsCmd = true
+    mocks.closePane.mockResolvedValue(true)
+
+    const wrapper = await mountWithTabs()
+
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'w',
+        altKey: true,
+        bubbles: true,
+      })
+    )
+    await nextTick()
+
+    expect(mocks.closePane).not.toHaveBeenCalled()
+    expect(mocks.apiCloseTab).not.toHaveBeenCalled()
+    const confirmDialog = wrapper.findComponent(ConfirmCloseDialogStub)
+    expect(confirmDialog.attributes('data-visible')).toBe('true')
+  })
+
+  // 验证 Windows Alt-as-Cmd 开启后 Alt+T 会创建新 tab。
+  it('Windows Alt-as-Cmd enabled + Alt+T → creates a new tab', async () => {
+    settings.windowsAltAsCmd = true
+
+    await mountWithTabs()
+
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 't',
+        altKey: true,
+        bubbles: true,
+      })
+    )
+    await nextTick()
+    await Promise.resolve()
+
+    expect(mocks.apiCreateTab).toHaveBeenCalledTimes(1)
+  })
+
+  // 验证未开启 Windows Alt-as-Cmd 时 Alt+W 不会触发应用关闭。
+  it('Windows Alt-as-Cmd disabled + Alt+W → does not trigger app close', async () => {
+    settings.windowsAltAsCmd = false
+    mocks.closePane.mockResolvedValue(true)
+
+    const wrapper = await mountWithTabs()
+
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'w',
+        altKey: true,
+        bubbles: true,
+      })
+    )
+    await nextTick()
+
+    expect(mocks.closePane).not.toHaveBeenCalled()
+    expect(mocks.apiCloseTab).not.toHaveBeenCalled()
+    const confirmDialog = wrapper.findComponent(ConfirmCloseDialogStub)
+    expect(confirmDialog.attributes('data-visible')).toBe('false')
+  })
+
+  // 验证 Ctrl+Alt+T/W 不会被虚拟 Cmd 处理，避免影响 AltGr 输入。
+  it('Windows Alt-as-Cmd enabled + Ctrl+Alt+T/W → does not trigger app shortcuts', async () => {
+    settings.windowsAltAsCmd = true
+    mocks.closePane.mockResolvedValue(true)
+
+    const wrapper = await mountWithTabs()
+
+    for (const key of ['t', 'w']) {
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key,
+          ctrlKey: true,
+          altKey: true,
+          bubbles: true,
+        })
+      )
+      await nextTick()
+    }
+
+    expect(mocks.apiCreateTab).not.toHaveBeenCalled()
     expect(mocks.closePane).not.toHaveBeenCalled()
     expect(mocks.apiCloseTab).not.toHaveBeenCalled()
     const confirmDialog = wrapper.findComponent(ConfirmCloseDialogStub)

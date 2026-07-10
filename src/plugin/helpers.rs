@@ -201,6 +201,15 @@ mod tests {
         writer.finish().unwrap().into_inner()
     }
 
+    fn zip_with_directory_and_file(dir: &str, file: &str, content: &[u8]) -> Vec<u8> {
+        let cursor = Cursor::new(Vec::new());
+        let mut writer = zip::ZipWriter::new(cursor);
+        writer.add_directory(dir, zip::write::SimpleFileOptions::default()).unwrap();
+        writer.start_file(file, zip::write::SimpleFileOptions::default()).unwrap();
+        writer.write_all(content).unwrap();
+        writer.finish().unwrap().into_inner()
+    }
+
     fn assert_rejects_without_writes(
         entry_name: &str,
         archive: Vec<u8>,
@@ -217,17 +226,57 @@ mod tests {
         assert!(!tmp.path().join("evil").exists(), "entry {entry_name} wrote outside dest");
     }
 
+    // 验证 tar.gz 会拒绝路径穿越、绝对路径和 Windows drive path。
     #[test]
     fn extract_tar_gz_rejects_unsafe_archive_paths() {
-        for name in ["../evil", "/absolute", r"..\evil", r"C:\evil"] {
+        for name in ["../evil", "/absolute", r"..\evil", r"C:\evil", "C:/evil"] {
             assert_rejects_without_writes(name, tar_gz_with_entry(name, b"bad"), extract_tar_gz);
         }
     }
 
+    // 验证 zip 会拒绝路径穿越、绝对路径和 Windows drive path。
     #[test]
     fn extract_zip_rejects_unsafe_archive_paths() {
-        for name in ["../evil", "/absolute", r"..\evil", r"C:\evil"] {
+        for name in ["../evil", "/absolute", r"..\evil", r"C:\evil", "C:/evil"] {
             assert_rejects_without_writes(name, zip_with_entry(name, b"bad"), extract_zip);
         }
+    }
+
+    // 验证 tar.gz 中正常嵌套相对路径可以解压。
+    #[test]
+    fn extract_tar_gz_allows_nested_relative_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("dest");
+        std::fs::create_dir(&dest).unwrap();
+
+        extract_tar_gz(&tar_gz_with_entry("safe/nested.txt", b"ok"), &dest).unwrap();
+
+        assert_eq!(std::fs::read_to_string(dest.join("safe/nested.txt")).unwrap(), "ok");
+    }
+
+    // 验证 zip 中正常嵌套相对路径可以解压。
+    #[test]
+    fn extract_zip_allows_nested_relative_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("dest");
+        std::fs::create_dir(&dest).unwrap();
+
+        extract_zip(&zip_with_entry("safe/nested.txt", b"ok"), &dest).unwrap();
+
+        assert_eq!(std::fs::read_to_string(dest.join("safe/nested.txt")).unwrap(), "ok");
+    }
+
+    // 验证 zip 中目录项和文件项混合时安全路径仍可解压。
+    #[test]
+    fn extract_zip_allows_safe_directory_and_file_entries() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("dest");
+        std::fs::create_dir(&dest).unwrap();
+
+        extract_zip(&zip_with_directory_and_file("safe/", "safe/nested.txt", b"ok"), &dest)
+            .unwrap();
+
+        assert!(dest.join("safe").is_dir());
+        assert_eq!(std::fs::read_to_string(dest.join("safe/nested.txt")).unwrap(), "ok");
     }
 }
