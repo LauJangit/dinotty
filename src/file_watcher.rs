@@ -168,8 +168,12 @@ pub async fn watch_handler(
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    let allowed_origins = settings.read().await.auth.allowed_origins.clone();
-    if !crate::auth::check_ws_origin(&headers, &allowed_origins, addr.ip()) {
+    let s = settings.read().await;
+    let allowed_origins = s.auth.allowed_origins.clone();
+    let trusted_proxies = s.auth.trusted_proxies.clone();
+    drop(s);
+    let real_ip = crate::auth::real_client_ip(&headers, addr.ip(), &trusted_proxies);
+    if !crate::auth::check_ws_origin(&headers, &allowed_origins, real_ip, &trusted_proxies) {
         return StatusCode::FORBIDDEN.into_response();
     }
     ws.on_upgrade(move |socket| {

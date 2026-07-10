@@ -12,7 +12,6 @@ use axum::{
 use rust_embed::Embed;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use dinotty_server::auth;
 use dinotty_server::auth::session::SessionStore;
@@ -271,17 +270,33 @@ async fn check_auth(
     headers: axum::http::HeaderMap,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    let real_ip = {
+    let (
+        real_ip,
+        lockout_strategy,
+        max_failures,
+        lockout_secs,
+        global_max_failures,
+        global_lockout_secs,
+    ) = {
         let s = state.settings.read().await;
-        auth::real_client_ip(&headers, addr.ip(), &s.auth.trusted_proxies)
+        (
+            auth::real_client_ip(&headers, addr.ip(), &s.auth.trusted_proxies),
+            s.auth.lockout_strategy.clone(),
+            s.auth.lockout_max_failures,
+            s.auth.lockout_secs,
+            s.auth.global_lockout_max_failures,
+            s.auth.global_lockout_secs,
+        )
     };
 
-    // Brute-force lockout check
-    let lockout_strategy = {
-        let s = state.settings.read().await;
-        s.auth.lockout_strategy.clone()
-    };
-    if let Some(retry_after) = auth::check_lockout(real_ip, &lockout_strategy) {
+    if let Some(retry_after) = auth::check_lockout(
+        real_ip,
+        &lockout_strategy,
+        max_failures,
+        lockout_secs,
+        global_max_failures,
+        global_lockout_secs,
+    ) {
         return (
             StatusCode::TOO_MANY_REQUESTS,
             [(
@@ -296,7 +311,7 @@ async fn check_auth(
     let stored = state.auth_token.read().await.clone();
     let token = body.get("token").and_then(|v| v.as_str()).unwrap_or("");
     if !auth::constant_time_eq(token.trim(), &stored) {
-        auth::record_auth_failure(real_ip);
+        auth::record_auth_failure(real_ip, global_lockout_secs);
         return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "unauthorized"})))
             .into_response();
     }
@@ -327,7 +342,7 @@ async fn logout(
         for pair in cookie_header.split(';') {
             let pair = pair.trim();
             if let Some(sid) = pair.strip_prefix(&format!("{}=", auth::SESSION_COOKIE_NAME)) {
-                state.sessions.revoke(sid);
+                let _ = state.sessions.revoke(sid);
                 break;
             }
         }
@@ -349,7 +364,7 @@ async fn revoke_session_handler(
     AxumState(state): AxumState<AppState>,
     Path(id): Path<String>,
 ) -> StatusCode {
-    state.sessions.revoke(&id);
+    let _ = state.sessions.revoke(&id);
     StatusCode::NO_CONTENT
 }
 
@@ -610,29 +625,38 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
                 auth::auth_middleware(req, next, &token, &s.settings, &s.sessions, client_ip).await
             },
         ))
-        .layer({
-            // Desktop mode: restrict CORS to Tauri webview origins to prevent
-            // CSRF from malicious websites on the same machine.
-            let allowed = [
-                "tauri://localhost",
-                "https://tauri.localhost",
-                "http://tauri.localhost",
-                "http://localhost",
-                "https://localhost",
-            ];
-            let origins: Vec<axum::http::HeaderValue> =
-                allowed.iter().filter_map(|o| o.parse().ok()).collect();
-            CorsLayer::new()
-                .allow_origin(AllowOrigin::list(origins))
-                .allow_credentials(true)
-                .allow_methods([
-                    axum::http::Method::GET,
-                    axum::http::Method::POST,
-                    axum::http::Method::PUT,
-                    axum::http::Method::DELETE,
-                ])
-                .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
-        })
+        .layer(middleware::from_fn(
+            |req: axum::extract::Request, next: middleware::Next| async move {
+                let origin = req
+                    .headers()
+                    .get(header::ORIGIN)
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.to_string());
+                let is_preflight = req.method() == axum::http::Method::OPTIONS;
+                let mut response =
+                    if is_preflight { Response::new(Body::empty()) } else { next.run(req).await };
+                if let Some(origin) = origin {
+                    let headers = response.headers_mut();
+                    headers.insert(
+                        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+                        axum::http::HeaderValue::from_str(&origin).unwrap(),
+                    );
+                    headers.insert(
+                        header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
+                        axum::http::HeaderValue::from_static("true"),
+                    );
+                    headers.insert(
+                        header::ACCESS_CONTROL_ALLOW_METHODS,
+                        axum::http::HeaderValue::from_static("GET, POST, PUT, DELETE, OPTIONS"),
+                    );
+                    headers.insert(
+                        header::ACCESS_CONTROL_ALLOW_HEADERS,
+                        axum::http::HeaderValue::from_static("Content-Type, Authorization"),
+                    );
+                }
+                response
+            },
+        ))
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));

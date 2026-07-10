@@ -2,7 +2,10 @@ use dashmap::DashMap;
 use serde::Serialize;
 use std::{
     net::IpAddr,
-    sync::{Arc, OnceLock},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, OnceLock,
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -57,13 +60,25 @@ fn ttl_duration(days: u64) -> Duration {
 #[derive(Clone)]
 pub struct SessionStore {
     sessions: Arc<DashMap<String, Entry>>,
-    ttl_days: u64,
+    ttl_days: Arc<AtomicU64>,
 }
 
 impl SessionStore {
     #[must_use]
-    pub fn new(ttl_days: u64) -> Self {
-        Self { sessions: Arc::new(DashMap::new()), ttl_days }
+    pub fn new(initial_ttl_days: u64) -> Self {
+        Self {
+            sessions: Arc::new(DashMap::new()),
+            ttl_days: Arc::new(AtomicU64::new(initial_ttl_days)),
+        }
+    }
+
+    /// Update the TTL from settings. Called when settings change.
+    pub fn update_ttl_days(&self, days: u64) {
+        self.ttl_days.store(days, Ordering::Relaxed);
+    }
+
+    fn current_ttl_days(&self) -> u64 {
+        self.ttl_days.load(Ordering::Relaxed)
     }
 
     #[must_use]
@@ -79,7 +94,7 @@ impl SessionStore {
 
     #[must_use]
     pub fn validate(&self, session_id: &str) -> bool {
-        let ttl = ttl_duration(self.ttl_days);
+        let ttl = ttl_duration(self.current_ttl_days());
         let Some(mut entry) = self.sessions.get_mut(session_id) else {
             return false;
         };
@@ -107,7 +122,7 @@ impl SessionStore {
 
     #[must_use]
     pub fn list(&self) -> Vec<SessionInfo> {
-        let ttl = ttl_duration(self.ttl_days);
+        let ttl = ttl_duration(self.current_ttl_days());
         let now = Instant::now();
         self.sessions
             .iter()
@@ -120,7 +135,7 @@ impl SessionStore {
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(CLEANUP_INTERVAL_SECS)).await;
-                let ttl = ttl_duration(self.ttl_days);
+                let ttl = ttl_duration(self.current_ttl_days());
                 let now = Instant::now();
                 self.sessions.retain(|_, e| now.duration_since(e.last_used) <= ttl);
             }
@@ -184,5 +199,12 @@ mod tests {
         assert_eq!(list[0].id, id);
         assert_eq!(list[0].source_ip, Some("127.0.0.1".parse().unwrap()));
         assert_eq!(list[0].user_agent.as_deref(), Some("test-ua"));
+    }
+
+    #[test]
+    fn update_ttl_days() {
+        let store = SessionStore::new(7);
+        store.update_ttl_days(1);
+        assert_eq!(store.current_ttl_days(), 1);
     }
 }

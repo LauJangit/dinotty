@@ -211,3 +211,102 @@ fn check_token_query_param_ignored() {
         Request::builder().uri("/api/something?token=my-secret-token").body(Body::empty()).unwrap();
     assert!(!check_token(&req, "my-secret-token"));
 }
+
+// ── check_ws_origin ────────────────────────────────────────────
+
+#[test]
+fn ws_origin_loopback_always_allowed() {
+    let headers = HeaderMap::new();
+    let loopback: IpAddr = "127.0.0.1".parse().unwrap();
+    assert!(check_ws_origin(&headers, &[], loopback, &[]));
+}
+
+#[test]
+fn ws_origin_no_origin_header_allowed() {
+    let headers = HeaderMap::new();
+    let ip: IpAddr = "192.168.1.100".parse().unwrap();
+    assert!(check_ws_origin(&headers, &[], ip, &[]));
+}
+
+#[test]
+fn ws_origin_same_origin_matches() {
+    let mut headers = HeaderMap::new();
+    headers.insert(header::ORIGIN, "https://nas.example.com".parse().unwrap());
+    headers.insert(header::HOST, "nas.example.com".parse().unwrap());
+    let ip: IpAddr = "192.168.1.100".parse().unwrap();
+    assert!(check_ws_origin(&headers, &[], ip, &[]));
+}
+
+#[test]
+fn ws_origin_mismatch_behind_proxy_fails_without_trusted() {
+    // Proxy rewrites Host to internal address; Origin stays external.
+    let mut headers = HeaderMap::new();
+    headers.insert(header::ORIGIN, "https://nas.example.com".parse().unwrap());
+    headers.insert(header::HOST, "192.168.1.100:8999".parse().unwrap());
+    let ip: IpAddr = "192.168.1.100".parse().unwrap();
+    assert!(!check_ws_origin(&headers, &[], ip, &[]));
+}
+
+#[test]
+fn ws_origin_x_forwarded_host_with_trusted_proxy() {
+    let mut headers = HeaderMap::new();
+    headers.insert(header::ORIGIN, "https://nas.example.com".parse().unwrap());
+    headers.insert(header::HOST, "192.168.1.100:8999".parse().unwrap());
+    headers.insert("x-forwarded-host", "nas.example.com".parse().unwrap());
+    let ip: IpAddr = "192.168.1.100".parse().unwrap();
+    let trusted = vec!["192.168.1.0/24".to_string()];
+    assert!(check_ws_origin(&headers, &[], ip, &trusted));
+}
+
+#[test]
+fn ws_origin_x_forwarded_host_not_used_for_untrusted() {
+    let mut headers = HeaderMap::new();
+    headers.insert(header::ORIGIN, "https://nas.example.com".parse().unwrap());
+    headers.insert(header::HOST, "192.168.1.100:8999".parse().unwrap());
+    headers.insert("x-forwarded-host", "nas.example.com".parse().unwrap());
+    let ip: IpAddr = "10.0.0.1".parse().unwrap();
+    let trusted = vec!["192.168.1.0/24".to_string()];
+    assert!(!check_ws_origin(&headers, &[], ip, &trusted));
+}
+
+#[test]
+fn ws_origin_hostname_only_fallback() {
+    // Proxy strips port from Host header.
+    let mut headers = HeaderMap::new();
+    headers.insert(header::ORIGIN, "https://nas.example.com:8443".parse().unwrap());
+    headers.insert(header::HOST, "nas.example.com".parse().unwrap());
+    let ip: IpAddr = "192.168.1.100".parse().unwrap();
+    assert!(check_ws_origin(&headers, &[], ip, &[]));
+}
+
+#[test]
+fn ws_origin_allowed_origins_fallback() {
+    let mut headers = HeaderMap::new();
+    headers.insert(header::ORIGIN, "https://custom.domain.com".parse().unwrap());
+    headers.insert(header::HOST, "192.168.1.100:8999".parse().unwrap());
+    let ip: IpAddr = "192.168.1.100".parse().unwrap();
+    let allowed = vec!["https://custom.domain.com".to_string()];
+    assert!(check_ws_origin(&headers, &allowed, ip, &[]));
+}
+
+#[test]
+fn ws_origin_x_forwarded_host_with_port() {
+    let mut headers = HeaderMap::new();
+    headers.insert(header::ORIGIN, "https://nas.example.com:8443".parse().unwrap());
+    headers.insert(header::HOST, "192.168.1.100:8999".parse().unwrap());
+    headers.insert("x-forwarded-host", "nas.example.com:8443".parse().unwrap());
+    let ip: IpAddr = "192.168.1.100".parse().unwrap();
+    let trusted = vec!["192.168.1.0/24".to_string()];
+    assert!(check_ws_origin(&headers, &[], ip, &trusted));
+}
+
+#[test]
+fn ws_origin_x_forwarded_host_comma_separated() {
+    let mut headers = HeaderMap::new();
+    headers.insert(header::ORIGIN, "https://nas.example.com".parse().unwrap());
+    headers.insert(header::HOST, "192.168.1.100:8999".parse().unwrap());
+    headers.insert("x-forwarded-host", "nas.example.com, proxy.internal".parse().unwrap());
+    let ip: IpAddr = "192.168.1.100".parse().unwrap();
+    let trusted = vec!["192.168.1.0/24".to_string()];
+    assert!(check_ws_origin(&headers, &[], ip, &trusted));
+}

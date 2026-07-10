@@ -19,7 +19,6 @@ use std::fs;
 use std::net::SocketAddr;
 
 use std::sync::Arc;
-use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::auth::session::SessionStore;
@@ -30,6 +29,57 @@ use crate::notification::NotificationBroadcast;
 use crate::plugin::PluginManagerState;
 use crate::session::SessionManager;
 use crate::settings::SettingsState;
+
+/// Dynamic CORS middleware that reads `allowed_origins` from settings on each request.
+/// Default empty = same-origin only (Origin = Host, which browsers allow without CORS).
+/// Tauri desktop mode does not go through CORS (`tauri_fetch` is not a browser fetch).
+async fn dynamic_cors_middleware(
+    State(state): State<AppState>,
+    req: axum::extract::Request,
+    next: middleware::Next,
+) -> Response<Body> {
+    let origin =
+        req.headers().get(header::ORIGIN).and_then(|v| v.to_str().ok()).map(str::to_string);
+
+    let allowed_origins = {
+        let s = state.settings.read().await;
+        s.auth.allowed_origins.clone()
+    };
+
+    let is_preflight = req.method() == axum::http::Method::OPTIONS;
+
+    // Determine if origin is allowed
+    let allowed_origin = origin.as_ref().and_then(|o| {
+        if allowed_origins.iter().any(|a| a.trim() == o) {
+            Some(o.clone())
+        } else {
+            None
+        }
+    });
+
+    let mut response = if is_preflight {
+        // For preflight, return 204 without calling the next handler
+        Response::builder().status(StatusCode::NO_CONTENT).body(Body::empty()).unwrap()
+    } else {
+        next.run(req).await
+    };
+
+    let headers = response.headers_mut();
+    if let Some(ref ao) = allowed_origin {
+        headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, ao.parse().unwrap());
+        headers.insert(header::ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
+        headers.insert(
+            header::ACCESS_CONTROL_ALLOW_METHODS,
+            HeaderValue::from_static("GET, POST, PUT, DELETE, OPTIONS"),
+        );
+        headers.insert(
+            header::ACCESS_CONTROL_ALLOW_HEADERS,
+            HeaderValue::from_static("Content-Type, Authorization"),
+        );
+    }
+
+    response
+}
 
 async fn index(State(_state): State<AppState>) -> impl IntoResponse {
     let content = StaticFiles::get("index.html").expect("index.html must exist in frontend/dist/");
@@ -359,13 +409,16 @@ async fn login(
             .into_response();
     }
 
-    let real_ip = {
+    let (real_ip, global_lockout_secs) = {
         let s = state.settings.read().await;
-        auth::real_client_ip(&headers, addr.ip(), &s.auth.trusted_proxies)
+        (
+            auth::real_client_ip(&headers, addr.ip(), &s.auth.trusted_proxies),
+            s.auth.global_lockout_secs,
+        )
     };
 
     if !auth::constant_time_eq(body.token.trim(), &stored) {
-        auth::record_auth_failure(real_ip);
+        auth::record_auth_failure(real_ip, global_lockout_secs);
         return (
             StatusCode::UNAUTHORIZED,
             [(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))],
@@ -427,6 +480,17 @@ async fn logout(
         ],
         Json(serde_json::json!({"ok": true})),
     )
+}
+
+async fn put_settings_with_session_ttl(
+    State(state): State<AppState>,
+    body: axum::extract::Json<settings::Settings>,
+) -> impl IntoResponse {
+    let new_ttl = body.auth.session_ttl_days;
+    let status =
+        settings::put_settings(State((state.manager.clone(), state.settings.clone())), body).await;
+    state.sessions.update_ttl_days(new_ttl);
+    status
 }
 
 async fn list_sessions(State(state): State<AppState>) -> impl IntoResponse {
@@ -692,34 +756,6 @@ async fn main() {
 
     state.plugins.watch_changes(state.manager.clone());
 
-    // Build CORS layer from settings.auth.allowed_origins. Default empty =
-    // same-origin only (Origin = Host, which browsers allow without CORS).
-    // Tauri desktop mode does not go through CORS (tauri_fetch is not a
-    // browser fetch), so this only affects browser mode.
-    let cors = {
-        let s = state.settings.read().await;
-        let origins: Vec<HeaderValue> = s
-            .auth
-            .allowed_origins
-            .iter()
-            .filter_map(|o| HeaderValue::from_str(o.trim()).ok())
-            .collect();
-        drop(s);
-        let mut layer = CorsLayer::new()
-            .allow_credentials(true)
-            .allow_methods([
-                axum::http::Method::GET,
-                axum::http::Method::POST,
-                axum::http::Method::PUT,
-                axum::http::Method::DELETE,
-            ])
-            .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
-        if !origins.is_empty() {
-            layer = layer.allow_origin(origins);
-        }
-        layer
-    };
-
     let app =
         Router::new()
             .route("/ws", get(ws::ws_handler))
@@ -753,7 +789,7 @@ async fn main() {
             .route("/api/sessions/:id", delete(revoke_session))
             .route("/api/token-configured", get(token_configured))
             .route("/api/auto-token", get(auto_token))
-            .route("/api/settings", get(settings::get_settings).put(settings::put_settings))
+            .route("/api/settings", get(settings::get_settings).put(put_settings_with_session_ttl))
             .route(
                 "/api/settings/background",
                 post(settings::upload_background).get(settings::get_background),
@@ -895,7 +931,7 @@ async fn main() {
                         .await
                 },
             ))
-            .layer(cors)
+            .layer(middleware::from_fn_with_state(state.clone(), dynamic_cors_middleware))
             .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));

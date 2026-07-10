@@ -27,16 +27,11 @@ fn fail_map() -> &'static DashMap<IpAddr, FailRecord> {
     MAP.get_or_init(DashMap::new)
 }
 
-const MAX_FAILURES: u32 = 5;
-const LOCKOUT_SECS: u64 = 60;
-const GLOBAL_MAX_FAILURES: u32 = 50;
-const GLOBAL_LOCKOUT_SECS: u64 = 300;
-
 static GLOBAL_FAIL_COUNT: AtomicU32 = AtomicU32::new(0);
 static GLOBAL_FAIL_WINDOW_START: AtomicU64 = AtomicU64::new(0);
 
 /// Record a failed auth attempt for the given IP. Called by the login handler.
-pub fn record_auth_failure(ip: IpAddr) {
+pub fn record_auth_failure(ip: IpAddr, global_lockout_secs: u64) {
     // Per-IP tracking
     let map = fail_map();
     let mut rec = map.entry(ip).or_insert(FailRecord { count: 0, last_fail: Instant::now() });
@@ -49,7 +44,7 @@ pub fn record_auth_failure(ip: IpAddr) {
         .unwrap_or_default()
         .as_secs();
     let window_start = GLOBAL_FAIL_WINDOW_START.load(Ordering::Relaxed);
-    if now.saturating_sub(window_start) > GLOBAL_LOCKOUT_SECS {
+    if now.saturating_sub(window_start) > global_lockout_secs {
         GLOBAL_FAIL_COUNT.store(1, Ordering::Relaxed);
         GLOBAL_FAIL_WINDOW_START.store(now, Ordering::Relaxed);
     } else {
@@ -60,7 +55,14 @@ pub fn record_auth_failure(ip: IpAddr) {
 /// Check whether the given IP (or global state) is currently locked out.
 /// Returns `Some(retry_after_secs)` if locked out, `None` if allowed.
 #[must_use]
-pub fn check_lockout(real_ip: IpAddr, strategy: &str) -> Option<u64> {
+pub fn check_lockout(
+    real_ip: IpAddr,
+    strategy: &str,
+    max_failures: u32,
+    lockout_secs: u64,
+    global_max_failures: u32,
+    global_lockout_secs: u64,
+) -> Option<u64> {
     match strategy {
         "off" => None,
         "global" => {
@@ -70,10 +72,10 @@ pub fn check_lockout(real_ip: IpAddr, strategy: &str) -> Option<u64> {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
-            if count >= GLOBAL_MAX_FAILURES
-                && now.saturating_sub(window_start) < GLOBAL_LOCKOUT_SECS
+            if count >= global_max_failures
+                && now.saturating_sub(window_start) < global_lockout_secs
             {
-                Some(GLOBAL_LOCKOUT_SECS - now.saturating_sub(window_start))
+                Some(global_lockout_secs - now.saturating_sub(window_start))
             } else {
                 None
             }
@@ -82,10 +84,10 @@ pub fn check_lockout(real_ip: IpAddr, strategy: &str) -> Option<u64> {
             // "ip" (default): per-IP lockout
             let map = fail_map();
             if let Some(rec) = map.get(&real_ip) {
-                if rec.count >= MAX_FAILURES {
+                if rec.count >= max_failures {
                     let elapsed = rec.last_fail.elapsed().as_secs();
-                    if elapsed < LOCKOUT_SECS {
-                        return Some(LOCKOUT_SECS - elapsed);
+                    if elapsed < lockout_secs {
+                        return Some(lockout_secs - elapsed);
                     }
                     drop(rec);
                     map.remove(&real_ip);
@@ -120,6 +122,17 @@ pub async fn auth_middleware(
         || path.starts_with("/assets/")
         || path.starts_with("/icons/")
     {
+        return next.run(request).await;
+    }
+
+    // PTY WebSocket & HTTP fallback: UUID paneId acts as a bearer secret
+    // (122-bit entropy). The ws_handler still runs check_ws_origin for CSRF
+    // protection. The HTTP fallback endpoints serve the same PTY sessions
+    // when WebSocket is unavailable (e.g. behind restrictive reverse proxies).
+    // Use prefix matching so /ws/sync, /ws/watch, /ws/monitor, etc. are also
+    // exempt — these use their own auth (UUID paneId, sync state) and must
+    // work through reverse proxies that don't forward cookies on WS upgrades.
+    if path.starts_with("/ws") || path.starts_with("/http/") {
         return next.run(request).await;
     }
 
@@ -160,12 +173,25 @@ pub async fn auth_middleware(
     }
 
     // Brute-force lockout check (strategy-driven).
-    let lockout_strategy = {
+    let (lockout_strategy, max_failures, lockout_secs, global_max_failures, global_lockout_secs) = {
         let s = settings.read().await;
-        s.auth.lockout_strategy.clone()
+        (
+            s.auth.lockout_strategy.clone(),
+            s.auth.lockout_max_failures,
+            s.auth.lockout_secs,
+            s.auth.global_lockout_max_failures,
+            s.auth.global_lockout_secs,
+        )
     };
 
-    if let Some(retry_after) = check_lockout(real_ip, &lockout_strategy) {
+    if let Some(retry_after) = check_lockout(
+        real_ip,
+        &lockout_strategy,
+        max_failures,
+        lockout_secs,
+        global_max_failures,
+        global_lockout_secs,
+    ) {
         return Response::builder()
             .status(StatusCode::TOO_MANY_REQUESTS)
             .header(header::CONTENT_TYPE, "application/json")
@@ -251,12 +277,16 @@ pub fn real_client_ip(headers: &HeaderMap, conn_ip: IpAddr, trusted_proxies: &[S
 /// - No Origin header: allow (non-browser clients like wscat / curl).
 /// - Origin equals the request Host: allow (same-origin, covers arbitrary
 ///   tunneling subdomains without wildcard matching).
+/// - Behind a trusted reverse proxy: use `X-Forwarded-Host` for the comparison.
+/// - Hostname-only fallback: if exact match fails, compare just the hostname
+///   (without port) to handle proxies that normalize the Host header.
 /// - Otherwise: must match `allowed_origins` whitelist.
 #[must_use]
 pub fn check_ws_origin(
     headers: &HeaderMap,
     allowed_origins: &[String],
     client_ip: std::net::IpAddr,
+    trusted_proxies: &[String],
 ) -> bool {
     // Loopback clients (Tauri desktop, local scripts) are always trusted.
     if client_ip.is_loopback() {
@@ -269,12 +299,32 @@ pub fn check_ws_origin(
         return false;
     };
     // Same-origin shortcut: Origin = scheme://host matches the request Host.
-    if let Some(host) = headers.get(header::HOST).and_then(|h| h.to_str().ok()) {
+    // Behind a trusted reverse proxy, use X-Forwarded-Host (the original Host
+    // before the proxy rewrote it) for the comparison.
+    let effective_host = if is_ip_whitelisted(client_ip, trusted_proxies) {
+        headers
+            .get("x-forwarded-host")
+            .and_then(|h| h.to_str().ok())
+            .map(|h| h.split(',').next().unwrap_or("").trim())
+            .filter(|h| !h.is_empty())
+            .or_else(|| headers.get(header::HOST).and_then(|h| h.to_str().ok()))
+    } else {
+        headers.get(header::HOST).and_then(|h| h.to_str().ok())
+    };
+    if let Some(host) = effective_host {
         let origin_host = origin_str
             .strip_prefix("http://")
             .or_else(|| origin_str.strip_prefix("https://"))
             .unwrap_or(origin_str);
+        // Exact match (includes port).
         if origin_host == host {
+            return true;
+        }
+        // Hostname-only fallback: some reverse proxies strip or rewrite the
+        // port in the Host header.  Compare just the hostname part.
+        let origin_hostname = origin_host.split(':').next().unwrap_or(origin_host);
+        let host_hostname = host.split(':').next().unwrap_or(host);
+        if origin_hostname == host_hostname {
             return true;
         }
     }

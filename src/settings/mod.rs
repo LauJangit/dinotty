@@ -95,6 +95,14 @@ pub struct AuthConfig {
     pub lockout_strategy: String,
     #[serde(default = "default_session_ttl_days")]
     pub session_ttl_days: u64,
+    #[serde(default = "default_lockout_max_failures")]
+    pub lockout_max_failures: u32,
+    #[serde(default = "default_lockout_secs")]
+    pub lockout_secs: u64,
+    #[serde(default = "default_global_lockout_max_failures")]
+    pub global_lockout_max_failures: u32,
+    #[serde(default = "default_global_lockout_secs")]
+    pub global_lockout_secs: u64,
 }
 
 impl Default for AuthConfig {
@@ -104,6 +112,10 @@ impl Default for AuthConfig {
             trusted_proxies: vec![],
             lockout_strategy: default_lockout_strategy(),
             session_ttl_days: default_session_ttl_days(),
+            lockout_max_failures: default_lockout_max_failures(),
+            lockout_secs: default_lockout_secs(),
+            global_lockout_max_failures: default_global_lockout_max_failures(),
+            global_lockout_secs: default_global_lockout_secs(),
         }
     }
 }
@@ -114,6 +126,22 @@ fn default_lockout_strategy() -> String {
 
 fn default_session_ttl_days() -> u64 {
     7
+}
+
+fn default_lockout_max_failures() -> u32 {
+    5
+}
+
+fn default_lockout_secs() -> u64 {
+    60
+}
+
+fn default_global_lockout_max_failures() -> u32 {
+    50
+}
+
+fn default_global_lockout_secs() -> u64 {
+    300
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]

@@ -95,14 +95,11 @@ pub async fn ws_handler(
     Query(q): Query<WsQuery>,
     State(manager): State<Arc<SessionManager>>,
     State(history): State<HistoryState>,
-    State(settings): State<SettingsState>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    headers: axum::http::HeaderMap,
+    ConnectInfo(_addr): ConnectInfo<SocketAddr>,
+    _headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    let allowed_origins = settings.read().await.auth.allowed_origins.clone();
-    if !crate::auth::check_ws_origin(&headers, &allowed_origins, addr.ip()) {
-        return StatusCode::FORBIDDEN.into_response();
-    }
+    // No origin check: UUID paneId acts as bearer secret (122-bit entropy),
+    // not cookie-based auth, so CSRF protection is not applicable.
     let pane_id = q.pane_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     ws.on_upgrade(move |socket| handle_socket(socket, pane_id, manager, history)).into_response()
 }
@@ -118,8 +115,12 @@ pub async fn sync_handler(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    let allowed_origins = settings.read().await.auth.allowed_origins.clone();
-    if !crate::auth::check_ws_origin(&headers, &allowed_origins, addr.ip()) {
+    let s = settings.read().await;
+    let allowed_origins = s.auth.allowed_origins.clone();
+    let trusted_proxies = s.auth.trusted_proxies.clone();
+    drop(s);
+    let real_ip = crate::auth::real_client_ip(&headers, addr.ip(), &trusted_proxies);
+    if !crate::auth::check_ws_origin(&headers, &allowed_origins, real_ip, &trusted_proxies) {
         return StatusCode::FORBIDDEN.into_response();
     }
     ws.on_upgrade(move |socket| handle_sync_socket(socket, manager, workspaces, settings))
@@ -766,8 +767,12 @@ pub async fn notification_ws_handler(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    let allowed_origins = settings.read().await.auth.allowed_origins.clone();
-    if !crate::auth::check_ws_origin(&headers, &allowed_origins, addr.ip()) {
+    let s = settings.read().await;
+    let allowed_origins = s.auth.allowed_origins.clone();
+    let trusted_proxies = s.auth.trusted_proxies.clone();
+    drop(s);
+    let real_ip = crate::auth::real_client_ip(&headers, addr.ip(), &trusted_proxies);
+    if !crate::auth::check_ws_origin(&headers, &allowed_origins, real_ip, &trusted_proxies) {
         return StatusCode::FORBIDDEN.into_response();
     }
     ws.on_upgrade(move |socket| handle_notification_socket(socket, notifier)).into_response()

@@ -255,8 +255,10 @@ pub async fn session_stream(
             .into_response();
     }
     let allowed_origins = s.auth.allowed_origins.clone();
+    let trusted_proxies = s.auth.trusted_proxies.clone();
     drop(s);
-    if !crate::auth::check_ws_origin(&headers, &allowed_origins, addr.ip()) {
+    let real_ip = crate::auth::real_client_ip(&headers, addr.ip(), &trusted_proxies);
+    if !crate::auth::check_ws_origin(&headers, &allowed_origins, real_ip, &trusted_proxies) {
         return StatusCode::FORBIDDEN.into_response();
     }
     ws.on_upgrade(move |socket| crate::ws::handle_open_api_ws(socket, manager, pane_id))
