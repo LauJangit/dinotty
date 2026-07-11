@@ -15,14 +15,9 @@ use zeroize::Zeroize;
 
 use crate::session::SessionManager;
 
-pub const CURRENT_SETTINGS_VERSION: u32 = 2;
-const LEGACY_UPLOAD_DIR: &str = "~/.dinotty/uploads";
-
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct Settings {
-    #[serde(default)]
-    pub settings_version: u32,
     #[serde(default)]
     pub theme: ThemeConfig,
     #[serde(default)]
@@ -41,14 +36,6 @@ pub struct Settings {
     pub recent_urls: Vec<RecentEntry>,
     #[serde(default)]
     pub action_keyboard: Option<ActionKeyboardConfig>,
-    #[serde(default = "default_upload_dir")]
-    pub upload_dir: String,
-    #[serde(default = "default_upload_cap_mb")]
-    pub upload_cap_mb: u64,
-    #[serde(default = "default_upload_cap_count")]
-    pub upload_cap_count: u32,
-    #[serde(default)]
-    pub upload_file_cap_mb: u64,
     #[serde(default)]
     pub keyboard_sound: bool,
     #[serde(default)]
@@ -332,23 +319,6 @@ fn default_locale() -> String {
     "zh".into()
 }
 
-#[must_use]
-pub fn default_upload_dir() -> String {
-    if cfg!(windows) {
-        "%TEMP%\\dinotty".to_string()
-    } else {
-        "$TMPDIR/dinotty".to_string()
-    }
-}
-
-fn default_upload_cap_mb() -> u64 {
-    200
-}
-
-fn default_upload_cap_count() -> u32 {
-    100
-}
-
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum PanelPosition {
@@ -496,9 +466,7 @@ pub struct RecentEntry {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ActionKey {
-    #[serde(default)]
     pub label: String,
-    #[serde(default)]
     pub send: String,
     #[serde(default)]
     pub style: Option<String>,
@@ -520,7 +488,6 @@ pub struct ActionKeyboardConfig {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            settings_version: CURRENT_SETTINGS_VERSION,
             theme: ThemeConfig::default(),
             background: BackgroundConfig::default(),
             text: TextConfig::default(),
@@ -530,10 +497,6 @@ impl Default for Settings {
             recent_files: vec![],
             recent_urls: vec![],
             action_keyboard: None,
-            upload_dir: default_upload_dir(),
-            upload_cap_mb: default_upload_cap_mb(),
-            upload_cap_count: default_upload_cap_count(),
-            upload_file_cap_mb: 0,
             keyboard_sound: false,
             show_virtual_keyboard: false,
             windows_alt_as_cmd: false,
@@ -590,37 +553,14 @@ pub fn load_settings() -> Settings {
     let path = settings_path();
     if path.exists() {
         match std::fs::read_to_string(&path) {
-            Ok(data) => match serde_json::from_str::<Settings>(&data) {
-                Ok(mut settings) => {
-                    if migrate_settings(&mut settings) {
-                        if let Err(e) = save_settings(&settings) {
-                            error!("migrate settings: {}", e);
-                        }
-                    }
-                    return settings;
-                }
+            Ok(data) => match serde_json::from_str(&data) {
+                Ok(s) => return s,
                 Err(e) => error!("parse settings: {}", e),
             },
             Err(e) => error!("read settings: {}", e),
         }
     }
     Settings::default()
-}
-
-fn migrate_settings(settings: &mut Settings) -> bool {
-    if settings.settings_version >= CURRENT_SETTINGS_VERSION {
-        return false;
-    }
-    let old_resolved_upload_dir =
-        std::env::temp_dir().join("dinotty").to_string_lossy().into_owned();
-    if settings.upload_dir.is_empty()
-        || settings.upload_dir == LEGACY_UPLOAD_DIR
-        || settings.upload_dir == old_resolved_upload_dir
-    {
-        settings.upload_dir = default_upload_dir();
-    }
-    settings.settings_version = CURRENT_SETTINGS_VERSION;
-    true
 }
 
 fn save_settings(settings: &Settings) -> Result<(), String> {
@@ -729,9 +669,8 @@ pub async fn get_settings(
 
 pub async fn put_settings(
     State(state): State<(Arc<SessionManager>, SettingsState)>,
-    Json(mut new_settings): Json<Settings>,
+    Json(new_settings): Json<Settings>,
 ) -> impl IntoResponse {
-    new_settings.settings_version = CURRENT_SETTINGS_VERSION;
     match save_settings(&new_settings) {
         Ok(()) => {
             *state.1.write().await = new_settings;
@@ -786,7 +725,6 @@ pub async fn upload_background(
             // Update settings
             let mut settings = state.1.write().await;
             settings.background.has_image = true;
-            settings.settings_version = CURRENT_SETTINGS_VERSION;
             let _ = save_settings(&settings);
 
             info!("Background image uploaded");

@@ -95,10 +95,8 @@ vi.mock('../composables/useKeybindings', () => ({
     getBinding: (id: string) => ({ key: BINDING_KEYS[id] ?? 'x', shift: false }),
     formatBinding: (b: any) => b.key,
   }),
-  keyEventMatchesBinding: (e: KeyboardEvent, binding: { key: string; shift: boolean }) => {
-    const cmd = e.metaKey || e.ctrlKey
-    return cmd && e.key.toLowerCase() === binding.key.toLowerCase() && e.shiftKey === binding.shift
-  },
+  keyEventMatchesBinding: (e: KeyboardEvent, binding: { key: string; shift: boolean }) =>
+    e.key.toLowerCase() === binding.key.toLowerCase() && e.shiftKey === binding.shift,
 }))
 vi.mock('../composables/useMonitor', () => ({ initMonitorHistory: () => {} }))
 vi.mock('../composables/useNotification', () => ({
@@ -112,12 +110,12 @@ vi.mock('../composables/useNotification', () => ({
 }))
 vi.mock('../composables/usePluginLoader', () => ({
   usePluginLoader: () => ({
-    loadedPlugins: { value: new Map(), __v_isRef: true },
+    loadedPlugins: new Map(),
     loadAll: vi.fn(),
     getPluginContext: vi.fn(),
-    pluginList: { value: [], __v_isRef: true },
-    allCommands: { value: [], __v_isRef: true },
-    allQuickPicks: { value: [], __v_isRef: true },
+    pluginList: { __v_isRef: true, value: [] },
+    allCommands: { __v_isRef: true, value: [] },
+    allQuickPicks: { __v_isRef: true, value: [] },
   }),
   handlePluginChanged: vi.fn(),
 }))
@@ -126,7 +124,7 @@ vi.mock('../composables/useTabApi', () => ({
   apiCreateTab: vi.fn(async () => ({
     tab_id: 't-new',
     pane_id: 'p-new',
-    layout: { type: 'leaf', paneId: 'p-new', title: 'P new', ratio: 1, zoomed: false },
+    layout: { type: 'leaf', paneId: 'p-new', title: 'Terminal', ratio: 1, zoomed: false },
   })),
   apiCloseTab: mocks.apiCloseTab,
   apiClosePane: vi.fn(async () => ({ tab_closed: false })),
@@ -178,7 +176,6 @@ import { nextTick, defineComponent, h } from 'vue'
 import { createPinia } from 'pinia'
 import App from '../App.vue'
 import { settings } from '../composables/useSettings'
-import { useUiStore } from '../stores/uiStore'
 
 // Spec: openspec/changes/confirm-before-close-tab/spec.md
 //   "### Requirement: Pane Close Confirmation"
@@ -222,29 +219,16 @@ const ConfirmModalStub = defineComponent({
   },
 })
 
-const ConfirmCloseDialogStub = defineComponent({
-  name: 'ConfirmCloseDialog',
-  emits: ['confirm'],
-  setup(_, { emit }) {
-    const ui = useUiStore()
-    return () =>
-      h('div', {
-        class: 'confirm-close-stub',
-        'data-visible': String(ui.confirmCloseVisible),
-        onClick: () => emit('confirm', ui.pendingCloseTabId, ui.pendingClosePaneId),
-      })
-  },
-})
-
 async function mountWithTabs() {
   vi.useFakeTimers()
+  const pinia = createPinia()
   const wrapper = shallowMount(App, {
     global: {
-      plugins: [createPinia()],
+      plugins: [pinia],
       stubs: {
         SplitContainer: SplitContainerStub,
-        ConfirmCloseDialog: ConfirmCloseDialogStub,
         ConfirmModal: ConfirmModalStub,
+        ConfirmCloseDialog: false,
       },
     },
   })
@@ -290,10 +274,10 @@ describe('App.vue - onClosePane routes through confirmation gate', () => {
     // closePane must NOT have been called yet — we expect the modal gate
     expect(mocks.closePane).not.toHaveBeenCalled()
 
-    // Confirm close dialog must now be visible
-    const confirmDialog = wrapper.findComponent(ConfirmCloseDialogStub)
-    expect(confirmDialog.exists()).toBe(true)
-    expect(confirmDialog.attributes('data-visible')).toBe('true')
+    // ConfirmModal must now be visible
+    const confirmModal = wrapper.findComponent(ConfirmModalStub)
+    expect(confirmModal.exists()).toBe(true)
+    expect((confirmModal.vm as any).$props.visible).toBe(true)
 
     wrapper.unmount()
   })
@@ -306,8 +290,8 @@ describe('App.vue - onClosePane routes through confirmation gate', () => {
     await splitContainer.vm.$emit('close', 'pane-2')
     await nextTick()
 
-    const confirmDialog = wrapper.findComponent(ConfirmCloseDialogStub)
-    await confirmDialog.trigger('click')
+    const confirmModal = wrapper.findComponent(ConfirmModalStub)
+    await confirmModal.vm.$emit('confirm')
     await nextTick()
 
     // splitPane.closePane should be called with the pane id
@@ -317,7 +301,7 @@ describe('App.vue - onClosePane routes through confirmation gate', () => {
     expect(mocks.apiCloseTab).not.toHaveBeenCalled()
 
     // Modal should be closed
-    expect(confirmDialog.attributes('data-visible')).toBe('false')
+    expect((confirmModal.vm as any).$props.visible).toBe(false)
 
     wrapper.unmount()
   })
@@ -330,8 +314,8 @@ describe('App.vue - onClosePane routes through confirmation gate', () => {
     await splitContainer.vm.$emit('close', 'pane-3')
     await nextTick()
 
-    const confirmDialog = wrapper.findComponent(ConfirmCloseDialogStub)
-    await confirmDialog.trigger('click')
+    const confirmModal = wrapper.findComponent(ConfirmModalStub)
+    await confirmModal.vm.$emit('confirm')
     await nextTick()
 
     // splitPane.closePane should be called first
@@ -414,10 +398,10 @@ describe('App.vue - Cmd+W routes through confirmation gate in split-pane mode', 
     // closePane must NOT have been called yet — we expect the modal gate
     expect(mocks.closePane).not.toHaveBeenCalled()
 
-    // Confirm close dialog must now be visible
-    const confirmDialog = wrapper.findComponent(ConfirmCloseDialogStub)
-    expect(confirmDialog.exists()).toBe(true)
-    expect(confirmDialog.attributes('data-visible')).toBe('true')
+    // ConfirmModal must now be visible
+    const confirmModal = wrapper.findComponent(ConfirmModalStub)
+    expect(confirmModal.exists()).toBe(true)
+    expect((confirmModal.vm as any).$props.visible).toBe(true)
 
     wrapper.unmount()
   })
@@ -436,8 +420,8 @@ describe('App.vue - Cmd+W routes through confirmation gate in split-pane mode', 
     )
     await nextTick()
 
-    const confirmDialog = wrapper.findComponent(ConfirmCloseDialogStub)
-    await confirmDialog.trigger('click')
+    const confirmModal = wrapper.findComponent(ConfirmModalStub)
+    await confirmModal.vm.$emit('confirm')
     await nextTick()
 
     // closePane should be called with the active pane id (pane-1 in fixture)
@@ -445,7 +429,7 @@ describe('App.vue - Cmd+W routes through confirmation gate in split-pane mode', 
     // apiCloseTab should NOT have been called (closePane returned true)
     expect(mocks.apiCloseTab).not.toHaveBeenCalled()
     // Modal should be closed
-    expect(confirmDialog.attributes('data-visible')).toBe('false')
+    expect((confirmModal.vm as any).$props.visible).toBe(false)
 
     wrapper.unmount()
   })
@@ -467,8 +451,8 @@ describe('App.vue - Cmd+W routes through confirmation gate in split-pane mode', 
 
     expect(mocks.closePane).toHaveBeenCalledWith('pane-1')
     // Modal should NOT be visible (bypass)
-    const confirmDialog = wrapper.findComponent(ConfirmCloseDialogStub)
-    expect(confirmDialog.attributes('data-visible')).toBe('false')
+    const confirmModal = wrapper.findComponent(ConfirmModalStub)
+    expect((confirmModal.vm as any).$props.visible).toBe(false)
 
     wrapper.unmount()
   })
