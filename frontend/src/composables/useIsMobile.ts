@@ -5,20 +5,9 @@ const isMobile = ref(false)
 const FORCE_KEY = 'dinotty:force-mobile'
 
 function check() {
-  const storage = typeof localStorage === 'undefined' ? null : localStorage
-  const forced = storage?.getItem(FORCE_KEY)
-  if (forced === '1') {
-    isMobile.value = true
-    return
-  }
-  if (forced === '0') {
-    isMobile.value = false
-    return
-  }
-  if (typeof window.matchMedia !== 'function') {
-    isMobile.value = false
-    return
-  }
+  const forced = localStorage.getItem(FORCE_KEY)
+  if (forced === '1') { isMobile.value = true; return }
+  if (forced === '0') { isMobile.value = false; return }
 
   const isCoarse = window.matchMedia('(pointer: coarse)').matches
   const isPortrait = window.matchMedia('(orientation: portrait)').matches
