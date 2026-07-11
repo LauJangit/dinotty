@@ -113,9 +113,6 @@ export interface TextConfig {
   cursor_style: 'block' | 'underline' | 'bar'
   cursor_blink: boolean
   scrollback: number
-  scroll_sensitivity: number
-  scroll_acceleration: number
-  scrollbar_width: number
 }
 
 export interface SshProfile {
@@ -212,9 +209,6 @@ export const settings = reactive<SettingsData>({
     cursor_style: 'block',
     cursor_blink: true,
     scrollback: 10000,
-    scroll_sensitivity: 1,
-    scroll_acceleration: 0,
-    scrollbar_width: 8,
   },
   bookmarks: [],
   workspace_bookmarks: [],
