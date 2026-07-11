@@ -6,11 +6,7 @@ import { SearchAddon } from '@xterm/addon-search'
 import type { ClientMsg, ServerMsg } from '../types/protocol'
 import { isTauri, createTransport, type Transport } from './useTransport'
 import { onThemeChange, saveSettings, settings, onTextChange } from './useSettings'
-import {
-  computeWheelPlan,
-  type TrackingWheelState,
-  type WheelPlanInput,
-} from './computeWheelPlan'
+import { computeWheelPlan, type WheelPlanInput } from './computeWheelPlan'
 import { wsUrlWithToken } from './apiBase'
 import { terminalKeyBindingDefs, useKeybindings, type KeyBinding } from './useKeybindings'
 import { isWindowsClient } from '../utils/clientPlatform'
@@ -218,7 +214,6 @@ export class TerminalInstance {
   private _lastInputTime = 0
   private _wheelBypass = false
   private _lastWheelTime = 0
-  private _trackingWheelState: TrackingWheelState | null = null
   private _symCredits: Array<{ data: string; src: 0 | 1; at: number }> = []
   private _writeQueue: string[] = []
   private _writing = false
@@ -614,13 +609,6 @@ export class TerminalInstance {
   }
 
   private _handleXtermData(rawData: string) {
-    // Mouse reports produced synchronously by our synthetic wheel dispatches
-    // (_sendWheelEvent) are legitimate identical repeats; the WKWebView
-    // key-replay dedup below must not eat them.
-    if (this._wheelBypass) {
-      this._emitInput(rawData)
-      return
-    }
     const tauri = isTauri()
     const data = tauri ? stripImeConfirmSpace(rawData) : rawData
     if (!data) return
@@ -1200,9 +1188,7 @@ export class TerminalInstance {
       if (!this.xterm) return true
 
       const now = Date.now()
-      const elapsed = now - this._lastWheelTime
-      if (elapsed > 500) this._trackingWheelState = null
-      const dt = elapsed || 1
+      const dt = now - this._lastWheelTime || 1
       const rowHeight = this._getWheelRowHeight()
       const lines =
         e.deltaMode === 1
@@ -1215,8 +1201,6 @@ export class TerminalInstance {
 
       const sensitivity = settings.text.scroll_sensitivity ?? 1
       const acceleration = settings.text.scroll_acceleration ?? 0
-      const isMouseTracking = this.isMouseModeEnabled()
-      if (!isMouseTracking) this._trackingWheelState = null
       const input: WheelPlanInput = {
         deltaY: e.deltaY,
         deltaX: e.deltaX,
@@ -1227,19 +1211,10 @@ export class TerminalInstance {
         metaKey: e.metaKey,
         velocity,
         isAltScreen: this.xterm.buffer.active.type !== 'normal',
-        isMouseTracking,
+        isMouseTracking: this.isMouseModeEnabled(),
       }
-      const plan = computeWheelPlan(
-        input,
-        sensitivity,
-        acceleration,
-        this._trackingWheelState
-      )
-      if (plan.action === 'native') {
-        this._trackingWheelState = null
-        return true
-      }
-      this._trackingWheelState = plan.nextTrackingState ?? null
+      const plan = computeWheelPlan(input, sensitivity, acceleration)
+      if (plan.action === 'native') return true
 
       e.preventDefault()
       e.stopPropagation()
