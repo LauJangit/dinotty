@@ -57,7 +57,6 @@ import type { Terminal } from '@xterm/xterm'
 import { TerminalInstance } from '../../composables/useTerminal'
 import { copyToClipboard } from '../../utils/clipboard'
 import { readText as readClipboardText } from '@tauri-apps/plugin-clipboard-manager'
-import { isTauri } from '../../composables/useTransport'
 import SearchBar from './SearchBar.vue'
 import TerminalContextMenu from './TerminalContextMenu.vue'
 import SelectionHandles from './SelectionHandles.vue'
@@ -258,20 +257,16 @@ function onMenuCopy() {
 }
 
 async function onMenuPaste() {
-  if (!terminal) return
-  let text: string | null = null
-  if (isTauri()) {
-    try { text = await readClipboardText() } catch {}
-  }
-  if (!text) {
-    try { text = await navigator.clipboard.readText() } catch {}
-  }
-  if (!text) return
-  terminal.focus()
-  if (terminal.xterm) {
-    terminal.xterm.paste(text)
-  } else {
-    terminal.pasteText(text)
+  if (!terminal?.xterm) return
+  try {
+    const text = await readClipboardText()
+    if (text) terminal.xterm.paste(text)
+  } catch {
+    // Fallback: focus xterm textarea and try execCommand
+    const ta = document.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null
+    if (!ta) return
+    ta.focus()
+    try { document.execCommand('paste') } catch {}
   }
 }
 
