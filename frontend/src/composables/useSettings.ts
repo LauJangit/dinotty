@@ -29,9 +29,14 @@ export interface SettingsData {
   recent_files: RecentEntry[]
   recent_urls: RecentEntry[]
   action_keyboard: ActionKeyboardConfig | null
+  upload_dir: string
+  upload_cap_mb: number
+  upload_file_cap_mb: number
+  upload_cap_count: number
   keyboard_sound: boolean
   show_virtual_keyboard: boolean
   confirm_before_close_tab: boolean
+  space_confirms_dialogs: boolean
   windowsAltAsCmd: boolean
   locale: string
   panel_position: 'auto' | 'right' | 'left' | 'top' | 'bottom'
@@ -41,6 +46,19 @@ export interface SettingsData {
   open_api: OpenApiConfig
   auth_token?: string
   ip_whitelist: string[]
+  auth: {
+    allowed_origins: string[]
+    trusted_proxies: string[]
+    lockout_strategy: string
+    session_ttl_days: number
+    lockout_max_failures: number
+    lockout_secs: number
+    global_lockout_max_failures: number
+    global_lockout_secs: number
+  }
+  preview: {
+    allow_external: boolean
+  }
   keybindings: Record<string, KeyBinding>
   log: LogConfig
   ssh_profiles: SshProfile[]
@@ -96,6 +114,9 @@ export interface TextConfig {
   cursor_style: 'block' | 'underline' | 'bar'
   cursor_blink: boolean
   scrollback: number
+  scroll_sensitivity: number
+  scroll_acceleration: number
+  scrollbar_width: number
 }
 
 export interface SshProfile {
@@ -192,6 +213,9 @@ export const settings = reactive<SettingsData>({
     cursor_style: 'block',
     cursor_blink: true,
     scrollback: 10000,
+    scroll_sensitivity: 1,
+    scroll_acceleration: 0,
+    scrollbar_width: 8,
   },
   bookmarks: [],
   workspace_bookmarks: [],
@@ -199,9 +223,14 @@ export const settings = reactive<SettingsData>({
   recent_files: [],
   recent_urls: [],
   action_keyboard: null,
+  upload_dir: '',
+  upload_cap_mb: 200,
+  upload_file_cap_mb: 0,
+  upload_cap_count: 100,
   keyboard_sound: false,
   show_virtual_keyboard: false,
   confirm_before_close_tab: true,
+  space_confirms_dialogs: false,
   windowsAltAsCmd: isWindowsClient,
   locale: 'zh',
   panel_position: 'auto',
@@ -239,6 +268,19 @@ export const settings = reactive<SettingsData>({
     enabled: false,
   },
   ip_whitelist: ['127.0.0.1', '::1'],
+  auth: {
+    allowed_origins: [],
+    trusted_proxies: [],
+    lockout_strategy: 'ip',
+    session_ttl_days: 7,
+    lockout_max_failures: 5,
+    lockout_secs: 60,
+    global_lockout_max_failures: 50,
+    global_lockout_secs: 300,
+  },
+  preview: {
+    allow_external: false,
+  },
   keybindings: {},
   log: {
     enabled: true,
@@ -279,6 +321,15 @@ function restoreActionIcons() {
   }
 }
 
+function syncActionKeyboardStorage() {
+  if (typeof localStorage === 'undefined') return
+  if (settings.action_keyboard) {
+    localStorage.setItem('dinotty_action_keyboard', JSON.stringify(settings.action_keyboard))
+  } else {
+    localStorage.removeItem('dinotty_action_keyboard')
+  }
+}
+
 async function loadSettings() {
   if (!hasAuthToken()) return
   try {
@@ -290,9 +341,7 @@ async function loadSettings() {
       restoreActionIcons()
       applyCurrentTheme()
       // Sync action keyboard to localStorage for static mobile-keyboard.js
-      if (settings.action_keyboard) {
-        localStorage.setItem('dinotty_action_keyboard', JSON.stringify(settings.action_keyboard))
-      }
+      syncActionKeyboardStorage()
     }
   } catch (e) {
     console.error('[settings] load failed:', e)
@@ -304,11 +353,7 @@ export async function saveSettings() {
     // Wait for initial load to complete before saving, to avoid overwriting server data with defaults
     if (loadPromise) await loadPromise
     // Sync action keyboard to localStorage for static mobile-keyboard.js
-    if (settings.action_keyboard) {
-      localStorage.setItem('dinotty_action_keyboard', JSON.stringify(settings.action_keyboard))
-    } else {
-      localStorage.removeItem('dinotty_action_keyboard')
-    }
+    syncActionKeyboardStorage()
     await getApiBase()
     const res = await authFetch(apiUrl('/api/settings'), {
       method: 'PUT',

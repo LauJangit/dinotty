@@ -2,14 +2,20 @@
 use axum::{
     body::Body,
     extract::Request,
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     middleware::Next,
     response::Response,
 };
 use dashmap::DashMap;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::{net::IpAddr, sync::OnceLock, time::Instant};
 
+use crate::auth::session::SessionStore;
 use crate::settings::SettingsState;
+
+pub mod session;
+
+pub const SESSION_COOKIE_NAME: &str = "dinotty_session";
 
 struct FailRecord {
     count: u32,
@@ -21,8 +27,76 @@ fn fail_map() -> &'static DashMap<IpAddr, FailRecord> {
     MAP.get_or_init(DashMap::new)
 }
 
-const MAX_FAILURES: u32 = 5;
-const LOCKOUT_SECS: u64 = 60;
+static GLOBAL_FAIL_COUNT: AtomicU32 = AtomicU32::new(0);
+static GLOBAL_FAIL_WINDOW_START: AtomicU64 = AtomicU64::new(0);
+
+/// Record a failed auth attempt for the given IP. Called by the login handler.
+pub fn record_auth_failure(ip: IpAddr, global_lockout_secs: u64) {
+    // Per-IP tracking
+    let map = fail_map();
+    let mut rec = map.entry(ip).or_insert(FailRecord { count: 0, last_fail: Instant::now() });
+    rec.count += 1;
+    rec.last_fail = Instant::now();
+
+    // Global tracking
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let window_start = GLOBAL_FAIL_WINDOW_START.load(Ordering::Relaxed);
+    if now.saturating_sub(window_start) > global_lockout_secs {
+        GLOBAL_FAIL_COUNT.store(1, Ordering::Relaxed);
+        GLOBAL_FAIL_WINDOW_START.store(now, Ordering::Relaxed);
+    } else {
+        GLOBAL_FAIL_COUNT.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// Check whether the given IP (or global state) is currently locked out.
+/// Returns `Some(retry_after_secs)` if locked out, `None` if allowed.
+#[must_use]
+pub fn check_lockout(
+    real_ip: IpAddr,
+    strategy: &str,
+    max_failures: u32,
+    lockout_secs: u64,
+    global_max_failures: u32,
+    global_lockout_secs: u64,
+) -> Option<u64> {
+    match strategy {
+        "off" => None,
+        "global" => {
+            let count = GLOBAL_FAIL_COUNT.load(Ordering::Relaxed);
+            let window_start = GLOBAL_FAIL_WINDOW_START.load(Ordering::Relaxed);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            if count >= global_max_failures
+                && now.saturating_sub(window_start) < global_lockout_secs
+            {
+                Some(global_lockout_secs - now.saturating_sub(window_start))
+            } else {
+                None
+            }
+        }
+        _ => {
+            // "ip" (default): per-IP lockout
+            let map = fail_map();
+            if let Some(rec) = map.get(&real_ip) {
+                if rec.count >= max_failures {
+                    let elapsed = rec.last_fail.elapsed().as_secs();
+                    if elapsed < lockout_secs {
+                        return Some(lockout_secs - elapsed);
+                    }
+                    drop(rec);
+                    map.remove(&real_ip);
+                }
+            }
+            None
+        }
+    }
+}
 
 /// # Panics
 /// Panics if the response builder fails (which should not happen with valid status codes and bodies).
@@ -31,109 +105,106 @@ pub async fn auth_middleware(
     next: Next,
     token: &str,
     settings: &SettingsState,
+    sessions: &SessionStore,
     client_ip: IpAddr,
 ) -> Response {
     let path = request.uri().path();
 
-    // No token configured — first-time setup, allow all requests
+    // No token configured - first-time setup, allow all requests
     if token.is_empty() {
         return next.run(request).await;
     }
 
     if path == "/"
-        || path == "/api/notify"
         || path == "/api/token-configured"
-        || path == "/api/auto-token"
         || path == "/manifest.json"
         || path == "/logo.png"
         || path.starts_with("/assets/")
-        || path.starts_with("/preview/")
         || path.starts_with("/icons/")
     {
         return next.run(request).await;
     }
 
-    // IP whitelist check — drop the lock before calling next.run() to avoid
-    // deadlocking when a write lock is requested later in the same task chain.
-    let whitelisted = {
-        let s = settings.read().await;
-        is_ip_whitelisted(client_ip, &s.ip_whitelist)
-    };
-    if whitelisted {
+    // Agent WS has its own agent-token middleware; skip main auth so agent
+    // clients (which carry an agent token, not a session cookie) can connect.
+    if path == "/ws/agent" {
         return next.run(request).await;
     }
 
-    // /api/auth is exempt from the IP whitelist so that users on non-whitelisted
-    // IPs (e.g. LAN) can still authenticate. The token is still validated below.
-    if path == "/api/auth" {
-        let map = fail_map();
-        if let Some(rec) = map.get(&client_ip) {
-            if rec.count >= MAX_FAILURES {
-                let elapsed = rec.last_fail.elapsed().as_secs();
-                if elapsed < LOCKOUT_SECS {
-                    return Response::builder()
-                        .status(StatusCode::TOO_MANY_REQUESTS)
-                        .header(header::CONTENT_TYPE, "application/json")
-                        .header("Retry-After", (LOCKOUT_SECS - elapsed).to_string())
-                        .body(Body::from(
-                            r#"{"error":"too many failed attempts, please try again later"}"#,
-                        ))
-                        .unwrap();
-                }
-                drop(rec);
-                map.remove(&client_ip);
-            }
-        }
-        if check_token(&request, token) {
-            map.remove(&client_ip);
-            return next.run(request).await;
-        }
-        {
-            let mut rec =
-                map.entry(client_ip).or_insert(FailRecord { count: 0, last_fail: Instant::now() });
-            rec.count += 1;
-            rec.last_fail = Instant::now();
-        }
+    // /preview/* still bypasses here; the proxy handler enforces its own
+    // loopback / session check.
+    if path.starts_with("/preview/") {
+        return next.run(request).await;
+    }
+
+    // Resolve real client IP (respects trusted_proxies for X-Forwarded-For).
+    // This fixes a pre-existing vuln: behind a same-host tunnel, all traffic
+    // appeared from 127.0.0.1 and bypassed auth via the loopback whitelist.
+    let (real_ip, ip_whitelist) = {
+        let s = settings.read().await;
+        let real = real_client_ip(request.headers(), client_ip, &s.auth.trusted_proxies);
+        (real, s.ip_whitelist.clone())
+    };
+
+    // /api/auto-token exposes the raw auth token — loopback only.
+    if path == "/api/auto-token" && !real_ip.is_loopback() {
         return Response::builder()
-            .status(StatusCode::UNAUTHORIZED)
+            .status(StatusCode::FORBIDDEN)
             .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(r#"{"error":"unauthorized"}"#))
+            .body(Body::from(r#"{"error":"auto-token is only available from localhost"}"#))
             .unwrap();
     }
 
-    // Brute-force lockout check
-    let map = fail_map();
-    if let Some(rec) = map.get(&client_ip) {
-        if rec.count >= MAX_FAILURES {
-            let elapsed = rec.last_fail.elapsed().as_secs();
-            if elapsed < LOCKOUT_SECS {
-                return Response::builder()
-                    .status(StatusCode::TOO_MANY_REQUESTS)
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .header("Retry-After", (LOCKOUT_SECS - elapsed).to_string())
-                    .body(Body::from(
-                        r#"{"error":"too many failed attempts, please try again later"}"#,
-                    ))
-                    .unwrap();
-            }
-            drop(rec);
-            map.remove(&client_ip);
-        }
-    }
-
-    if check_token(&request, token) {
-        map.remove(&client_ip);
+    // IP whitelist (loopback bypass) check - uses real IP, not direct peer.
+    if is_ip_whitelisted(real_ip, &ip_whitelist) {
         return next.run(request).await;
     }
 
-    // Only count failures from the login endpoint — other endpoints return 401
-    // without incrementing the counter, so normal pre-auth API calls (settings,
-    // plugins, etc.) don't accidentally trigger the lockout.
+    // /api/auth is the login endpoint - exempt from IP whitelist so non-loopback
+    // users can authenticate. The login handler does its own token validation
+    // and brute-force accounting.
     if path == "/api/auth" {
-        let mut rec =
-            map.entry(client_ip).or_insert(FailRecord { count: 0, last_fail: Instant::now() });
-        rec.count += 1;
-        rec.last_fail = Instant::now();
+        return next.run(request).await;
+    }
+
+    // Brute-force lockout check (strategy-driven).
+    let (lockout_strategy, max_failures, lockout_secs, global_max_failures, global_lockout_secs) = {
+        let s = settings.read().await;
+        (
+            s.auth.lockout_strategy.clone(),
+            s.auth.lockout_max_failures,
+            s.auth.lockout_secs,
+            s.auth.global_lockout_max_failures,
+            s.auth.global_lockout_secs,
+        )
+    };
+
+    if let Some(retry_after) = check_lockout(
+        real_ip,
+        &lockout_strategy,
+        max_failures,
+        lockout_secs,
+        global_max_failures,
+        global_lockout_secs,
+    ) {
+        return Response::builder()
+            .status(StatusCode::TOO_MANY_REQUESTS)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("Retry-After", retry_after.to_string())
+            .body(Body::from(r#"{"error":"too many failed attempts, please try again later"}"#))
+            .unwrap();
+    }
+
+    // Cookie session check (browser login).
+    if let Some(session_id) = extract_session_cookie(&request) {
+        if sessions.validate(&session_id) {
+            return next.run(request).await;
+        }
+    }
+
+    // Bearer header check (programmatic clients + Tauri).
+    if check_token(&request, token) {
+        return next.run(request).await;
     }
 
     Response::builder()
@@ -141,6 +212,74 @@ pub async fn auth_middleware(
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(r#"{"error":"unauthorized"}"#))
         .unwrap()
+}
+
+/// Extract the `dinotty_session` cookie value from the Cookie header.
+/// Check whether a request carries a valid session cookie or Bearer token.
+pub fn has_valid_auth(request: &Request, sessions: &SessionStore, token: &str) -> bool {
+    if let Some(sid) = extract_session_cookie(request) {
+        if sessions.validate(&sid) {
+            return true;
+        }
+    }
+    check_token(request, token)
+}
+
+fn extract_session_cookie(request: &Request) -> Option<String> {
+    let header = request.headers().get(header::COOKIE)?;
+    let raw = header.to_str().ok()?;
+    for pair in raw.split(';') {
+        let pair = pair.trim();
+        if let Some(rest) = pair.strip_prefix(&format!("{SESSION_COOKIE_NAME}=")) {
+            return Some(rest.to_string());
+        }
+    }
+    None
+}
+
+/// Resolve the real client IP. If the direct connection IP is in `trusted_proxies`
+/// (CIDR list), parse `X-Forwarded-For` and return the first non-trusted hop.
+/// Otherwise return the direct connection IP unchanged.
+///
+/// This is critical for the loopback bypass: behind a same-host tunnel (e.g.
+/// ngrok/cloudflared on 127.0.0.1), the direct peer is always loopback and
+/// would bypass auth. With `trusted_proxies` empty (default), the direct peer
+/// is used as-is, so tunnel traffic from a remote ngrok exit keeps its real IP.
+#[must_use]
+pub fn real_client_ip(headers: &HeaderMap, conn_ip: IpAddr, trusted_proxies: &[String]) -> IpAddr {
+    if !is_ip_whitelisted(conn_ip, trusted_proxies) {
+        return conn_ip;
+    }
+    let Some(xff) = headers.get("x-forwarded-for") else {
+        return conn_ip;
+    };
+    let Ok(s) = xff.to_str() else {
+        return conn_ip;
+    };
+    for part in s.split(',') {
+        let part = part.trim();
+        if let Ok(ip) = part.parse::<IpAddr>() {
+            if !is_ip_whitelisted(ip, trusted_proxies) {
+                return ip;
+            }
+        }
+    }
+    conn_ip
+}
+
+/// 暂时关闭：反代（极空间等 NAS）默认不带 X-Forwarded-Host，Host 被改写为内部
+/// 地址，导致 Origin 与 Host 比对失配，所有非 /ws 的 WS 端点（监控、sync、
+/// watch、notify、history 等）全部 403。cookie session 鉴权仍在 `auth_middleware`
+/// 生效，跨站 WS CSRF 风险有限。后续修复 `trusted_proxies` 语义 bug（应用直连
+/// peer 判断而非 `real_ip`）并加拒绝日志后再恢复。
+#[must_use]
+pub fn check_ws_origin(
+    _headers: &HeaderMap,
+    _allowed_origins: &[String],
+    _client_ip: std::net::IpAddr,
+    _trusted_proxies: &[String],
+) -> bool {
+    true
 }
 
 fn is_ip_whitelisted(ip: IpAddr, whitelist: &[String]) -> bool {
@@ -224,16 +363,6 @@ fn check_token(request: &Request, token: &str) -> bool {
         if let Ok(v) = auth.to_str() {
             if let Some(t) = v.strip_prefix("Bearer ") {
                 return constant_time_eq(t.trim(), token);
-            }
-        }
-    }
-
-    if let Some(query) = request.uri().query() {
-        for pair in query.split('&') {
-            if let Some(val) = pair.strip_prefix("token=") {
-                if let Ok(decoded) = urlencoding::decode(val) {
-                    return constant_time_eq(&decoded, token);
-                }
             }
         }
     }

@@ -203,7 +203,7 @@ fn sniff_cwd_buffers_chunked_powershell_title_with_windows_path() {
 
 #[cfg(windows)]
 #[test]
-fn sniff_cwd_keeps_old_cwd_when_windows_path_is_missing() {
+fn sniff_cwd_falls_back_to_raw_windows_path_when_missing() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().to_path_buf();
     let old_cwd = tmp.path().join("old");
@@ -215,7 +215,7 @@ fn sniff_cwd_keeps_old_cwd_when_windows_path_is_missing() {
 
     sniff_cwd_from_title_osc(&mut buf, data.as_bytes(), &home, &mut cwd);
 
-    assert_eq!(cwd, old_cwd.canonicalize().unwrap());
+    assert_eq!(cwd, missing);
 }
 
 // ── collect_leaf_pane_ids ────────────────────────────────────────
@@ -648,16 +648,16 @@ fn sniff_cwd_updates_cwd_state() {
 }
 
 #[test]
-fn sniff_cwd_ignores_nonexistent_path() {
+fn sniff_cwd_falls_back_to_raw_path_when_canonicalize_fails() {
     let home = PathBuf::from("/");
     let mut cwd = home.clone();
     let mut buf = Vec::new();
-    // Path does not exist — canonicalize() fails, cwd should not change
+    // Path does not exist — canonicalize() fails; the raw path is used as fallback so SSH remote cwd tracking still works (a89eb0a4)
     sniff_cwd_from_title_osc(
         &mut buf,
         b"\x1b]0;user@host:/nonexistent_path_12345\x07",
         &home,
         &mut cwd,
     );
-    assert_eq!(cwd, PathBuf::from("/"));
+    assert_eq!(cwd, PathBuf::from("/nonexistent_path_12345"));
 }

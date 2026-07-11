@@ -35,7 +35,7 @@
 .mc-grid::-webkit-scrollbar { display: none; }
 
 .mc-card {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
   overflow: hidden;
@@ -43,8 +43,6 @@
   transition: border-color 0.15s, background 0.15s;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
 }
 .mc-card:active {
   background: rgba(255, 255, 255, 0.1);
@@ -362,7 +360,7 @@
 
 /* Card styling inside semi-transparent panel */
 .mc-ws-dual .mc-card {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.06);
   border-color: rgba(255, 255, 255, 0.08);
 }
 .mc-ws-dual .mc-card:hover {

@@ -29,7 +29,6 @@ pub mod platform;
 pub mod plugin;
 pub mod proxy;
 pub mod pty;
-pub mod qr_code;
 pub mod session;
 pub mod settings;
 pub mod ssh;

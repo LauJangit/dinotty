@@ -1,7 +1,7 @@
 <template>
   <Teleport to="body">
     <div v-if="visible" class="confirm-backdrop" @click.self="onCancel">
-      <div class="confirm-modal">
+      <div ref="rootEl" class="confirm-modal">
         <div class="confirm-header">
           <span class="confirm-title">{{ title }}</span>
           <button class="confirm-close" @click="onCancel">&times;</button>
@@ -18,8 +18,13 @@
   </Teleport>
 </template>
 
+<script lang="ts">
+const visibleStack: symbol[] = []
+</script>
+
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { settings } from '../../composables/useSettings'
 
 const props = defineProps<{
   visible: boolean
@@ -35,8 +40,27 @@ const emit = defineEmits<{
 }>()
 
 const focusIndex = ref(0)
+const rootEl = ref<HTMLElement | null>(null)
+const stackId = Symbol()
+const spaceConfirmIssued = ref(false)
 
-watch(() => props.visible, (v) => { if (v) focusIndex.value = 0 })
+function removeFromVisibleStack() {
+  const index = visibleStack.indexOf(stackId)
+  if (index !== -1) visibleStack.splice(index, 1)
+}
+
+watch(
+  () => props.visible,
+  (visible) => {
+    removeFromVisibleStack()
+    if (visible) {
+      focusIndex.value = 0
+      spaceConfirmIssued.value = false
+      visibleStack.push(stackId)
+    }
+  },
+  { immediate: true }
+)
 
 function onConfirm() {
   emit('confirm')
@@ -48,6 +72,36 @@ function onCancel() {
 
 function onKey(e: KeyboardEvent) {
   if (!props.visible) return
+  const isIme = e.isComposing || e.keyCode === 229 || e.key === 'Process'
+  if (
+    settings.space_confirms_dialogs &&
+    e.key === ' ' &&
+    !isIme &&
+    !e.shiftKey &&
+    !e.ctrlKey &&
+    !e.altKey &&
+    !e.metaKey
+  ) {
+    if (visibleStack[visibleStack.length - 1] !== stackId) return
+
+    const activeElement = document.activeElement
+    if (
+      activeElement instanceof HTMLElement &&
+      rootEl.value?.contains(activeElement) &&
+      (activeElement.matches('button, input, textarea, select, [contenteditable]') ||
+        activeElement.isContentEditable)
+    ) {
+      return
+    }
+
+    e.preventDefault()
+    e.stopImmediatePropagation()
+    if (!spaceConfirmIssued.value) {
+      spaceConfirmIssued.value = true
+      onConfirm()
+    }
+    return
+  }
   if (e.key === 'Escape') {
     e.preventDefault()
     e.stopPropagation()
@@ -65,7 +119,10 @@ function onKey(e: KeyboardEvent) {
 }
 
 onMounted(() => window.addEventListener('keydown', onKey, true))
-onUnmounted(() => window.removeEventListener('keydown', onKey, true))
+onUnmounted(() => {
+  removeFromVisibleStack()
+  window.removeEventListener('keydown', onKey, true)
+})
 </script>
 
 <style scoped>

@@ -1,7 +1,7 @@
 <template>
   <div>
-    <section class="settings-section">
-      <h3>{{ t('settings.theme') }}</h3>
+    <div class="settings-group">
+      <h3 class="settings-group-title">{{ t('settings.theme') }}</h3>
       <div class="theme-grid">
         <button
           v-for="th in themes"
@@ -36,10 +36,17 @@
           <span class="theme-name">{{ themeLabel(th.name) }}</span>
         </button>
       </div>
-    </section>
+    </div>
 
-    <section class="settings-section">
-      <h3>{{ t('settings.customColors') }}</h3>
+    <div class="settings-group">
+      <h3
+        class="settings-group-title section-title--collapsible"
+        @click="customColorsOpen = !customColorsOpen"
+      >
+        <span class="chevron" :class="{ open: customColorsOpen }">▶</span>
+        {{ t('settings.customColors') }}
+      </h3>
+      <template v-if="customColorsOpen">
       <p class="settings-hint">{{ t('settings.customColorsHint') }}</p>
       <div class="custom-colors-grid">
         <label class="color-field">
@@ -73,10 +80,11 @@
           </label>
         </div>
       </details>
-    </section>
+      </template>
+    </div>
 
-    <section class="settings-section">
-      <h3>{{ t('settings.text') }}</h3>
+    <div class="settings-group">
+      <h3 class="settings-group-title">{{ t('settings.text') }}</h3>
 
       <div class="settings-row">
         <label>{{ t('settings.text.fontSize') }}</label>
@@ -154,6 +162,9 @@
         </div>
       </div>
 
+      <details class="ansi-details">
+        <summary>{{ t('settings.advancedText') }}</summary>
+
       <div class="settings-row">
         <label>{{ t('settings.text.lineHeight') }}</label>
         <div class="range-wrap">
@@ -224,9 +235,56 @@
           <span class="range-val">{{ settings.text.scrollback.toLocaleString() }}</span>
         </div>
       </div>
-    </section>
 
-    <div class="settings-section" style="text-align: right">
+      <div class="settings-row">
+        <label>{{ t('settings.text.scrollSensitivity') }}</label>
+        <div class="range-wrap">
+          <input
+            type="range"
+            v-model.number="settings.text.scroll_sensitivity"
+            min="0.1"
+            max="2"
+            step="0.1"
+            @input="onTextSettingChange"
+          />
+          <span class="range-val">{{ settings.text.scroll_sensitivity.toFixed(1) }}</span>
+        </div>
+      </div>
+
+      <div class="settings-row">
+        <label>{{ t('settings.text.scrollAcceleration') }}</label>
+        <div class="range-wrap">
+          <input
+            type="range"
+            v-model.number="settings.text.scroll_acceleration"
+            min="0"
+            max="5"
+            step="1"
+            @input="onTextSettingChange"
+          />
+          <span class="range-val">{{ settings.text.scroll_acceleration.toFixed(0) }}</span>
+        </div>
+      </div>
+
+      <div class="settings-row">
+        <label>{{ t('settings.text.scrollbarWidth') }}</label>
+        <div class="range-wrap">
+          <input
+            type="range"
+            v-model.number="settings.text.scrollbar_width"
+            min="4"
+            max="16"
+            step="1"
+            @input="onTextSettingChange"
+          />
+          <span class="range-val">{{ settings.text.scrollbar_width }}</span>
+        </div>
+      </div>
+
+      </details>
+    </div>
+
+    <div class="settings-group" style="text-align: right">
       <button class="shortcut-add" @click="resetCustomColors">
         {{ t('settings.color.reset') }}
       </button>
@@ -368,6 +426,8 @@ const fontFamilies = [
   { label: 'Ubuntu Mono', value: '"Ubuntu Mono", monospace' },
 ]
 
+const customColorsOpen = ref(false)
+const advancedTextOpen = ref(false)
 const fontDropdownOpen = ref(false)
 const customFontEditing = ref(false)
 const customFontName = ref('')

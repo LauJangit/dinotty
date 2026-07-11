@@ -225,6 +225,26 @@ const tabs = computed(() => [
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.06));
 }
+.section-title--collapsible {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.section-title--collapsible:hover {
+  color: var(--fg, #ccc);
+}
+.chevron {
+  font-size: 8px;
+  transition: transform 0.15s ease;
+  display: inline-block;
+  color: var(--fg-muted, #888);
+  margin-right: 2px;
+}
+.chevron.open {
+  transform: rotate(90deg);
+}
 .settings-group .settings-section:last-child {
   margin-bottom: 0;
 }

@@ -362,6 +362,7 @@
   position: relative;
   width: 100%;
   min-width: 0;
+  box-sizing: border-box;
   height: 30px;
   padding: 6px 10px;
   font-size: 14px;
@@ -395,9 +396,6 @@
   background: rgba(255, 255, 255, 0.15);
 }
 .mkb-text-input-focused {
-  height: auto;
-  min-height: 80px;
-  max-height: 120px;
   overflow-y: auto;
   border-radius: 6px;
 }
@@ -478,8 +476,11 @@
 .mkb-toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: nowrap;
   gap: 4px;
   padding: 4px 12px;
+  min-width: 0;
+  overflow: hidden;
   background: var(--bg-surface);
   border-top: 1px solid var(--border);
 }
@@ -488,6 +489,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  flex: 0 0 32px;
   width: 32px;
   height: 32px;
   border: none;
@@ -502,16 +504,33 @@
   background: var(--border);
 }
 
+.mkb-tool-btn:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.mkb-spin {
+  animation: mkb-spin 0.8s linear infinite;
+}
+
+@keyframes mkb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .mkb-path-chip {
+  flex: 0 1 120px;
+  min-width: 0;
   width: auto;
   padding: 0 8px;
   gap: 4px;
   font-size: 12px;
-  max-width: 180px;
   overflow: hidden;
 }
 
 .mkb-path-label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

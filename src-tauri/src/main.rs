@@ -303,6 +303,14 @@ async fn tauri_download(
 }
 
 #[tauri::command]
+async fn pick_upload_dir() -> Option<String> {
+    rfd::AsyncFileDialog::new()
+        .pick_folder()
+        .await
+        .map(|folder| folder.path().to_string_lossy().into_owned())
+}
+
+#[tauri::command]
 async fn tauri_upload(
     pane_id: String,
     dir: String,
@@ -493,6 +501,7 @@ fn main() {
             tauri_upload,
             tauri_read_file,
             tauri_download,
+            pick_upload_dir,
             close_window,
             toggle_window,
         ])

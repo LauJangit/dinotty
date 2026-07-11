@@ -4,7 +4,7 @@
       <Monitor :size="14" />
       <span>{{ t('settings.monitor.localHint') }}</span>
     </div>
-    <section class="settings-section">
+    <div class="settings-group">
       <div class="chart-header">
         <h3>{{ t('settings.monitor.cpuChart') }}</h3>
         <label class="toggle">
@@ -15,9 +15,9 @@
       <div class="chart-wrap">
         <Line :data="cpuChartData" :options="pctChartOptions" />
       </div>
-    </section>
+    </div>
 
-    <section class="settings-section">
+    <div class="settings-group">
       <div class="chart-header">
         <h3>{{ t('settings.monitor.memChart') }}</h3>
         <label class="toggle">
@@ -28,9 +28,9 @@
       <div class="chart-wrap">
         <Line :data="memChartData" :options="pctChartOptions" />
       </div>
-    </section>
+    </div>
 
-    <section class="settings-section">
+    <div class="settings-group">
       <div class="chart-header">
         <h3>{{ t('settings.monitor.diskLabel') }}</h3>
         <label class="toggle">
@@ -47,9 +47,9 @@
         </div>
       </div>
       <div v-else class="disk-info"><span class="disk-val">—</span></div>
-    </section>
+    </div>
 
-    <section class="settings-section">
+    <div class="settings-group">
       <div class="chart-header">
         <h3>{{ t('settings.monitor.netChart') }}</h3>
         <label class="toggle">
@@ -60,9 +60,9 @@
       <div class="chart-wrap">
         <Line :data="netChartData" :options="netChartOptions" />
       </div>
-    </section>
+    </div>
 
-    <section class="settings-section">
+    <div class="settings-group">
       <div class="chart-header">
         <h3>{{ t('settings.monitor.gpuChart') }}</h3>
         <label class="toggle">
@@ -92,7 +92,7 @@
       <div v-if="!settings.monitor.gpu || !hasGpu" class="disk-info">
         <span class="disk-val">—</span>
       </div>
-    </section>
+    </div>
   </div>
 </template>
 

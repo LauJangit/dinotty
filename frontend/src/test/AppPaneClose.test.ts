@@ -67,6 +67,8 @@ vi.mock('../composables/apiBase', () => ({
   setAuthToken: () => {},
   getApiBase: async () => 'http://127.0.0.1:7681',
   fetchServerToken: async () => '',
+  fetchAutoToken: async () => '',
+  validateToken: async () => ({ ok: true }),
   hasAuthToken: () => true,
   wsUrlWithToken: (url: string) => url,
   checkTokenConfigured: async () => false,
@@ -121,9 +123,9 @@ vi.mock('../composables/usePluginLoader', () => ({
     loadedPlugins: new Map(),
     loadAll: vi.fn(),
     getPluginContext: vi.fn(),
-    pluginList: { __v_isRef: true, value: [] },
-    allCommands: { __v_isRef: true, value: [] },
-    allQuickPicks: { __v_isRef: true, value: [] },
+    pluginList: { value: [], __v_isRef: true },
+    allCommands: { value: [], __v_isRef: true },
+    allQuickPicks: { value: [], __v_isRef: true },
   }),
   handlePluginChanged: vi.fn(),
 }))
@@ -180,6 +182,7 @@ import { nextTick, defineComponent, h } from 'vue'
 import { createPinia } from 'pinia'
 import App from '../App.vue'
 import { settings } from '../composables/useSettings'
+import { useUiStore } from '../stores/uiStore'
 
 // Spec: openspec/changes/confirm-before-close-tab/spec.md
 //   "### Requirement: Pane Close Confirmation"
@@ -223,25 +226,40 @@ const ConfirmModalStub = defineComponent({
   },
 })
 
+const ConfirmCloseDialogStub = defineComponent({
+  name: 'ConfirmCloseDialog',
+  emits: ['confirm'],
+  setup(_, { emit }) {
+    const ui = useUiStore()
+    return () =>
+      h('div', {
+        class: 'confirm-close-stub',
+        'data-visible': String(ui.confirmCloseVisible),
+        onClick: () => emit('confirm', ui.pendingCloseTabId, ui.pendingClosePaneId),
+      })
+  },
+})
+
 let mountedWrapper: VueWrapper | undefined
 
 async function mountWithTabs() {
   vi.useFakeTimers()
-  const pinia = createPinia()
   const wrapper = shallowMount(App, {
     global: {
-      plugins: [pinia],
+      plugins: [createPinia()],
       stubs: {
         SplitContainer: SplitContainerStub,
+        ConfirmCloseDialog: ConfirmCloseDialogStub,
         ConfirmModal: ConfirmModalStub,
-        ConfirmCloseDialog: false,
       },
     },
   })
   mountedWrapper = wrapper
   await nextTick()
+  await Promise.resolve()
+  await Promise.resolve()
   // Fast-forward past the 3-second REST fallback timer in App.vue's onMounted.
-  vi.advanceTimersByTime(3500)
+  await vi.advanceTimersByTimeAsync(3500)
   await nextTick()
   await nextTick()
   vi.useRealTimers()
@@ -298,10 +316,10 @@ describe('App.vue - onClosePane routes through confirmation gate', () => {
     // closePane must NOT have been called yet — we expect the modal gate
     expect(mocks.closePane).not.toHaveBeenCalled()
 
-    // ConfirmModal must now be visible
-    const confirmModal = wrapper.findComponent(ConfirmModalStub)
-    expect(confirmModal.exists()).toBe(true)
-    expect((confirmModal.vm as any).$props.visible).toBe(true)
+    // Confirm close dialog must now be visible
+    const confirmDialog = wrapper.findComponent(ConfirmCloseDialogStub)
+    expect(confirmDialog.exists()).toBe(true)
+    expect(confirmDialog.attributes('data-visible')).toBe('true')
   })
 
   it('onConfirmClose with pendingClosePaneId → calls splitPane.closePane, not closeTab', async () => {
@@ -312,8 +330,8 @@ describe('App.vue - onClosePane routes through confirmation gate', () => {
     await splitContainer.vm.$emit('close', 'pane-2')
     await nextTick()
 
-    const confirmModal = wrapper.findComponent(ConfirmModalStub)
-    await confirmModal.vm.$emit('confirm')
+    const confirmDialog = wrapper.findComponent(ConfirmCloseDialogStub)
+    await confirmDialog.trigger('click')
     await nextTick()
 
     // splitPane.closePane should be called with the pane id
@@ -323,7 +341,7 @@ describe('App.vue - onClosePane routes through confirmation gate', () => {
     expect(mocks.apiCloseTab).not.toHaveBeenCalled()
 
     // Modal should be closed
-    expect((confirmModal.vm as any).$props.visible).toBe(false)
+    expect(confirmDialog.attributes('data-visible')).toBe('false')
   })
 
   it('onConfirmClose with pane close cascade (closePane returns false) → calls closeTab fallback', async () => {
@@ -334,8 +352,8 @@ describe('App.vue - onClosePane routes through confirmation gate', () => {
     await splitContainer.vm.$emit('close', 'pane-3')
     await nextTick()
 
-    const confirmModal = wrapper.findComponent(ConfirmModalStub)
-    await confirmModal.vm.$emit('confirm')
+    const confirmDialog = wrapper.findComponent(ConfirmCloseDialogStub)
+    await confirmDialog.trigger('click')
     await nextTick()
 
     // splitPane.closePane should be called first
@@ -414,10 +432,10 @@ describe('App.vue - Cmd+W routes through confirmation gate in split-pane mode', 
     // closePane must NOT have been called yet — we expect the modal gate
     expect(mocks.closePane).not.toHaveBeenCalled()
 
-    // ConfirmModal must now be visible
-    const confirmModal = wrapper.findComponent(ConfirmModalStub)
-    expect(confirmModal.exists()).toBe(true)
-    expect((confirmModal.vm as any).$props.visible).toBe(true)
+    // Confirm close dialog must now be visible
+    const confirmDialog = wrapper.findComponent(ConfirmCloseDialogStub)
+    expect(confirmDialog.exists()).toBe(true)
+    expect(confirmDialog.attributes('data-visible')).toBe('true')
   })
 
   it('Cmd+W + confirm in multi-pane mode → calls splitPane.closePane with active pane id', async () => {
@@ -434,8 +452,8 @@ describe('App.vue - Cmd+W routes through confirmation gate in split-pane mode', 
     )
     await nextTick()
 
-    const confirmModal = wrapper.findComponent(ConfirmModalStub)
-    await confirmModal.vm.$emit('confirm')
+    const confirmDialog = wrapper.findComponent(ConfirmCloseDialogStub)
+    await confirmDialog.trigger('click')
     await nextTick()
 
     // closePane should be called with the active pane id (pane-1 in fixture)
@@ -443,7 +461,7 @@ describe('App.vue - Cmd+W routes through confirmation gate in split-pane mode', 
     // apiCloseTab should NOT have been called (closePane returned true)
     expect(mocks.apiCloseTab).not.toHaveBeenCalled()
     // Modal should be closed
-    expect((confirmModal.vm as any).$props.visible).toBe(false)
+    expect(confirmDialog.attributes('data-visible')).toBe('false')
   })
 
   it('Cmd+W + setting off → bypasses modal and calls closePane directly', async () => {
@@ -463,8 +481,8 @@ describe('App.vue - Cmd+W routes through confirmation gate in split-pane mode', 
 
     expect(mocks.closePane).toHaveBeenCalledWith('pane-1')
     // Modal should NOT be visible (bypass)
-    const confirmModal = wrapper.findComponent(ConfirmModalStub)
-    expect((confirmModal.vm as any).$props.visible).toBe(false)
+    const confirmDialog = wrapper.findComponent(ConfirmCloseDialogStub)
+    expect(confirmDialog.attributes('data-visible')).toBe('false')
   })
 
   // 验证 Windows Alt-as-Cmd 不会把 Ctrl+Alt+W 当作应用关闭快捷键。
@@ -486,8 +504,8 @@ describe('App.vue - Cmd+W routes through confirmation gate in split-pane mode', 
 
     expect(mocks.closePane).not.toHaveBeenCalled()
     expect(mocks.apiCloseTab).not.toHaveBeenCalled()
-    const confirmModal = wrapper.findComponent(ConfirmModalStub)
-    expect((confirmModal.vm as any).$props.visible).toBe(false)
+    const confirmDialog = wrapper.findComponent(ConfirmCloseDialogStub)
+    expect(confirmDialog.attributes('data-visible')).toBe('false')
   })
 
   // 验证 Windows Alt-as-Cmd 开启后 Alt+W 会走关闭确认流程。
@@ -508,8 +526,8 @@ describe('App.vue - Cmd+W routes through confirmation gate in split-pane mode', 
 
     expect(mocks.closePane).not.toHaveBeenCalled()
     expect(mocks.apiCloseTab).not.toHaveBeenCalled()
-    const confirmModal = wrapper.findComponent(ConfirmModalStub)
-    expect((confirmModal.vm as any).$props.visible).toBe(true)
+    const confirmDialog = wrapper.findComponent(ConfirmCloseDialogStub)
+    expect(confirmDialog.attributes('data-visible')).toBe('true')
   })
 
   // 验证 Windows Alt-as-Cmd 开启后 Alt+T 会创建新 tab。
@@ -549,8 +567,8 @@ describe('App.vue - Cmd+W routes through confirmation gate in split-pane mode', 
 
     expect(mocks.closePane).not.toHaveBeenCalled()
     expect(mocks.apiCloseTab).not.toHaveBeenCalled()
-    const confirmModal = wrapper.findComponent(ConfirmModalStub)
-    expect((confirmModal.vm as any).$props.visible).toBe(false)
+    const confirmDialog = wrapper.findComponent(ConfirmCloseDialogStub)
+    expect(confirmDialog.attributes('data-visible')).toBe('false')
   })
 
   // 验证 Ctrl+Alt+T/W 不会被虚拟 Cmd 处理，避免影响 AltGr 输入。
@@ -575,7 +593,7 @@ describe('App.vue - Cmd+W routes through confirmation gate in split-pane mode', 
     expect(mocks.apiCreateTab).not.toHaveBeenCalled()
     expect(mocks.closePane).not.toHaveBeenCalled()
     expect(mocks.apiCloseTab).not.toHaveBeenCalled()
-    const confirmModal = wrapper.findComponent(ConfirmModalStub)
-    expect((confirmModal.vm as any).$props.visible).toBe(false)
+    const confirmDialog = wrapper.findComponent(ConfirmCloseDialogStub)
+    expect(confirmDialog.attributes('data-visible')).toBe('false')
   })
 })

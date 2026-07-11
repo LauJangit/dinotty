@@ -33,7 +33,7 @@ const APP_DEFAULTS = [
   ['searchTerminal', 'f', false, false],
   ['switchTab', '1', false, true],
   ['missionControl', 'm', true, false],
-  ['sshConnect', 't', true, false],
+  ['sshConnect', 'n', true, false],
   ['fontSizeUp', '=', true, false],
   ['fontSizeDown', '-', false, false],
   ['fontSizeReset', '0', false, false],
@@ -134,6 +134,30 @@ describe('unified keybindings', () => {
       expect(event.defaultPrevented).toBe(true)
       expect(stopPropagation).toHaveBeenCalled()
     }
+  })
+
+  it('prefers trailing path deletion for terminal delete-to-line-start', () => {
+    const pathEvent = keyEvent('Backspace', { metaKey: true })
+    const pathSendData = vi.fn()
+
+    expect(
+      handleTerminalShortcutKeydown(pathEvent, pathSendData, false, () => 'ls /Users/a/b')
+    ).toBe(true)
+    expect(pathSendData).toHaveBeenCalledWith('\x7f'.repeat(11))
+
+    const nonPathEvent = keyEvent('Backspace', { metaKey: true })
+    const nonPathSendData = vi.fn()
+
+    expect(
+      handleTerminalShortcutKeydown(nonPathEvent, nonPathSendData, false, () => 'echo hello')
+    ).toBe(true)
+    expect(nonPathSendData).toHaveBeenCalledWith('\x15')
+
+    const noGetterEvent = keyEvent('Backspace', { metaKey: true })
+    const noGetterSendData = vi.fn()
+
+    expect(handleTerminalShortcutKeydown(noGetterEvent, noGetterSendData)).toBe(true)
+    expect(noGetterSendData).toHaveBeenCalledWith('\x15')
   })
 
   it('keeps terminal Meta shortcuts explicit unless Windows Alt-as-Cmd is active', () => {

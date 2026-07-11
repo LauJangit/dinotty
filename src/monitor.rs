@@ -6,7 +6,8 @@
 )]
 use axum::{
     extract::ws::{Message, WebSocket},
-    extract::{State, WebSocketUpgrade},
+    extract::{ConnectInfo, State, WebSocketUpgrade},
+    http::StatusCode,
     response::IntoResponse,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -112,6 +113,15 @@ impl MonitorState {
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel::<String>(8);
         Self { history: Arc::new(Mutex::new(VecDeque::with_capacity(MAX_HISTORY))), tx }
+    }
+
+    #[must_use]
+    pub fn subscribe(&self) -> broadcast::Receiver<String> {
+        self.tx.subscribe()
+    }
+
+    pub async fn snapshot_history(&self) -> Vec<MonitorData> {
+        self.history.lock().await.iter().cloned().collect()
     }
 
     pub fn start_collector(self) {
@@ -360,9 +370,20 @@ async fn collect_gpu() -> Option<Vec<GpuData>> {
 #[allow(clippy::unused_async)]
 pub async fn ws_monitor_handler(
     State(state): State<MonitorState>,
+    State(settings): State<crate::settings::SettingsState>,
     ws: WebSocketUpgrade,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_monitor_socket(socket, state))
+    let s = settings.read().await;
+    let allowed_origins = s.auth.allowed_origins.clone();
+    let trusted_proxies = s.auth.trusted_proxies.clone();
+    drop(s);
+    let real_ip = crate::auth::real_client_ip(&headers, addr.ip(), &trusted_proxies);
+    if !crate::auth::check_ws_origin(&headers, &allowed_origins, real_ip, &trusted_proxies) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    ws.on_upgrade(move |socket| handle_monitor_socket(socket, state)).into_response()
 }
 
 async fn handle_monitor_socket(socket: WebSocket, state: MonitorState) {

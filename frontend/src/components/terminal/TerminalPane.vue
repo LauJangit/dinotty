@@ -9,6 +9,41 @@
     @touchcancel="onTouchCancel"
   >
     <div ref="wrapperRef" class="terminal-pane"></div>
+    <button
+      v-if="scrollPos && !scrollPos.state.isAltScreen && !scrollPos.state.atBottom"
+      class="back-to-bottom-pill"
+      type="button"
+      aria-label="Scroll to bottom"
+      tabindex="-1"
+      @click.stop="scrollToBottom"
+      @mousedown.prevent
+      @touchstart.stop
+    >
+      <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <div
+      v-if="showScrollbar"
+      ref="scrollbarTrackRef"
+      class="terminal-scrollbar"
+      :class="{ 'is-active': scrollbarVisible }"
+      :style="{ '--terminal-scrollbar-width': scrollbarWidthPx }"
+    >
+      <div
+        ref="scrollbarThumbRef"
+        class="terminal-scrollbar-thumb"
+        :style="{ height: `${thumbHeightPct}%`, top: `${thumbTopPct}%` }"
+        @touchstart.stop.prevent="onScrollbarTouchStart"
+        @touchmove.stop.prevent="onScrollbarTouchMove"
+        @touchend.stop="onScrollbarTouchEnd"
+        @touchcancel.stop="onScrollbarTouchEnd"
+      ></div>
+    </div>
+    <div v-if="uploadInProgress" class="terminal-upload-progress">
+      <div class="terminal-upload-progress-track">
+        <div class="terminal-upload-progress-fill" :style="{ width: `${uploadProgress}%` }"></div>
+      </div>
+      <span>{{ uploadProgressLabel() }}</span>
+    </div>
     <SearchBar
       v-if="searchVisible && terminal"
       :terminal="terminal"
@@ -46,14 +81,22 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, shallowRef, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import type { Terminal } from '@xterm/xterm'
 import { TerminalInstance } from '../../composables/useTerminal'
 import { copyToClipboard } from '../../utils/clipboard'
 import { readText as readClipboardText } from '@tauri-apps/plugin-clipboard-manager'
+import { isTauri } from '../../composables/useTransport'
 import SearchBar from './SearchBar.vue'
 import TerminalContextMenu from './TerminalContextMenu.vue'
 import SelectionHandles from './SelectionHandles.vue'
+import { shellEscapePath } from '../../utils/shell'
+import { POSITION, useToast } from 'vue-toastification'
+import { useI18n } from '../../composables/useI18n'
+import { formatMB, useUpload, type UploadProgress } from '../../composables/useUpload'
+import { useScrollPosition, type ScrollPositionHandle } from '../../composables/useScrollPosition'
+import { useIsMobile } from '../../composables/useIsMobile'
+import { useSettings } from '../../composables/useSettings'
 
 const props = defineProps<{
   paneId: string
@@ -78,9 +121,67 @@ const emit = defineEmits<{
 
 const wrapperRef = ref<HTMLElement>()
 const containerRef = ref<HTMLElement>()
+const scrollbarTrackRef = ref<HTMLElement>()
+const scrollbarThumbRef = ref<HTMLElement>()
+const scrollPos = shallowRef<ScrollPositionHandle | null>(null)
+const { isMobile } = useIsMobile()
+const { settings } = useSettings()
+
+// F2 — mobile-web custom scrollbar (scrollback only). Reuses the step-0 observer.
+const scrollbarVisible = ref(false)
+let scrollbarIdleTimer: ReturnType<typeof setTimeout> | null = null
+let scrollbarDragging = false
+const scrollbarWidthPx = computed(() => `${settings.text.scrollbar_width ?? 8}px`)
+
+const showScrollbar = computed(() => {
+  const h = scrollPos.value
+  if (!h) return false
+  const s = h.state
+  return isMobile.value && !s.isAltScreen && s.length > s.rows
+})
+const thumbHeightPct = computed(() => {
+  const s = scrollPos.value?.state
+  if (!s || s.length <= 0) return 100
+  return Math.max(12, (s.rows / s.length) * 100)
+})
+const thumbTopPct = computed(() => {
+  const s = scrollPos.value?.state
+  if (!s) return 0
+  return (s.viewportY / Math.max(1, s.baseY)) * (100 - thumbHeightPct.value)
+})
+
+function bumpScrollbarActivity() {
+  scrollbarVisible.value = true
+  if (scrollbarIdleTimer) clearTimeout(scrollbarIdleTimer)
+  scrollbarIdleTimer = setTimeout(() => {
+    scrollbarVisible.value = false
+  }, 1200)
+}
+
+// Reveal the bar on any position change (onScroll is unreliable, so this tracks the
+// observer's viewportY), then fade on idle.
+watch(
+  () => scrollPos.value?.state.viewportY,
+  () => {
+    if (!showScrollbar.value || scrollbarDragging) return
+    bumpScrollbarActivity()
+  }
+)
+
 let terminal: TerminalInstance | null = null
 let pendingFocus = false
+let paneAlive = true
+let insertQueue = Promise.resolve()
 const searchVisible = ref(false)
+const toast = useToast()
+const { t } = useI18n()
+const { uploadFiles, uploadErrorStatus } = useUpload()
+const uploadInProgress = ref(false)
+const uploadProgress = ref(0)
+const uploadLoaded = ref(0)
+const uploadTotal = ref(0)
+const uploadProcessing = ref(false)
+let activeUploads = 0
 
 // Context menu state
 const menuVisible = ref(false)
@@ -110,6 +211,46 @@ let selWordStartCol = -1
 let selWordEndCol = -1
 let dragHandle: 'start' | 'end' | null = null
 let selectionTouched = false
+
+function beginUploadProgress() {
+  activeUploads += 1
+  uploadInProgress.value = true
+  uploadProcessing.value = false
+  uploadProgress.value = 0
+  uploadLoaded.value = 0
+  uploadTotal.value = 0
+}
+
+function uploadProgressLabel() {
+  if (uploadProcessing.value) return t('settings.uploads.processing')
+  return `${formatMB(uploadLoaded.value)} / ${formatMB(uploadTotal.value)} MB`
+}
+
+function updateUploadProgress(p: UploadProgress) {
+  uploadLoaded.value = p.loaded
+  uploadTotal.value = p.total
+  const pct = Math.max(0, Math.min(100, Math.round((p.loaded / p.total) * 100)))
+  uploadProgress.value = pct
+  uploadProcessing.value = pct >= 100
+}
+
+function finishUploadProgress() {
+  activeUploads = Math.max(0, activeUploads - 1)
+  if (activeUploads === 0) {
+    uploadInProgress.value = false
+    uploadProcessing.value = false
+    uploadProgress.value = 0
+    uploadLoaded.value = 0
+    uploadTotal.value = 0
+  }
+}
+
+function uploadErrorMessage(err: unknown) {
+  const status = uploadErrorStatus(err)
+  if (status === 413) return t('mobileKb.uploadTooLarge')
+  if (status === 507) return t('settings.uploads.toastDiskFull')
+  return t('mobileKb.uploadFailed')
+}
 
 // Edge auto-scroll during selection drag (A4) — repeating scroll while the
 // finger is held in the top/bottom edge band, so selection can extend past the
@@ -165,6 +306,49 @@ function toggleSearch() {
   searchVisible.value = !searchVisible.value
 }
 
+function scrollToBottom() {
+  terminal?.xterm?.scrollToBottom()
+  scrollPos.value?.kick()
+}
+
+// F2 thumb drag → scrollToLine. Maps the thumb-center under the finger to a buffer line.
+// Measures the ACTUAL rendered track + thumb rects so the drag matches what the user sees
+// (the track is inset by top/bottom padding, and the thumb has a min-height clamp + border).
+function scrollbarLineFromClientY(clientY: number): number | null {
+  const track = scrollbarTrackRef.value
+  const thumb = scrollbarThumbRef.value
+  const state = scrollPos.value?.state
+  if (!track || !thumb || !state) return null
+  const trackRect = track.getBoundingClientRect()
+  const thumbH = thumb.getBoundingClientRect().height
+  const range = Math.max(1, trackRect.height - thumbH)
+  const thumbTop = clientY - trackRect.top - thumbH / 2
+  const ratio = Math.min(1, Math.max(0, thumbTop / range))
+  return Math.round(ratio * state.baseY)
+}
+
+function onScrollbarDragTo(clientY: number) {
+  const line = scrollbarLineFromClientY(clientY)
+  if (line === null) return
+  terminal?.xterm?.scrollToLine(line)
+  scrollPos.value?.kick()
+  scrollbarVisible.value = true
+  if (scrollbarIdleTimer) clearTimeout(scrollbarIdleTimer)
+}
+
+function onScrollbarTouchStart(e: TouchEvent) {
+  scrollbarDragging = true
+  onScrollbarDragTo(e.touches[0].clientY)
+}
+function onScrollbarTouchMove(e: TouchEvent) {
+  if (!scrollbarDragging) return
+  onScrollbarDragTo(e.touches[0].clientY)
+}
+function onScrollbarTouchEnd() {
+  scrollbarDragging = false
+  bumpScrollbarActivity()
+}
+
 function adjustFontSize(delta: number) {
   terminal?.adjustFontSize(delta)
 }
@@ -196,16 +380,20 @@ function onMenuCopy() {
 }
 
 async function onMenuPaste() {
-  if (!terminal?.xterm) return
-  try {
-    const text = await readClipboardText()
-    if (text) terminal.xterm.paste(text)
-  } catch {
-    // Fallback: focus xterm textarea and try execCommand
-    const ta = document.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null
-    if (!ta) return
-    ta.focus()
-    try { document.execCommand('paste') } catch {}
+  if (!terminal) return
+  let text: string | null = null
+  if (isTauri()) {
+    try { text = await readClipboardText() } catch {}
+  }
+  if (!text) {
+    try { text = await navigator.clipboard.readText() } catch {}
+  }
+  if (!text) return
+  terminal.focus()
+  if (terminal.xterm) {
+    terminal.xterm.paste(text)
+  } else {
+    terminal.pasteText(text)
   }
 }
 
@@ -773,14 +961,16 @@ function onHandleDragEnd(canceled = false) {
 
 onMounted(() => {
   terminal = new TerminalInstance(props.paneId)
-  if (props.sshHost) terminal.sshHost = props.sshHost
-  terminal.onTitleChange = (tv) => emit('titleChange', tv)
-  terminal.onShellInfo = (s) => emit('shellInfo', s)
-  terminal.onConnect = () => emit('connect')
-  terminal.onDisconnect = () => emit('disconnect')
-  terminal.onInput = (data) => emit('input', data)
-  terminal.onReconnect = () => emit('reconnect')
-  terminal.onFileClick = (path, x, y) => {
+  paneAlive = true
+  const self = terminal
+  if (props.sshHost) self.sshHost = props.sshHost
+  self.onTitleChange = (tv) => emit('titleChange', tv)
+  self.onShellInfo = (s) => emit('shellInfo', s)
+  self.onConnect = () => emit('connect')
+  self.onDisconnect = () => emit('disconnect')
+  self.onInput = (data) => emit('input', data)
+  self.onReconnect = () => emit('reconnect')
+  self.onFileClick = (path, x, y) => {
     emit('linkActivate')
     linkType.value = 'file'
     linkTarget.value = path
@@ -791,7 +981,7 @@ onMounted(() => {
     menuSelectedText.value = ''
     menuVisible.value = true
   }
-  terminal.onPreviewLink = (url, x, y) => {
+  self.onPreviewLink = (url, x, y) => {
     emit('linkActivate')
     linkType.value = 'link'
     linkTarget.value = url
@@ -802,10 +992,43 @@ onMounted(() => {
     menuSelectedText.value = ''
     menuVisible.value = true
   }
+  self.onFileUpload = async (files) => {
+    // Attach the settle handlers synchronously so a fast-rejecting upload can never
+    // surface as an unhandled rejection while an earlier insert is still queued.
+    beginUploadProgress()
+    const uploadResult = uploadFiles(files, {
+      synthesizeNames: true,
+      onProgress: updateUploadProgress,
+    })
+      .then(
+        (data) => ({ data }),
+        (err) => ({ err })
+      )
+      .finally(finishUploadProgress)
+    const doInsert = async () => {
+      try {
+        const result = await uploadResult
+        if ('err' in result) throw result.err
+        const data = result.data
+        if (!paneAlive) return
+        const saved = data.saved ?? []
+        if (saved.length) self.sendData(saved.map(shellEscapePath).join(' ') + ' ', true)
+        window.dispatchEvent(new CustomEvent('dinotty-upload-status', { detail: data }))
+        toast.success(t('mobileKb.uploadDone'), { position: POSITION.BOTTOM_CENTER })
+      } catch (err) {
+        if (!paneAlive) return
+        toast.error(uploadErrorMessage(err), { position: POSITION.BOTTOM_CENTER })
+      }
+    }
+    const insertTurn = insertQueue.then(() => doInsert()).catch(() => undefined)
+    insertQueue = insertTurn
+    await insertTurn
+  }
 
   requestAnimationFrame(() => {
     if (wrapperRef.value) {
       terminal!.attach(wrapperRef.value)
+      if (terminal!.xterm) scrollPos.value = useScrollPosition(terminal!.xterm)
       if (pendingFocus) {
         pendingFocus = false
         terminal!.focus()
@@ -815,7 +1038,14 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  paneAlive = false
   stopAutoScroll()
+  scrollPos.value?.dispose()
+  scrollPos.value = null
+  if (scrollbarIdleTimer) {
+    clearTimeout(scrollbarIdleTimer)
+    scrollbarIdleTimer = null
+  }
   terminal?.destroy()
   terminal = null
 })
@@ -834,5 +1064,95 @@ defineExpose({ getTerminal, focus, blur, fit, sendData, setOutputListener, toggl
   width: 100%;
   height: 100%;
   overflow: hidden;
+}
+
+.terminal-upload-progress {
+  position: fixed;
+  right: 16px;
+  bottom: 20vh;
+  z-index: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 180px;
+  padding: 7px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  background: rgba(22, 22, 24, 0.92);
+  color: #d8d8d8;
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.terminal-upload-progress-track {
+  flex: 1;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.terminal-upload-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: #4da3ff;
+  transition: width 0.16s ease;
+}
+
+.back-to-bottom-pill {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 5;
+  pointer-events: auto;
+  background: rgba(22, 22, 24, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #d8d8d8;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.back-to-bottom-pill:hover {
+  background: rgba(38, 38, 42, 0.95);
+}
+
+.terminal-scrollbar {
+  position: absolute;
+  top: 4px;
+  right: 2px;
+  bottom: 4px;
+  width: var(--terminal-scrollbar-width, 8px);
+  z-index: 5;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.terminal-scrollbar.is-active {
+  opacity: 1;
+}
+
+/* Rail never captures touches (would swallow terminal scroll / trigger long-press on the
+   dead strip); only the visible thumb is targetable. */
+.terminal-scrollbar-thumb {
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  min-height: 24px;
+  border-radius: 999px;
+  background: rgba(180, 180, 190, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  pointer-events: none;
+}
+
+.terminal-scrollbar.is-active .terminal-scrollbar-thumb {
+  pointer-events: auto;
 }
 </style>

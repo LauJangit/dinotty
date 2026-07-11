@@ -1,6 +1,9 @@
 <template>
   <SetupPage v-if="!authenticated && needsSetup" @success="onLoginSuccess" />
-  <LoginPage v-else-if="!authenticated" @success="onLoginSuccess" />
+  <LoginPage v-else-if="!authenticated && authProbe === 'done'" @success="onLoginSuccess" />
+  <div v-else-if="!authenticated" class="auth-probe-screen">
+    <RefreshCw :size="20" class="auth-probe-spinner" />
+  </div>
   <div v-else id="app-root">
     <TabBar
       :tabs="visibleTabList"
@@ -42,6 +45,15 @@
           @touchend.prevent="openPreview"
         >
           <Monitor :size="16" />
+        </button>
+        <button
+          type="button"
+          class="tab-bar-icon-btn"
+          :title="t('app.reload')"
+          @click="reloadApp"
+          @touchend.prevent="reloadApp"
+        >
+          <RefreshCw :size="16" />
         </button>
         <button
           type="button"
@@ -243,7 +255,8 @@ import {
   getApiBase,
   checkTokenConfigured,
   fetchAutoToken,
-  setAuthToken,
+  validateToken,
+  apiUrl,
 } from './composables/apiBase'
 import { isTauri, tauriInvoke } from './composables/useTransport'
 import { isTouchDevice, setActivePaneId } from './composables/useTerminal'
@@ -266,7 +279,7 @@ import {
   apiActivatePane,
   apiListTabs,
 } from './composables/useTabApi'
-import { Settings, Bell, Monitor, Plus, X, Star, AppWindow, Radar } from 'lucide-vue-next'
+import { Settings, Bell, Monitor, Plus, X, Star, AppWindow, Radar, RefreshCw } from 'lucide-vue-next'
 import WorkspaceOverview from './components/overview/WorkspaceOverview.vue'
 import { refreshPluginPreview, invalidatePluginPreview } from './composables/useTabPreview'
 import { useIsMobile } from './composables/useIsMobile'
@@ -278,6 +291,7 @@ import { storeToRefs } from 'pinia'
 import { useSessionStore } from './stores/sessionStore'
 import { useUiStore } from './stores/uiStore'
 import { useSettingsStore } from './stores/settingsStore'
+import { shellEscapePath } from './utils/shell'
 
 // ── Stores ──────────────────────────────────────────────────────
 const session = useSessionStore()
@@ -285,7 +299,7 @@ const { tabs, activePaneId, tabList, activeTabType, activeTab, isBroadcastActive
   storeToRefs(session)
 
 const ui = useUiStore()
-const { syncConnected, kbVisible, settingsOpen, authenticated, needsSetup } = storeToRefs(ui)
+const { syncConnected, kbVisible, settingsOpen, authenticated, authProbe, needsSetup } = storeToRefs(ui)
 
 const settingsStore = useSettingsStore()
 const appSettings = settingsStore.settings
@@ -389,10 +403,10 @@ async function onOverviewNewTab(cwd?: string) {
   await newTab(cwd)
 }
 
-async function onOverviewNewTabSsh(connectionId: string) {
+async function onOverviewNewTabSsh(connectionId: string, initialCwd?: string) {
   overviewOpen.value = false
   try {
-    const result = await apiCreateSshTab(connectionId)
+    const result = await apiCreateSshTab(connectionId, initialCwd)
     const existing = tabs.value.find((t) => t.type === 'terminal' && t.paneId === result.tab_id)
     if (existing) {
       activePaneId.value = result.tab_id
@@ -635,6 +649,13 @@ const DEFAULT_PREVIEW_URL = ''
 
 async function newTab(cwd?: string) {
   try {
+    // Remote workspace: open an SSH terminal and cd into the workspace's remote path.
+    const activeWs = workspaces.value.find((w) => w.id === activeWorkspaceId.value)
+    if (activeWs?.connection_id) {
+      const result = await apiCreateSshTab(activeWs.connection_id, activeWs.path)
+      await onSshConnect(result)
+      return
+    }
     const effectiveCwd = cwd ?? activeWorkspacePath.value
     const result = await apiCreateTab(effectiveCwd)
     // Dedup: broadcast_sync echoes back to sender — tab_created handler may
@@ -877,6 +898,10 @@ const isRemote = computed(() => {
   return findLeaf(tab.layout, tab.activePaneId)?.shell_type === 'ssh'
 })
 
+function reloadApp() {
+  window.location.reload()
+}
+
 function openPreview() {
   const tabId = activePaneId.value
   if (!tabId) return
@@ -935,10 +960,6 @@ async function onLoginSuccess() {
   void loadAll()
   void syncWs.connectSyncWS()
   initMonitorHistory()
-}
-
-function shellEscapePath(path: string): string {
-  return /[\s'"\\()&;|<>$!`{}[\]#?*~]/.test(path) ? `'${path.replace(/'/g, "'\\''")}'` : path
 }
 
 function onTerminalInsertPath(e: Event) {
@@ -1375,8 +1396,10 @@ onMounted(async () => {
     naturalVH = window.visualViewport.height
     window.visualViewport.addEventListener('resize', onViewportResize)
   }
-  if (authenticated.value) {
+  try {
+    if (authenticated.value) {
     await getApiBase()
+    await settingsStore.load()
     void syncWs.connectSyncWS()
     initMonitorHistory()
     void loadAll()
@@ -1434,20 +1457,49 @@ onMounted(async () => {
       }
     }, 3000)
   } else {
-    // No local token — check if server has one configured
+    // Not yet authenticated
     await getApiBase()
     const { configured, serverMode } = await checkTokenConfigured()
     if (!configured) {
       // First-time setup: show setup page (server mode only)
       needsSetup.value = true
     } else if (!serverMode) {
-      // Desktop mode with auto-generated token — fetch and authenticate
-      const autoToken = await fetchAutoToken()
-      if (autoToken) {
-        setAuthToken(autoToken)
+      // Desktop mode: honor an existing cookie session first (e.g. LAN
+      // access after manual login). Fall back to loopback auto-token only
+      // when the cookie is absent/invalid.
+      let cookieOk = false
+      try {
+        const res = await fetch(apiUrl('/api/settings'), { credentials: 'include' })
+        cookieOk = res.ok
+      } catch {
+        // network error - fall through to auto-token
+      }
+      if (cookieOk) {
         await onLoginSuccess()
+      } else {
+        const autoToken = await fetchAutoToken()
+        if (autoToken) {
+          const r = await validateToken(autoToken)
+          if (r.ok) {
+            await onLoginSuccess()
+          }
+        }
+      }
+    } else {
+      // Server mode: check if session cookie is still valid
+      try {
+        const res = await fetch(apiUrl('/api/settings'), { credentials: 'include' })
+        if (res.ok) {
+          await onLoginSuccess()
+        }
+        // else: show LoginPage (default state)
+      } catch {
+        // Network error — show LoginPage
       }
     }
+  }
+  } finally {
+    ui.markAuthProbeDone()
   }
 })
 
@@ -1469,6 +1521,22 @@ onBeforeUnmount(() => {
 </script>
 
 <style>
+.auth-probe-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  background: var(--bg, #1a1a1a);
+}
+.auth-probe-spinner {
+  color: var(--fg-muted, #888);
+  animation: auth-probe-spin 1s linear infinite;
+}
+@keyframes auth-probe-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
 #app-root {
   display: flex;
   flex-direction: column;

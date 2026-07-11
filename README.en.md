@@ -117,7 +117,7 @@ Terminal-based coding agents (Claude Code, opencode, Codex, OpenClaw, etc.) are 
 | Command bookmarks | ✅ | ❌ | ❌ | ❌ |
 | Plugin system | ✅ | ❌ | ❌ | ❌ |
 | SSH remote + SFTP | ✅ | ❌ | ❌ | ❌ |
-| Token auth | ✅ | ✅ | ❌ | ✅ |
+| Cookie Session + Token auth | ✅ | ✅ | ❌ | ✅ |
 
 Other web terminals are thin WebSocket-to-PTY pipes. Dinotty runs a **full virtual terminal emulator on the server**, enabling session recovery and screen snapshots. Combined with the built-in file/web browser, it provides a self-contained environment where coding agents work and users verify results.
 
