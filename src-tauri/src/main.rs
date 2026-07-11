@@ -1,3 +1,5 @@
+#![cfg_attr(all(not(debug_assertions), windows), windows_subsystem = "windows")]
+
 use base64::Engine;
 use dinotty_server::pty;
 use dinotty_server::session::{SessionManager, SessionStatus, SyncMsg};
