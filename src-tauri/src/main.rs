@@ -311,6 +311,30 @@ async fn pick_upload_dir() -> Option<String> {
 }
 
 #[tauri::command]
+async fn pick_workspace_dir(base: Option<String>) -> Option<String> {
+    let mut dialog = rfd::AsyncFileDialog::new();
+    let resolved = base
+        .and_then(|base| {
+            if let Some(rest) = base.strip_prefix("~/") {
+                std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(rest))
+            } else if base == "~" {
+                std::env::var_os("HOME").map(std::path::PathBuf::from)
+            } else {
+                Some(std::path::PathBuf::from(base))
+            }
+        })
+        .and_then(|path| path.canonicalize().ok())
+        .filter(|path| path.is_dir())
+        .or_else(|| {
+            std::env::var_os("HOME").map(std::path::PathBuf::from).filter(|path| path.is_dir())
+        });
+    if let Some(dir) = resolved {
+        dialog = dialog.set_directory(dir);
+    }
+    dialog.pick_folder().await.map(|folder| folder.path().to_string_lossy().into_owned())
+}
+
+#[tauri::command]
 async fn tauri_upload(
     pane_id: String,
     dir: String,
@@ -502,6 +526,7 @@ fn main() {
             tauri_read_file,
             tauri_download,
             pick_upload_dir,
+            pick_workspace_dir,
             close_window,
             toggle_window,
         ])

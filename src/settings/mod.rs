@@ -43,6 +43,8 @@ pub struct Settings {
     pub action_keyboard: Option<ActionKeyboardConfig>,
     #[serde(default = "default_upload_dir")]
     pub upload_dir: String,
+    #[serde(default)]
+    pub default_base_dir: Option<String>,
     #[serde(default = "default_upload_cap_mb")]
     pub upload_cap_mb: u64,
     #[serde(default = "default_upload_cap_count")]
@@ -641,6 +643,7 @@ impl Default for Settings {
             recent_urls: vec![],
             action_keyboard: None,
             upload_dir: default_upload_dir(),
+            default_base_dir: None,
             upload_cap_mb: default_upload_cap_mb(),
             upload_cap_count: default_upload_cap_count(),
             upload_file_cap_mb: 0,
@@ -712,7 +715,11 @@ pub fn load_settings() -> Settings {
         match std::fs::read_to_string(&path) {
             Ok(data) => match serde_json::from_str::<Settings>(&data) {
                 Ok(mut settings) => {
-                    let migrated = migrate_settings(&mut settings);
+                    let mut migrated = migrate_settings(&mut settings);
+                    if settings.upload_dir.trim().is_empty() {
+                        settings.upload_dir = default_upload_dir();
+                        migrated = true;
+                    }
                     clamp_text_config(&mut settings.text);
                     if migrated {
                         if let Err(e) = save_settings(&settings) {

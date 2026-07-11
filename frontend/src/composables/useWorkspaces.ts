@@ -26,7 +26,7 @@ export function useWorkspaces() {
   async function createWorkspace(path: string, name?: string, connectionId?: string) {
     const ws = await apiCreateWorkspace(path, name, connectionId)
     // Optimistic add; sync will reconcile if needed
-    if (!workspaces.value.find((w) => w.id === ws.id)) {
+    if (ws && ws.id && !workspaces.value.find((w) => w.id === ws.id)) {
       workspaces.value.push(ws)
     }
     return ws

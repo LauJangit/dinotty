@@ -84,7 +84,8 @@
       v-if="!isEdit"
       :visible="showPicker"
       pane-id=""
-      root="~"
+      :root="pickerRoot"
+      free
       @update:visible="showPicker = $event"
       @select="onPickerSelect"
     />
@@ -97,6 +98,7 @@ import { FolderOpen } from 'lucide-vue-next'
 import { useI18n } from '../../composables/useI18n'
 import { useWorkspaces } from '../../composables/useWorkspaces'
 import { useSettings } from '../../composables/useSettings'
+import { isTauri, tauriInvoke } from '../../composables/useTransport'
 import type { Workspace } from '../../types/workspace'
 import FilePickerModal from '../preview/FilePickerModal.vue'
 
@@ -105,6 +107,7 @@ const { createWorkspace, updateWorkspace } = useWorkspaces()
 const { settings } = useSettings()
 
 const sshProfiles = computed(() => settings.ssh_profiles ?? [])
+const pickerRoot = computed(() => settings.default_base_dir?.trim() || '/')
 
 const props = defineProps<{
   visible: boolean
@@ -153,7 +156,16 @@ watch(() => props.visible, (v) => {
   }
 })
 
-function toggleBrowser() {
+async function toggleBrowser() {
+  if (isTauri()) {
+    try {
+      const selected = await tauriInvoke('pick_workspace_dir', { base: pickerRoot.value }) as string | null
+      if (selected) onPickerSelect(selected)
+    } catch (e: any) {
+      error.value = e?.message || 'Failed'
+    }
+    return
+  }
   showPicker.value = true
 }
 

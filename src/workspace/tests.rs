@@ -322,3 +322,29 @@ async fn upload_io_err_keeps_non_disk_full_as_500() {
     let json = response_json(response).await;
     assert!(json["error"].as_str().is_some_and(|message| !message.is_empty()));
 }
+
+#[tokio::test]
+async fn free_browse_rejects_sensitive_dir() {
+    // Regression: browsing a directly-named system dir must be rejected even on
+    // macOS, where canonicalize rewrites /etc -> /private/etc; the raw
+    // pre-canonicalize sensitivity check is the reliable catch.
+    let manager = Arc::new(SessionManager::new());
+    let q =
+        WorkspaceListQuery { pane_id: String::new(), path: "/etc".into(), root: None, free: true };
+    let resp = workspace_list(State(manager), axum::extract::Query(q)).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn free_browse_allows_normal_dir() {
+    let tmp = TempDir::new().unwrap();
+    let manager = Arc::new(SessionManager::new());
+    let q = WorkspaceListQuery {
+        pane_id: String::new(),
+        path: tmp.path().to_string_lossy().into_owned(),
+        root: None,
+        free: true,
+    };
+    let resp = workspace_list(State(manager), axum::extract::Query(q)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}
