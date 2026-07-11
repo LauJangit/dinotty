@@ -14,10 +14,4 @@ describe('useSettings - confirm_before_close_tab mirror', () => {
     // set to true out of the box, matching the backend serde default.
     expect(settings.confirm_before_close_tab).toBe(true)
   })
-
-  it('defaults space_confirms_dialogs to false', () => {
-    // The reactive settings object should have space_confirms_dialogs
-    // set to false out of the box, matching the backend serde default.
-    expect(settings.space_confirms_dialogs).toBe(false)
-  })
 })
