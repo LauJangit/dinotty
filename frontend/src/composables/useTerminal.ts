@@ -819,16 +819,6 @@ export class TerminalInstance {
     }
     this._writing = true
 
-    // Snapshot whether the viewport is at the bottom BEFORE writing this batch.
-    // During burst output, the rAF yields between batches let pending wheel events
-    // (e.g. macOS trackpad inertia) fire. Even a 1-px upward delta sets
-    // xterm.js's isUserScrolling=true, which prevents ydisp from following ybase
-    // in subsequent write() calls — the viewport gets stuck above the bottom.
-    // By recording the at-bottom state here and restoring it after the batch, we
-    // keep the viewport pinned to the bottom when the user hasn't intentionally
-    // scrolled away.
-    const wasAtBottom = this._isAtBottom()
-
     // Process up to SYNC_BATCH_LIMIT chunks per frame, then yield.
     // This prevents the xterm.write() callback chain from monopolizing
     // the main thread and starving keyboard input events.
@@ -838,9 +828,6 @@ export class TerminalInstance {
 
     const processNext = () => {
       if (!this.xterm || this._writeQueue.length === 0 || processed >= SYNC_BATCH_LIMIT) {
-        if (wasAtBottom && this.xterm) {
-          this.xterm.scrollToBottom()
-        }
         if (this._writeQueue.length > 0) {
           // More data to process — yield to the browser, then continue
           requestAnimationFrame(() => this._processWriteQueue())
@@ -862,12 +849,6 @@ export class TerminalInstance {
     }
 
     processNext()
-  }
-
-  private _isAtBottom(): boolean {
-    if (!this.xterm) return true
-    const buf = this.xterm.buffer.active
-    return buf.viewportY >= buf.baseY
   }
 
   private _scheduleReconnect() {
