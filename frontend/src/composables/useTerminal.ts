@@ -6,9 +6,16 @@ import { SearchAddon } from '@xterm/addon-search'
 import type { ClientMsg, ServerMsg } from '../types/protocol'
 import { isTauri, createTransport, type Transport } from './useTransport'
 import { onThemeChange, saveSettings, settings, onTextChange } from './useSettings'
+import {
+  computeWheelPlan,
+  type TrackingWheelState,
+  type WheelPlanInput,
+} from './computeWheelPlan'
 import { wsUrlWithToken } from './apiBase'
 import { terminalKeyBindingDefs, useKeybindings, type KeyBinding } from './useKeybindings'
 import { isWindowsClient } from '../utils/clientPlatform'
+import { trailingPathDeleteLen } from '../utils/shell'
+import { setupTouchScroll } from '../utils/touchScroll'
 
 export function isTouchDevice(): boolean {
   return 'ontouchstart' in window || navigator.maxTouchPoints > 0
@@ -44,7 +51,7 @@ export function isDuplicateOnData(
   data: string,
   prev: string,
   prevAt: number,
-  now: number,
+  now: number
 ): boolean {
   if (prev === '') return false
   if (data !== prev) return false
@@ -56,12 +63,19 @@ export function isDuplicateOnData(
 //   ASCII punct · General Punctuation (— – ' ' " " …) · CJK Symbols & Punctuation (、。《》「」『』【】〈〉)
 //   · Fullwidth Forms punct subranges. Excludes fullwidth letters/digits and U+3000 ideographic space.
 const SHIFT_SYMBOL_RANGES: ReadonlyArray<readonly [number, number]> = [
-  [0x21, 0x2F], [0x3A, 0x40], [0x5B, 0x60], [0x7B, 0x7E],
-  [0x2010, 0x2027], [0x3001, 0x301F],
-  [0xFF01, 0xFF0F], [0xFF1A, 0xFF20], [0xFF3B, 0xFF40], [0xFF5B, 0xFF5E],
+  [0x21, 0x2f],
+  [0x3a, 0x40],
+  [0x5b, 0x60],
+  [0x7b, 0x7e],
+  [0x2010, 0x2027],
+  [0x3001, 0x301f],
+  [0xff01, 0xff0f],
+  [0xff1a, 0xff20],
+  [0xff3b, 0xff40],
+  [0xff5b, 0xff5e],
 ]
 // Standalone Shift+key punctuation outside any range: ¥(U+00A5 macOS pinyin shift+4) ·(U+00B7) ￥(U+FFE5).
-const SHIFT_SYMBOL_SINGLETONS = new Set([0x00A5, 0x00B7, 0xFFE5])
+const SHIFT_SYMBOL_SINGLETONS = new Set([0x00a5, 0x00b7, 0xffe5])
 
 // Single char produced by Shift+key that is a symbol/punctuation (NOT a letter/digit/space).
 // Excludes pinyin preedit letters (n,i,h,...) and digits, so the rescue can never touch CJK composition.
@@ -73,11 +87,17 @@ function isShiftSymbolChar(data: string): boolean {
   }
   if (data.length !== 1) return false
   const cp = data.charCodeAt(0)
-  return SHIFT_SYMBOL_RANGES.some(([lo, hi]) => cp >= lo && cp <= hi) || SHIFT_SYMBOL_SINGLETONS.has(cp)
+  return (
+    SHIFT_SYMBOL_RANGES.some(([lo, hi]) => cp >= lo && cp <= hi) || SHIFT_SYMBOL_SINGLETONS.has(cp)
+  )
 }
 function stripImeConfirmSpace(data: string): string {
   // Candidate-confirm space leaks as <sym><space> (incl. ——/…… + space); strip the trailing ws.
-  if (data.length >= 2 && /\s/.test(data[data.length - 1]) && isShiftSymbolChar(data.slice(0, -1))) {
+  if (
+    data.length >= 2 &&
+    /\s/.test(data[data.length - 1]) &&
+    isShiftSymbolChar(data.slice(0, -1))
+  ) {
     return data.slice(0, -1)
   }
   return data
@@ -97,23 +117,31 @@ export function isSinglePrintableGrapheme(data: string, allowSpace = false): boo
   return cp <= 0x7e || (cp >= 0xff01 && cp <= 0xff5e)
 }
 
-export function terminalKeybindingMatches(e: KeyboardEvent, binding: KeyBinding, virtualMeta = false): boolean {
+export function terminalKeybindingMatches(
+  e: KeyboardEvent,
+  binding: KeyBinding,
+  virtualMeta = false
+): boolean {
   const effMeta = e.metaKey || virtualMeta
   const effAlt = virtualMeta ? false : e.altKey
-  return e.key.toLowerCase() === binding.key.toLowerCase()
-    && e.shiftKey === !!binding.shift
-    && effMeta === !!binding.meta
-    && e.ctrlKey === !!binding.ctrl
-    && effAlt === !!binding.alt
+  return (
+    e.key.toLowerCase() === binding.key.toLowerCase() &&
+    e.shiftKey === !!binding.shift &&
+    effMeta === !!binding.meta &&
+    e.ctrlKey === !!binding.ctrl &&
+    effAlt === !!binding.alt
+  )
 }
 
 export function handleTerminalShortcutKeydown(
   e: KeyboardEvent,
   sendData: (data: string) => void,
   virtualMeta = false,
+  getLineBeforeCursor?: () => string | null
 ): boolean {
   const key = e.key.toLowerCase()
-  if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && (key === 'c' || key === 'v')) return false
+  if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && (key === 'c' || key === 'v'))
+    return false
 
   const { getBinding } = useKeybindings()
   for (const def of terminalKeyBindingDefs) {
@@ -122,6 +150,16 @@ export function handleTerminalShortcutKeydown(
     if (terminalKeybindingMatches(e, getBinding(def.id), virtualMeta)) {
       e.preventDefault()
       e.stopPropagation()
+      if (def.id === 'term.deleteToLineStart' && getLineBeforeCursor) {
+        const line = getLineBeforeCursor()
+        if (line !== null) {
+          const len = trailingPathDeleteLen(line)
+          if (len > 0) {
+            sendData('\x7f'.repeat(len))
+            return true
+          }
+        }
+      }
       sendData(sequence)
       return true
     }
@@ -178,7 +216,11 @@ export class TerminalInstance {
   private _resizeDebounce: number = 0
   private _lastInputData = ''
   private _lastInputTime = 0
-  private _symCredits: Array<{ data: string, src: 0 | 1, at: number }> = []
+  private _wheelBypass = false
+  private _lastWheelTime = 0
+  private _trackingWheelState: TrackingWheelState | null = null
+  private _wheelRowHeightWarned = false
+  private _symCredits: Array<{ data: string; src: 0 | 1; at: number }> = []
   private _writeQueue: string[] = []
   private _writing = false
   touchMoved = false
@@ -188,6 +230,7 @@ export class TerminalInstance {
   private _visibilityHandler: (() => void) | null = null
   private _dragDropCleanup: (() => void) | null = null
   private _initialResizeTimer: ReturnType<typeof setInterval> | null = null
+  onFileUpload?: (files: File[]) => void
 
   onTitleChange: ((title: string) => void) | null = null
   onShellInfo: ((shell: string) => void) | null = null
@@ -268,6 +311,22 @@ export class TerminalInstance {
       if (e.type === 'keydown') {
         if (e.isComposing || (e as any).keyCode === 229 || e.key === 'Process') return true
 
+        // Web only: let the OS-native Ctrl+V fire so the capture-phase paste listener
+        // (_setupPasteUpload) receives clipboardData files/images for upload; plain text
+        // still pastes via xterm's own paste handler. Returning false makes xterm skip
+        // sending the control char and skip preventDefault, so the browser dispatches the native paste
+        // event. The native (Tauri) build has its own clipboard path and is excluded.
+        if (
+          !isTauri() &&
+          e.ctrlKey &&
+          !e.shiftKey &&
+          !e.altKey &&
+          !e.metaKey &&
+          e.code === 'KeyV'
+        ) {
+          return false
+        }
+
         if (e.ctrlKey && e.shiftKey) {
           if (e.key === 'C' && xt.hasSelection()) {
             navigator.clipboard.writeText(xt.getSelection())
@@ -275,9 +334,12 @@ export class TerminalInstance {
             return false
           }
           if (e.key === 'V') {
-            navigator.clipboard.readText().then((text) => {
-              if (text) xt.paste(text)
-            }).catch(() => {})
+            navigator.clipboard
+              .readText()
+              .then((text) => {
+                if (text) xt.paste(text)
+              })
+              .catch(() => {})
             e.preventDefault()
             return false
           }
@@ -292,16 +354,34 @@ export class TerminalInstance {
             return false
           }
           if (e.code === 'KeyV') {
-            navigator.clipboard.readText().then((text) => {
-              if (text) xt.paste(text)
-            }).catch(() => {})
+            navigator.clipboard
+              .readText()
+              .then((text) => {
+                if (text) xt.paste(text)
+              })
+              .catch(() => {})
             e.preventDefault()
             e.stopPropagation()
             return false
           }
         }
 
-        if (handleTerminalShortcutKeydown(e, (data) => this.sendData(data), virtualMeta)) return false
+        if (
+          handleTerminalShortcutKeydown(
+            e,
+            (data) => this.sendData(data),
+            virtualMeta,
+            () => {
+              const xt = this.xterm
+              if (!xt) return null
+              const buf = xt.buffer.active
+              const line = buf.getLine(buf.cursorY)
+              if (!line) return null
+              return line.translateToString(true).slice(0, buf.cursorX)
+            }
+          )
+        )
+          return false
 
         if (virtualMeta && isAppShortcut(e)) return false
       }
@@ -318,7 +398,9 @@ export class TerminalInstance {
         const bytes = Uint8Array.from(atob(payload), (c) => c.charCodeAt(0))
         const text = new TextDecoder('utf-8').decode(bytes)
         if (text) navigator.clipboard?.writeText(text).catch(() => {})
-      } catch { /* ignore malformed payload */ }
+      } catch {
+        /* ignore malformed payload */
+      }
       return true
     })
 
@@ -438,7 +520,17 @@ export class TerminalInstance {
       this._connectWS()
     }
     this._setupDragDrop(wrapper)
-    this._setupTouchScroll(wrapper)
+    this._setupPasteUpload((wrapper.querySelector('.xterm') as HTMLElement | null) || wrapper)
+    this._touchCleanup = setupTouchScroll(wrapper, {
+      getXterm: () => this.xterm,
+      isInTouchSelection: () => this.inTouchSelection,
+      setTouchMoved: (v) => {
+        this.touchMoved = v
+      },
+      sendWheelEvent: (deltaY, clientX, clientY) =>
+        this._sendWheelEvent(deltaY, clientX, clientY),
+    })
+    this._setupAdaptiveWheel()
 
     this._resizeObserver = new ResizeObserver(() => this._refit())
     this._resizeObserver.observe(wrapper)
@@ -511,14 +603,25 @@ export class TerminalInstance {
   }
 
   private _resolveSym(data: string, src: 0 | 1, now: number): boolean {
-    if (this._symCredits.length) this._symCredits = this._symCredits.filter(c => now - c.at < IME_SYM_PAIR_MS)
-    const i = this._symCredits.findIndex(c => c.data === data && c.src !== src)
-    if (i >= 0) { this._symCredits.splice(i, 1); return false }
+    if (this._symCredits.length)
+      this._symCredits = this._symCredits.filter((c) => now - c.at < IME_SYM_PAIR_MS)
+    const i = this._symCredits.findIndex((c) => c.data === data && c.src !== src)
+    if (i >= 0) {
+      this._symCredits.splice(i, 1)
+      return false
+    }
     this._symCredits.push({ data, src, at: now })
     return true
   }
 
   private _handleXtermData(rawData: string) {
+    // Mouse reports produced synchronously by our synthetic wheel dispatches
+    // (_sendWheelEvent) are legitimate identical repeats; the WKWebView
+    // key-replay dedup below must not eat them.
+    if (this._wheelBypass) {
+      this._emitInput(rawData)
+      return
+    }
     const tauri = isTauri()
     const data = tauri ? stripImeConfirmSpace(rawData) : rawData
     if (!data) return
@@ -716,6 +819,16 @@ export class TerminalInstance {
     }
     this._writing = true
 
+    // Snapshot whether the viewport is at the bottom BEFORE writing this batch.
+    // During burst output, the rAF yields between batches let pending wheel events
+    // (e.g. macOS trackpad inertia) fire. Even a 1-px upward delta sets
+    // xterm.js's isUserScrolling=true, which prevents ydisp from following ybase
+    // in subsequent write() calls — the viewport gets stuck above the bottom.
+    // By recording the at-bottom state here and restoring it after the batch, we
+    // keep the viewport pinned to the bottom when the user hasn't intentionally
+    // scrolled away.
+    const wasAtBottom = this._isAtBottom()
+
     // Process up to SYNC_BATCH_LIMIT chunks per frame, then yield.
     // This prevents the xterm.write() callback chain from monopolizing
     // the main thread and starving keyboard input events.
@@ -725,6 +838,9 @@ export class TerminalInstance {
 
     const processNext = () => {
       if (!this.xterm || this._writeQueue.length === 0 || processed >= SYNC_BATCH_LIMIT) {
+        if (wasAtBottom && this.xterm) {
+          this.xterm.scrollToBottom()
+        }
         if (this._writeQueue.length > 0) {
           // More data to process — yield to the browser, then continue
           requestAnimationFrame(() => this._processWriteQueue())
@@ -746,6 +862,12 @@ export class TerminalInstance {
     }
 
     processNext()
+  }
+
+  private _isAtBottom(): boolean {
+    if (!this.xterm) return true
+    const buf = this.xterm.buffer.active
+    return buf.viewportY >= buf.baseY
   }
 
   private _scheduleReconnect() {
@@ -873,6 +995,7 @@ export class TerminalInstance {
     } catch {
       return
     }
+
     const cols = this.xterm.cols
     const rows = this.xterm.rows
     if (cols < 2 || rows < 2) return
@@ -939,10 +1062,16 @@ export class TerminalInstance {
 
     const dropHandler = (e: Event) => {
       const de = e as DragEvent
+      const dt = de.dataTransfer!
+      if (!isTauri() && (dt.files?.length ?? 0) > 0) {
+        e.preventDefault()
+        e.stopPropagation()
+        this.onFileUpload?.([...dt.files])
+        return
+      }
+
       de.preventDefault()
       de.stopPropagation()
-
-      const dt = de.dataTransfer!
       const types = Array.from(dt.types)
       const paths: string[] = []
 
@@ -991,154 +1120,171 @@ export class TerminalInstance {
     }
   }
 
-  private _setupTouchScroll(wrapper: HTMLElement) {
-    // Prevent native browser scroll on the wrapper from conflicting with our
-    // custom touch-to-wheel translation.
-    wrapper.style.touchAction = 'none'
+  private _setupPasteUpload(target: HTMLElement) {
+    let suppressPasteUpload = false
+    let torn = false
 
-    let startX = 0
-    let startY = 0
-    let lastY = 0
-    let lastTime = 0
-    let accumulatedDeltaY = 0
-    let velocity = 0
-    let momentumId = 0
-    let mode: 'undecided' | 'scroll' | 'select' = 'undecided'
-    let scrollEventFired = false
-    const THRESHOLD = 10
-    const SCROLL_THRESHOLD = 12 // Lower threshold for more responsive feel
-
-    const clearMomentum = () => {
-      if (momentumId) {
-        cancelAnimationFrame(momentumId)
-        momentumId = 0
-      }
+    const pasteHandler = (e: ClipboardEvent) => {
+      if (suppressPasteUpload) return
+      if (isTauri()) return
+      const files = [...(e.clipboardData?.items ?? [])]
+        .filter((it) => it.kind === 'file')
+        .map((it) => it.getAsFile())
+        .filter((f): f is File => f != null)
+      if (!files.length) return
+      e.preventDefault()
+      e.stopPropagation()
+      this.onFileUpload?.(files)
     }
+    target.addEventListener('paste', pasteHandler, true)
 
-    const onTouchStart = (e: TouchEvent) => {
-      clearMomentum()
-      this.touchMoved = false
-      scrollEventFired = false
-      startX = e.touches[0].clientX
-      startY = e.touches[0].clientY
-      lastY = startY
-      lastTime = Date.now()
-      accumulatedDeltaY = 0
-      velocity = 0
-      mode = 'undecided'
+    const keydownHandler = (e: KeyboardEvent) => {
+      if (isTauri()) return
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'v') return
+      const readClipboard = navigator.clipboard?.read
+      if (!readClipboard) return
+      suppressPasteUpload = true
+      setTimeout(() => {
+        suppressPasteUpload = false
+      }, 0)
+
+      void readClipboard
+        .call(navigator.clipboard)
+        .then(async (items) => {
+          const files = await Promise.all(
+            items.flatMap((item) => {
+              const type = item.types.find((itemType) => itemType.startsWith('image/'))
+              if (!type) return []
+              return [
+                item.getType(type).then((blob) => {
+                  const ext = type.split('/')[1]?.split('+')[0] || 'png'
+                  return new File([blob], `pasted-image-${Date.now()}.${ext}`, { type })
+                }),
+              ]
+            })
+          )
+          if (!torn && files.length) this.onFileUpload?.(files)
+        })
+        .catch(() => {
+          // Clipboard image reads may be denied; keep normal text paste behavior intact.
+        })
     }
-    const onTouchMove = (e: TouchEvent) => {
-      if (this.inTouchSelection) return
-      const cx = e.touches[0].clientX
-      const cy = e.touches[0].clientY
-      const now = Date.now()
-      if (mode === 'undecided') {
-        const dx = Math.abs(cx - startX)
-        const dy = Math.abs(cy - startY)
-        if (dy > THRESHOLD || dx > THRESHOLD) {
-          mode = dy > dx ? 'scroll' : 'select'
-          if (mode === 'scroll') this.touchMoved = true
-        } else {
-          return
-        }
-      }
-      if (mode === 'scroll') {
-        e.preventDefault() // suppress native scroll — safe because passive: false
-        // Fire terminal-scroll on first scroll movement to collapse virtual keyboard
-        if (!scrollEventFired) {
-          scrollEventFired = true
-          wrapper.dispatchEvent(new CustomEvent('terminal-scroll', { bubbles: true }))
-        }
-        const deltaY = lastY - cy
-        const dt = now - lastTime || 1
-        velocity = deltaY / dt // px/ms
-        accumulatedDeltaY += deltaY
+    target.addEventListener('keydown', keydownHandler, true)
 
-        if (this.xterm && Math.abs(accumulatedDeltaY) >= SCROLL_THRESHOLD) {
-          this._sendWheelEvent(wrapper, accumulatedDeltaY, cx, cy)
-          accumulatedDeltaY = 0
-        }
-      }
-      lastY = cy
-      lastTime = now
-    }
-
-    const onTouchEnd = () => {
-      if (mode !== 'scroll') return
-      // Flush remaining delta
-      if (this.xterm && Math.abs(accumulatedDeltaY) > 2) {
-        this._sendWheelEvent(wrapper, accumulatedDeltaY, lastY, lastY)
-      }
-      accumulatedDeltaY = 0
-
-      // Momentum: keep sending wheel events with decaying velocity
-      if (this.xterm && Math.abs(velocity) > 0.15) {
-        const friction = 0.92
-        let v = velocity
-        const step = () => {
-          v *= friction
-          if (Math.abs(v) < 0.05) return
-          const delta = v * 16 // ~1 frame at 60fps
-          this._sendWheelEvent(wrapper, delta, lastY, lastY)
-          momentumId = requestAnimationFrame(step)
-        }
-        momentumId = requestAnimationFrame(step)
-      }
-
-      // Notify that a scroll gesture ended — used to dismiss the virtual keyboard.
-      wrapper.dispatchEvent(new CustomEvent('terminal-scroll', { bubbles: true }))
-    }
-
-    // Attach to the wrapper element, NOT .xterm-viewport. The xterm.js canvas
-    // (.xterm-screen) sits on top of .xterm-viewport in the DOM and intercepts
-    // all touch events — handlers on the viewport never fire. The wrapper
-    // receives touch events first (before the canvas) and already has
-    // touch-action: none set.
-    wrapper.addEventListener('touchstart', onTouchStart, { passive: true })
-    wrapper.addEventListener('touchmove', onTouchMove, { passive: false })
-    wrapper.addEventListener('touchend', onTouchEnd, { passive: true })
-    // Wheel listener: collapse virtual keyboard on trackpad/mouse scroll
-    const onWheel = () => {
-      wrapper.dispatchEvent(new CustomEvent('terminal-scroll', { bubbles: true }))
-    }
-    wrapper.addEventListener('wheel', onWheel, { passive: true })
-    this._touchCleanup = () => {
-      clearMomentum()
-      wrapper.removeEventListener('touchstart', onTouchStart)
-      wrapper.removeEventListener('touchmove', onTouchMove)
-      wrapper.removeEventListener('touchend', onTouchEnd)
-      wrapper.removeEventListener('wheel', onWheel)
+    const prevCleanup = this._dragDropCleanup
+    let removed = false
+    this._dragDropCleanup = () => {
+      if (removed) return
+      removed = true
+      torn = true
+      prevCleanup?.()
+      target.removeEventListener('paste', pasteHandler, true)
+      target.removeEventListener('keydown', keydownHandler, true)
     }
   }
 
-  private _sendWheelEvent(_target: HTMLElement, deltaY: number, clientX: number, clientY: number) {
+  private _sendWheelEvent(
+    deltaY: number,
+    clientX: number,
+    clientY: number,
+    deltaMode = 0
+  ) {
     if (!this.xterm || deltaY === 0) return
 
-    // Always dispatch a synthetic WheelEvent on the xterm element and let xterm.js
-    // handle it through its own event pipeline. This matches how real desktop wheel
-    // events are processed:
-    //   - Mouse tracking active: xterm.js sends mouse report escape sequences to PTY
-    //   - No scrollback (alt screen): xterm.js converts to Up/Down arrow sequences
-    //   - Normal shell with scrollback: xterm.js scrolls the viewport
-    // Previously the no-mouse-tracking path called scrollLines() directly, which only
-    // moves xterm's internal viewport — it never sends data to the PTY. On the alt
-    // screen (no scrollback) this was a no-op, so TUI apps like opencode never
-    // received scroll input on mobile.
     const xtermEl = this.xterm.element
-    if (xtermEl) {
+    if (!xtermEl) return
+
+    // Synthetic dispatches must never re-enter the adaptive-wheel planner.
+    this._wheelBypass = true
+    try {
       xtermEl.dispatchEvent(
         new WheelEvent('wheel', {
           deltaY,
           deltaX: 0,
           deltaZ: 0,
-          deltaMode: 0,
+          deltaMode,
           bubbles: true,
           cancelable: true,
           clientX,
           clientY,
         })
       )
+    } finally {
+      this._wheelBypass = false
     }
+  }
+
+  private _setupAdaptiveWheel() {
+    this.xterm?.attachCustomWheelEventHandler((e: WheelEvent): boolean => {
+      if (this._wheelBypass) return true
+      if (!this.xterm) return true
+
+      const now = Date.now()
+      const elapsed = now - this._lastWheelTime
+      if (elapsed > 500) this._trackingWheelState = null
+      const dt = elapsed || 1
+      const rowHeight = this._getWheelRowHeight()
+      const lines =
+        e.deltaMode === 1
+          ? Math.abs(e.deltaY)
+          : e.deltaMode === 0 && rowHeight > 0
+            ? Math.abs(e.deltaY) / rowHeight
+            : 0
+      const velocity = lines / dt
+      this._lastWheelTime = now
+
+      const sensitivity = settings.text.scroll_sensitivity ?? 1
+      const acceleration = settings.text.scroll_acceleration ?? 0
+      const isMouseTracking = this.isMouseModeEnabled()
+      if (!isMouseTracking) this._trackingWheelState = null
+      const input: WheelPlanInput = {
+        deltaY: e.deltaY,
+        deltaX: e.deltaX,
+        deltaMode: e.deltaMode,
+        shiftKey: e.shiftKey,
+        ctrlKey: e.ctrlKey,
+        altKey: e.altKey,
+        metaKey: e.metaKey,
+        velocity,
+        isMouseTracking,
+      }
+      const plan = computeWheelPlan(
+        input,
+        sensitivity,
+        acceleration,
+        this._trackingWheelState
+      )
+      if (plan.action === 'native') {
+        this._trackingWheelState = null
+        return true
+      }
+      this._trackingWheelState = plan.nextTrackingState ?? null
+
+      e.preventDefault()
+      e.stopPropagation()
+      for (let i = 0; i < plan.count; i++) {
+        this._sendWheelEvent(plan.deltaY, e.clientX, e.clientY, plan.deltaMode)
+      }
+      return false
+    })
+  }
+
+  private _getWheelRowHeight(): number {
+    try {
+      const h = Number(
+        (this.xterm as any)?._core?._renderService?.dimensions?.css?.cell?.height
+      )
+      if (Number.isFinite(h) && h > 0) return h
+    } catch {
+      // fall through to the one-time warning below
+    }
+    if (!this._wheelRowHeightWarned) {
+      this._wheelRowHeightWarned = true
+      console.warn(
+        '[useTerminal] xterm private cell-height API (_core._renderService.dimensions.css.cell.height) unavailable or invalid; wheel-scroll acceleration (velocity term) is disabled, sensitivity still applies. xterm.js internals may have changed.'
+      )
+    }
+    return 0
   }
 
   isMouseModeEnabled(): boolean {

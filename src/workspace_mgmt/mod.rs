@@ -7,7 +7,7 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::error;
@@ -70,7 +70,21 @@ pub fn create_workspaces_state() -> WorkspacesState {
 // Path validation
 // ---------------------------------------------------------------------------
 
-const SENSITIVE_DIRS: &[&str] = &["/", "/etc", "/sys", "/proc", "/dev", "/bin", "/sbin", "/usr"];
+pub const SENSITIVE_DIRS: &[&str] =
+    &["/", "/etc", "/sys", "/proc", "/dev", "/bin", "/sbin", "/usr"];
+
+#[must_use]
+pub fn is_sensitive(canonical: &FsPath) -> bool {
+    SENSITIVE_DIRS.iter().any(|sensitive| {
+        *sensitive != "/"
+            && (canonical == FsPath::new(sensitive) || canonical.starts_with(sensitive))
+    })
+}
+
+#[must_use]
+pub fn is_sensitive_workspace_target(canonical: &FsPath) -> bool {
+    canonical == FsPath::new("/") || is_sensitive(canonical)
+}
 
 /// Validate and canonicalize a workspace path.
 ///
@@ -84,23 +98,21 @@ pub fn validate_workspace_path(path: &str) -> Result<PathBuf, String> {
     if !std::path::Path::new(trimmed).is_absolute() {
         return Err("path must be absolute".into());
     }
-    // Check sensitive directories before canonicalize (which may fail on non-existent)
-    let check_path = trimmed.trim_end_matches('/');
-    for &sensitive in SENSITIVE_DIRS {
-        if check_path == sensitive {
-            return Err(format!("cannot use sensitive system directory: {sensitive}"));
-        }
+    // Check sensitivity on the RAW input before canonicalize: canonicalize may
+    // rewrite a sensitive path (e.g. macOS /etc -> /private/etc) so the raw
+    // form is the only reliable place to catch a directly-named system dir.
+    let raw_trimmed = trimmed.trim_end_matches('/');
+    let raw = FsPath::new(if raw_trimmed.is_empty() { "/" } else { raw_trimmed });
+    if is_sensitive_workspace_target(raw) {
+        return Err(format!("cannot use sensitive system directory: {}", raw.display()));
     }
     let canonical = std::fs::canonicalize(trimmed).map_err(|e| format!("invalid path: {e}"))?;
     if !canonical.is_dir() {
         return Err("path is not a directory".into());
     }
-    // Re-check after canonicalize (symlinks could point to sensitive dirs)
-    let canon_str = canonical.to_string_lossy().to_string();
-    for &sensitive in SENSITIVE_DIRS {
-        if canon_str == sensitive {
-            return Err(format!("cannot use sensitive system directory: {sensitive}"));
-        }
+    // Re-check after canonicalize (a symlink could resolve into a sensitive dir).
+    if is_sensitive_workspace_target(&canonical) {
+        return Err(format!("cannot use sensitive system directory: {}", canonical.display()));
     }
     Ok(canonical)
 }
@@ -463,6 +475,37 @@ pub async fn list_dirs(
         Err(e) => {
             (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() })))
                 .into_response()
+        }
+    }
+}
+
+#[cfg(test)]
+mod sensitive_tests {
+    use super::{is_sensitive, is_sensitive_workspace_target};
+    use std::path::Path as FsPath;
+
+    #[test]
+    fn root_browsable_but_not_workspace_target() {
+        let root = FsPath::new("/");
+        assert!(!is_sensitive(root));
+        assert!(is_sensitive_workspace_target(root));
+    }
+
+    #[test]
+    fn system_dirs_and_descendants_sensitive() {
+        for path in ["/etc", "/etc/ssh", "/usr/bin", "/proc/1"] {
+            let path = FsPath::new(path);
+            assert!(is_sensitive(path));
+            assert!(is_sensitive_workspace_target(path));
+        }
+    }
+
+    #[test]
+    fn sibling_prefixes_not_sensitive() {
+        for path in ["/etcfoo", "/home/user", "/Volumes/Dev", "/usrlocal"] {
+            let path = FsPath::new(path);
+            assert!(!is_sensitive(path));
+            assert!(!is_sensitive_workspace_target(path));
         }
     }
 }

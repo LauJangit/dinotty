@@ -104,6 +104,7 @@ export interface SshConnectRequest {
   username: string
   auth: SshAuthMethod
   default_command?: string
+  initial_cwd?: string
 }
 
 export interface SshProfileConnectRequest {
@@ -124,11 +125,15 @@ export async function apiCreateSshQuickTab(req: SshConnectRequest, signal?: Abor
   return res.json()
 }
 
-export async function apiCreateSshTab(profileId: string, signal?: AbortSignal): Promise<CreateTabResult> {
+export async function apiCreateSshTab(
+  profileId: string,
+  initialCwd?: string,
+  signal?: AbortSignal
+): Promise<CreateTabResult> {
   const res = await authFetch(apiUrl('/api/tabs/ssh'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ profile_id: profileId }),
+    body: JSON.stringify({ profile_id: profileId, initial_cwd: initialCwd }),
     signal,
   })
   if (!res.ok) {

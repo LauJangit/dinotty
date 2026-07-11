@@ -3,6 +3,7 @@
     <div v-if="visible" class="fp-overlay" @click.self="close">
       <div class="fp-modal">
         <div class="fp-header">
+          <button v-if="free" class="fp-up-btn" type="button" @click="navigateUp">Up</button>
           <div class="fp-breadcrumb">
             <span class="fp-crumb-home" @click="navigateTo('')">{{ cwdLabel || '/' }}</span>
           </div>
@@ -48,9 +49,11 @@ const props = withDefaults(
     visible: boolean
     paneId: string
     root?: string
+    free?: boolean
   }>(),
   {
     root: '/',
+    free: false,
   }
 )
 
@@ -64,19 +67,45 @@ const childCache = ref<Record<string, DirEntry[]>>({})
 const expanded = ref<Set<string>>(new Set())
 const selectedPath = ref<string>('')
 const selectedName = ref<string>('')
+const browseRoot = ref(props.root)
 
 async function fetchList(rel: string) {
   const { authFetch, apiUrl } = await import('../../composables/apiBase')
-  const q = new URLSearchParams({ pane_id: props.paneId, path: rel, root: props.root })
+  const path = props.free
+    ? rel
+      ? absJoinWorkspaceRoot(cwdLabel.value || browseRoot.value, rel)
+      : browseRoot.value
+    : rel
+  const q = new URLSearchParams({ pane_id: props.paneId, path, root: props.root })
+  if (props.free) q.set('free', 'true')
   try {
     const res = await authFetch(apiUrl(`/api/workspace/list?${q}`))
     if (res.ok) {
       const data = await res.json()
-      cwdLabel.value = data.cwd || ''
+      if (!props.free || rel === '') cwdLabel.value = data.cwd || ''
       childCache.value[rel] = data.entries || []
+    } else if (props.free && rel === '' && browseRoot.value !== '/') {
+      console.warn('[FilePickerModal] Failed to browse configured root; falling back to /')
+      browseRoot.value = '/'
+      cwdLabel.value = ''
+      await fetchList('')
+      return
+    } else if (rel === '') {
+      cwdLabel.value = ''
+      childCache.value = {}
     }
   } catch {
-    /* ignore */
+    if (props.free && rel === '' && browseRoot.value !== '/') {
+      console.warn('[FilePickerModal] Failed to browse configured root; falling back to /')
+      browseRoot.value = '/'
+      cwdLabel.value = ''
+      await fetchList('')
+      return
+    }
+    if (rel === '') {
+      cwdLabel.value = ''
+      childCache.value = {}
+    }
   }
 }
 
@@ -84,6 +113,18 @@ function navigateTo(rel: string) {
   expanded.value = new Set()
   childCache.value = {}
   fetchList(rel)
+}
+
+function navigateUp() {
+  const current = cwdLabel.value || browseRoot.value
+  const normalized = current.replace(/[\\/]+$/, '')
+  let parent = normalized.replace(/[\\/][^\\/]*$/, '')
+  if (!parent) parent = /^[A-Za-z]:/.test(normalized) ? `${normalized.slice(0, 2)}\\` : '/'
+  if (parent === current) return
+  browseRoot.value = parent
+  selectedPath.value = ''
+  selectedName.value = ''
+  navigateTo('')
 }
 
 function onToggle(rel: string) {
@@ -123,6 +164,7 @@ watch(
   () => props.visible,
   (v) => {
     if (v) {
+      browseRoot.value = props.root
       expanded.value = new Set()
       childCache.value = {}
       selectedPath.value = ''
@@ -190,6 +232,15 @@ watch(
   border: none;
   color: var(--fg-muted);
   font-size: 18px;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+.fp-up-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
   cursor: pointer;
   padding: 4px 8px;
 }

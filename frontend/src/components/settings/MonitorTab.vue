@@ -4,7 +4,7 @@
       <Monitor :size="14" />
       <span>{{ t('settings.monitor.localHint') }}</span>
     </div>
-    <section class="settings-section">
+    <div class="settings-group">
       <div class="chart-header">
         <h3>{{ t('settings.monitor.cpuChart') }}</h3>
         <label class="toggle">
@@ -15,9 +15,9 @@
       <div class="chart-wrap">
         <Line :data="cpuChartData" :options="pctChartOptions" />
       </div>
-    </section>
+    </div>
 
-    <section class="settings-section">
+    <div class="settings-group">
       <div class="chart-header">
         <h3>{{ t('settings.monitor.memChart') }}</h3>
         <label class="toggle">
@@ -28,9 +28,9 @@
       <div class="chart-wrap">
         <Line :data="memChartData" :options="pctChartOptions" />
       </div>
-    </section>
+    </div>
 
-    <section class="settings-section">
+    <div class="settings-group">
       <div class="chart-header">
         <h3>{{ t('settings.monitor.diskLabel') }}</h3>
         <label class="toggle">
@@ -47,9 +47,9 @@
         </div>
       </div>
       <div v-else class="disk-info"><span class="disk-val">—</span></div>
-    </section>
+    </div>
 
-    <section class="settings-section">
+    <div class="settings-group">
       <div class="chart-header">
         <h3>{{ t('settings.monitor.netChart') }}</h3>
         <label class="toggle">
@@ -60,9 +60,9 @@
       <div class="chart-wrap">
         <Line :data="netChartData" :options="netChartOptions" />
       </div>
-    </section>
+    </div>
 
-    <section class="settings-section">
+    <div class="settings-group">
       <div class="chart-header">
         <h3>{{ t('settings.monitor.gpuChart') }}</h3>
         <label class="toggle">
@@ -92,7 +92,7 @@
       <div v-if="!settings.monitor.gpu || !hasGpu" class="disk-info">
         <span class="disk-val">—</span>
       </div>
-    </section>
+    </div>
   </div>
 </template>
 
@@ -151,34 +151,45 @@ const gpuColors = [
   '#a78bfa',
 ]
 
-const baseOptions = {
-  responsive: true,
-  maintainAspectRatio: false,
-  animation: { duration: 0 } as const,
-  plugins: { legend: { display: false }, tooltip: { enabled: false } },
-  elements: { point: { radius: 0 }, line: { tension: 0.3, borderWidth: 1.5 } },
-  scales: {
-    x: { display: false },
-    y: {
-      min: 0,
-      grid: { color: 'rgba(255,255,255,0.06)' },
-      ticks: { color: 'rgba(255,255,255,0.4)', font: { size: 10 } },
+/** Read CSS variable from the document root (canvas cannot resolve var()). */
+function cssVar(name: string, fallback: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
+}
+
+// Access theme preset to create a reactive dependency — re-evaluates on theme change.
+const baseOptions = computed(() => {
+  void settings.theme.preset
+  const borderColor = cssVar('--border', '#3C3C3C')
+  const fgMuted = cssVar('--fg-muted', '#858585')
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: { duration: 0 } as const,
+    plugins: { legend: { display: false }, tooltip: { enabled: false } },
+    elements: { point: { radius: 0 }, line: { tension: 0.3, borderWidth: 1.5 } },
+    scales: {
+      x: { display: false },
+      y: {
+        min: 0,
+        grid: { color: borderColor },
+        ticks: { color: fgMuted, font: { size: 10 } },
+      },
     },
-  },
-}
+  }
+})
 
-const pctChartOptions = {
-  ...baseOptions,
-  scales: { ...baseOptions.scales, y: { ...baseOptions.scales.y, max: 100 } },
-}
+const pctChartOptions = computed(() => ({
+  ...baseOptions.value,
+  scales: { ...baseOptions.value.scales, y: { ...baseOptions.value.scales.y, max: 100 } },
+}))
 
-const autoChartOptions = {
-  ...baseOptions,
+const autoChartOptions = computed(() => ({
+  ...baseOptions.value,
   scales: {
-    ...baseOptions.scales,
-    y: { ...baseOptions.scales.y, beginAtZero: true },
+    ...baseOptions.value.scales,
+    y: { ...baseOptions.value.scales.y, beginAtZero: true },
   },
-}
+}))
 
 function fmtRate(v: number): string {
   if (v < 1024) return `${v}B/s`
@@ -193,20 +204,20 @@ function fmtBytes(b: number): string {
   return `${(b / 1024 / 1024 / 1024).toFixed(1)}G`
 }
 
-const netChartOptions = {
-  ...baseOptions,
+const netChartOptions = computed(() => ({
+  ...baseOptions.value,
   plugins: { legend: { display: false }, tooltip: { enabled: false } },
   scales: {
-    ...baseOptions.scales,
+    ...baseOptions.value.scales,
     y: {
-      ...baseOptions.scales.y,
+      ...baseOptions.value.scales.y,
       ticks: {
-        ...baseOptions.scales.y.ticks,
+        ...baseOptions.value.scales.y.ticks,
         callback: (v: number | string) => fmtRate(Number(v)),
       },
     },
   },
-}
+}))
 
 const cpuChartData = computed(() => ({
   labels: labels.value,
@@ -292,7 +303,7 @@ const gpuMemChartData = computed(() => ({
 .chart-header h3 {
   font-size: 13px;
   font-weight: 600;
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin: 0;
@@ -306,7 +317,7 @@ const gpuMemChartData = computed(() => ({
 }
 .disk-val {
   font-variant-numeric: tabular-nums;
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
   font-size: 12px;
 }
 </style>

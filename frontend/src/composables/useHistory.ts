@@ -13,6 +13,15 @@ let fetchTimer: ReturnType<typeof setTimeout> | null = null
 let ws: WebSocket | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
+function handleMessage(e: { data: string }) {
+  try {
+    const msg = JSON.parse(e.data)
+    if (msg.type === 'suggestions' && Array.isArray(msg.items)) {
+      suggestions.value = msg.items
+    }
+  } catch {}
+}
+
 async function connectWs() {
   if (ws && ws.readyState <= WebSocket.OPEN) return
 
@@ -29,14 +38,7 @@ async function connectWs() {
 
   ws = new WebSocket(wsUrlWithToken(url))
 
-  ws.onmessage = (e) => {
-    try {
-      const msg = JSON.parse(e.data)
-      if (msg.type === 'suggestions' && Array.isArray(msg.items)) {
-        suggestions.value = msg.items
-      }
-    } catch {}
-  }
+  ws.onmessage = (e) => handleMessage(e)
 
   ws.onclose = () => {
     ws = null

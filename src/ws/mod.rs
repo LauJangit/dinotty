@@ -2,7 +2,7 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket},
-        Query, State, WebSocketUpgrade,
+        ConnectInfo, Query, State, WebSocketUpgrade,
     },
     http::StatusCode,
     response::IntoResponse,
@@ -10,6 +10,7 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
 use std::sync::{
     atomic::{AtomicU32, Ordering},
     Arc,
@@ -94,9 +95,21 @@ pub async fn ws_handler(
     Query(q): Query<WsQuery>,
     State(manager): State<Arc<SessionManager>>,
     State(history): State<HistoryState>,
+    ConnectInfo(_addr): ConnectInfo<SocketAddr>,
+    _headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    let pane_id = q.pane_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    ws.on_upgrade(move |socket| handle_socket(socket, pane_id, manager, history))
+    // paneId must reference a tab created via /api/tabs (or the sync WS
+    // CreateTab message); otherwise an authenticated client could spawn
+    // unbounded orphan PTYs by connecting with random/empty paneIds. Cookie
+    // session auth (auth_middleware) handles access control; this check
+    // prevents resource exhaustion.
+    let Some(pane_id) = q.pane_id else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    if !manager.is_pane_in_any_tab(&pane_id) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    ws.on_upgrade(move |socket| handle_socket(socket, pane_id, manager, history)).into_response()
 }
 
 #[allow(clippy::unused_async)]
@@ -107,8 +120,19 @@ pub async fn sync_handler(
         WorkspacesState,
         SettingsState,
     )>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
+    let s = settings.read().await;
+    let allowed_origins = s.auth.allowed_origins.clone();
+    let trusted_proxies = s.auth.trusted_proxies.clone();
+    drop(s);
+    let real_ip = crate::auth::real_client_ip(&headers, addr.ip(), &trusted_proxies);
+    if !crate::auth::check_ws_origin(&headers, &allowed_origins, real_ip, &trusted_proxies) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     ws.on_upgrade(move |socket| handle_sync_socket(socket, manager, workspaces, settings))
+        .into_response()
 }
 
 async fn handle_sync_socket(
@@ -255,11 +279,21 @@ async fn handle_sync_socket(
                 if let Ok(sync_msg) = serde_json::from_str::<SyncClientMsg>(&text) {
                     match sync_msg {
                         SyncClientMsg::ActivateTab { pane_id } => {
+                            // Resolve leaf pane ID: pane_id may be a tab ID;
+                            // look up the tab's stored active_pane_id for the actual leaf.
+                            let leaf_id = manager
+                                .tab_layouts
+                                .get(&pane_id)
+                                .and_then(|v| {
+                                    v.get("active_pane_id")
+                                        .and_then(|a| a.as_str())
+                                        .map(String::from)
+                                })
+                                .unwrap_or(pane_id.clone());
                             *manager
                                 .active_pane_id
                                 .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                                Some(pane_id.clone());
+                                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(leaf_id);
                             manager.broadcast_sync_others(
                                 &SyncMsg::TabActivated { pane_id },
                                 &client_id,
@@ -374,6 +408,12 @@ async fn handle_sync_socket(
                                     "active_pane_id": active_pane_id,
                                 }),
                             );
+                            // Sync global active pane (same rationale as REST update_layout)
+                            *manager
+                                .active_pane_id
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                                Some(active_pane_id.clone());
                             manager.broadcast_sync_others(
                                 &SyncMsg::LayoutUpdated { pane_id, layout, active_pane_id },
                                 &client_id,
@@ -747,8 +787,19 @@ async fn handle_socket(
 pub async fn notification_ws_handler(
     ws: WebSocketUpgrade,
     State(notifier): State<Arc<NotificationBroadcast>>,
+    State(settings): State<SettingsState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_notification_socket(socket, notifier))
+    let s = settings.read().await;
+    let allowed_origins = s.auth.allowed_origins.clone();
+    let trusted_proxies = s.auth.trusted_proxies.clone();
+    drop(s);
+    let real_ip = crate::auth::real_client_ip(&headers, addr.ip(), &trusted_proxies);
+    if !crate::auth::check_ws_origin(&headers, &allowed_origins, real_ip, &trusted_proxies) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    ws.on_upgrade(move |socket| handle_notification_socket(socket, notifier)).into_response()
 }
 
 async fn handle_notification_socket(socket: WebSocket, notifier: Arc<NotificationBroadcast>) {

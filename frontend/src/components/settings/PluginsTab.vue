@@ -499,7 +499,7 @@ async function onRefresh() {
 .plugin-tabs {
   display: flex;
   gap: 0;
-  border-bottom: 1px solid var(--border, #333);
+  border-bottom: 1px solid var(--border);
   margin-bottom: 14px;
 }
 .plugin-tab {
@@ -546,7 +546,7 @@ async function onRefresh() {
   padding: 5px 10px;
   font-size: 12px;
   color: var(--fg-muted, #858585);
-  background: var(--bg-input, #2a2a2c);
+  background: var(--bg-input);
   border: 1px solid var(--border, #444);
   border-radius: 5px;
   cursor: pointer;
@@ -589,7 +589,7 @@ async function onRefresh() {
   transition: background 0.15s;
 }
 .plugin-install-btn:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--bg-hover);
 }
 .plugin-action-btn {
   display: inline-flex;
@@ -606,7 +606,7 @@ async function onRefresh() {
     color 0.15s;
 }
 .plugin-action-btn:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--bg-hover);
   color: var(--fg, #cccccc);
 }
 .plugin-danger {
@@ -652,7 +652,7 @@ async function onRefresh() {
   padding: 14px 16px;
   margin-bottom: 10px;
   border-radius: 8px;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   background: var(--bg-elevated, #222);
 }
 .plugin-card-clickable {
@@ -694,7 +694,7 @@ async function onRefresh() {
 }
 .plugin-badge.update {
   color: var(--fg-muted, #858585);
-  background: var(--bg-hover, #2a2a2c);
+  background: var(--bg-hover);
 }
 .plugin-badge.error {
   color: var(--color-red, #ef4444);
@@ -776,7 +776,7 @@ async function onRefresh() {
 .plugin-detail-info {
   padding: 14px 16px;
   border-radius: 8px;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   background: var(--bg-elevated, #222);
   margin-bottom: 12px;
 }
@@ -810,7 +810,7 @@ async function onRefresh() {
 .plugin-detail-readme {
   padding: 14px 16px;
   border-radius: 8px;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   background: var(--bg-elevated, #222);
 }
 .plugin-readme-loading {
@@ -858,14 +858,14 @@ async function onRefresh() {
   margin: 8px 0;
 }
 .plugin-readme-body :deep(code) {
-  background: var(--bg-input, #2a2a2c);
+  background: var(--bg-input);
   padding: 1px 4px;
   border-radius: 3px;
   font-size: 12px;
   font-family: var(--font-mono, monospace);
 }
 .plugin-readme-body :deep(pre) {
-  background: var(--bg-input, #2a2a2c);
+  background: var(--bg-input);
   padding: 10px 12px;
   border-radius: 6px;
   overflow-x: auto;
@@ -888,7 +888,7 @@ async function onRefresh() {
   text-decoration: underline;
 }
 .plugin-readme-body :deep(blockquote) {
-  border-left: 3px solid var(--border, #333);
+  border-left: 3px solid var(--border);
   padding-left: 12px;
   margin: 8px 0;
   color: var(--text-muted, #888);
@@ -900,13 +900,13 @@ async function onRefresh() {
 }
 .plugin-readme-body :deep(th),
 .plugin-readme-body :deep(td) {
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   padding: 6px 10px;
   font-size: 12px;
   text-align: left;
 }
 .plugin-readme-body :deep(th) {
-  background: var(--bg-input, #2a2a2c);
+  background: var(--bg-input);
   font-weight: 600;
 }
 </style>

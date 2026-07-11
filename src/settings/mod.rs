@@ -15,9 +15,14 @@ use zeroize::Zeroize;
 
 use crate::session::SessionManager;
 
+pub const CURRENT_SETTINGS_VERSION: u32 = 3;
+const LEGACY_UPLOAD_DIR: &str = "~/.dinotty/uploads";
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct Settings {
+    #[serde(default)]
+    pub settings_version: u32,
     #[serde(default)]
     pub theme: ThemeConfig,
     #[serde(default)]
@@ -36,6 +41,16 @@ pub struct Settings {
     pub recent_urls: Vec<RecentEntry>,
     #[serde(default)]
     pub action_keyboard: Option<ActionKeyboardConfig>,
+    #[serde(default = "default_upload_dir")]
+    pub upload_dir: String,
+    #[serde(default)]
+    pub default_base_dir: Option<String>,
+    #[serde(default = "default_upload_cap_mb")]
+    pub upload_cap_mb: u64,
+    #[serde(default = "default_upload_cap_count")]
+    pub upload_cap_count: u32,
+    #[serde(default)]
+    pub upload_file_cap_mb: u64,
     #[serde(default)]
     pub keyboard_sound: bool,
     #[serde(default)]
@@ -44,6 +59,8 @@ pub struct Settings {
     pub windows_alt_as_cmd: bool,
     #[serde(default = "default_true")]
     pub confirm_before_close_tab: bool,
+    #[serde(default)]
+    pub space_confirms_dialogs: bool,
     #[serde(default = "default_locale")]
     pub locale: String,
     #[serde(default)]
@@ -66,6 +83,75 @@ pub struct Settings {
     pub ssh_profiles: Vec<SshProfile>,
     #[serde(default)]
     pub active_workspace_id: Option<String>,
+    #[serde(default)]
+    pub auth: AuthConfig,
+    #[serde(default)]
+    pub preview: PreviewConfig,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct AuthConfig {
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
+    #[serde(default)]
+    pub trusted_proxies: Vec<String>,
+    #[serde(default = "default_lockout_strategy")]
+    pub lockout_strategy: String,
+    #[serde(default = "default_session_ttl_days")]
+    pub session_ttl_days: u64,
+    #[serde(default = "default_lockout_max_failures")]
+    pub lockout_max_failures: u32,
+    #[serde(default = "default_lockout_secs")]
+    pub lockout_secs: u64,
+    #[serde(default = "default_global_lockout_max_failures")]
+    pub global_lockout_max_failures: u32,
+    #[serde(default = "default_global_lockout_secs")]
+    pub global_lockout_secs: u64,
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            allowed_origins: vec![],
+            trusted_proxies: vec![],
+            lockout_strategy: default_lockout_strategy(),
+            session_ttl_days: default_session_ttl_days(),
+            lockout_max_failures: default_lockout_max_failures(),
+            lockout_secs: default_lockout_secs(),
+            global_lockout_max_failures: default_global_lockout_max_failures(),
+            global_lockout_secs: default_global_lockout_secs(),
+        }
+    }
+}
+
+fn default_lockout_strategy() -> String {
+    "ip".into()
+}
+
+fn default_session_ttl_days() -> u64 {
+    7
+}
+
+fn default_lockout_max_failures() -> u32 {
+    5
+}
+
+fn default_lockout_secs() -> u64 {
+    60
+}
+
+fn default_global_lockout_max_failures() -> u32 {
+    50
+}
+
+fn default_global_lockout_secs() -> u64 {
+    300
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct PreviewConfig {
+    #[serde(default)]
+    pub allow_external: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -312,11 +398,35 @@ impl Default for MonitorConfig {
 }
 
 fn default_ip_whitelist() -> Vec<String> {
-    vec!["127.0.0.1".into(), "::1".into()]
+    // Server mode: no loopback bypass by default - local access must
+    // authenticate, preventing SSH port-forwarding bypass. Desktop mode keeps
+    // loopback bypass for Tauri zero-config.
+    if cfg!(feature = "server") {
+        vec![]
+    } else {
+        vec!["127.0.0.1".into(), "::1".into()]
+    }
 }
 
 fn default_locale() -> String {
     "zh".into()
+}
+
+#[must_use]
+pub fn default_upload_dir() -> String {
+    if cfg!(windows) {
+        "%TEMP%\\dinotty".to_string()
+    } else {
+        "$TMPDIR/dinotty".to_string()
+    }
+}
+
+fn default_upload_cap_mb() -> u64 {
+    200
+}
+
+fn default_upload_cap_count() -> u32 {
+    100
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -384,6 +494,12 @@ pub struct TextConfig {
     pub cursor_blink: bool,
     #[serde(default = "default_scrollback")]
     pub scrollback: u32,
+    #[serde(default = "default_scroll_sensitivity")]
+    pub scroll_sensitivity: f32,
+    #[serde(default = "default_scroll_acceleration")]
+    pub scroll_acceleration: f32,
+    #[serde(default = "default_scrollbar_width")]
+    pub scrollbar_width: u8,
 }
 
 fn default_font_size() -> u8 {
@@ -401,6 +517,15 @@ fn default_true() -> bool {
 fn default_scrollback() -> u32 {
     10000
 }
+fn default_scroll_sensitivity() -> f32 {
+    1.0
+}
+fn default_scroll_acceleration() -> f32 {
+    0.0
+}
+fn default_scrollbar_width() -> u8 {
+    8
+}
 
 impl Default for TextConfig {
     fn default() -> Self {
@@ -412,8 +537,25 @@ impl Default for TextConfig {
             cursor_style: default_cursor_style(),
             cursor_blink: true,
             scrollback: default_scrollback(),
+            scroll_sensitivity: default_scroll_sensitivity(),
+            scroll_acceleration: default_scroll_acceleration(),
+            scrollbar_width: default_scrollbar_width(),
         }
     }
+}
+
+fn clamp_text_config(t: &mut TextConfig) {
+    t.scroll_sensitivity = if t.scroll_sensitivity.is_finite() {
+        t.scroll_sensitivity.clamp(0.1, 2.0)
+    } else {
+        default_scroll_sensitivity()
+    };
+    t.scroll_acceleration = if t.scroll_acceleration.is_finite() {
+        t.scroll_acceleration.clamp(0.0, 5.0)
+    } else {
+        default_scroll_acceleration()
+    };
+    t.scrollbar_width = t.scrollbar_width.clamp(4, 16);
 }
 
 fn default_mode() -> String {
@@ -466,7 +608,9 @@ pub struct RecentEntry {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ActionKey {
+    #[serde(default)]
     pub label: String,
+    #[serde(default)]
     pub send: String,
     #[serde(default)]
     pub style: Option<String>,
@@ -488,6 +632,7 @@ pub struct ActionKeyboardConfig {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            settings_version: CURRENT_SETTINGS_VERSION,
             theme: ThemeConfig::default(),
             background: BackgroundConfig::default(),
             text: TextConfig::default(),
@@ -497,10 +642,16 @@ impl Default for Settings {
             recent_files: vec![],
             recent_urls: vec![],
             action_keyboard: None,
+            upload_dir: default_upload_dir(),
+            default_base_dir: None,
+            upload_cap_mb: default_upload_cap_mb(),
+            upload_cap_count: default_upload_cap_count(),
+            upload_file_cap_mb: 0,
             keyboard_sound: false,
             show_virtual_keyboard: false,
             windows_alt_as_cmd: false,
             confirm_before_close_tab: true,
+            space_confirms_dialogs: false,
             locale: default_locale(),
             panel_position: PanelPosition::default(),
             monitor: MonitorConfig::default(),
@@ -512,6 +663,8 @@ impl Default for Settings {
             log: LogConfig::default(),
             ssh_profiles: vec![],
             active_workspace_id: None,
+            auth: AuthConfig::default(),
+            preview: PreviewConfig::default(),
         }
     }
 }
@@ -542,7 +695,14 @@ pub fn load_token() -> Option<String> {
 pub fn save_token(token: &str) -> Result<(), String> {
     let dir = config_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    std::fs::write(token_path(), token).map_err(|e| e.to_string())
+    let path = token_path();
+    std::fs::write(&path, token).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
 }
 
 fn bg_image_path() -> PathBuf {
@@ -553,14 +713,44 @@ pub fn load_settings() -> Settings {
     let path = settings_path();
     if path.exists() {
         match std::fs::read_to_string(&path) {
-            Ok(data) => match serde_json::from_str(&data) {
-                Ok(s) => return s,
+            Ok(data) => match serde_json::from_str::<Settings>(&data) {
+                Ok(mut settings) => {
+                    let mut migrated = migrate_settings(&mut settings);
+                    if settings.upload_dir.trim().is_empty() {
+                        settings.upload_dir = default_upload_dir();
+                        migrated = true;
+                    }
+                    clamp_text_config(&mut settings.text);
+                    if migrated {
+                        if let Err(e) = save_settings(&settings) {
+                            error!("migrate settings: {}", e);
+                        }
+                    }
+                    return settings;
+                }
                 Err(e) => error!("parse settings: {}", e),
             },
             Err(e) => error!("read settings: {}", e),
         }
     }
     Settings::default()
+}
+
+fn migrate_settings(settings: &mut Settings) -> bool {
+    if settings.settings_version >= CURRENT_SETTINGS_VERSION {
+        return false;
+    }
+    let old_resolved_upload_dir =
+        std::env::temp_dir().join("dinotty").to_string_lossy().into_owned();
+    if settings.upload_dir.is_empty()
+        || settings.upload_dir == LEGACY_UPLOAD_DIR
+        || settings.upload_dir == old_resolved_upload_dir
+    {
+        settings.upload_dir = default_upload_dir();
+    }
+    // v3: auth + preview sections added with serde defaults - no explicit migration needed.
+    settings.settings_version = CURRENT_SETTINGS_VERSION;
+    true
 }
 
 fn save_settings(settings: &Settings) -> Result<(), String> {
@@ -669,8 +859,10 @@ pub async fn get_settings(
 
 pub async fn put_settings(
     State(state): State<(Arc<SessionManager>, SettingsState)>,
-    Json(new_settings): Json<Settings>,
+    Json(mut new_settings): Json<Settings>,
 ) -> impl IntoResponse {
+    new_settings.settings_version = CURRENT_SETTINGS_VERSION;
+    clamp_text_config(&mut new_settings.text);
     match save_settings(&new_settings) {
         Ok(()) => {
             *state.1.write().await = new_settings;
@@ -725,6 +917,7 @@ pub async fn upload_background(
             // Update settings
             let mut settings = state.1.write().await;
             settings.background.has_image = true;
+            settings.settings_version = CURRENT_SETTINGS_VERSION;
             let _ = save_settings(&settings);
 
             info!("Background image uploaded");
@@ -821,3 +1014,25 @@ pub async fn get_log(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod space_confirms_dialogs_tests {
+    use super::Settings;
+
+    #[test]
+    fn space_confirms_dialogs_defaults_to_false() {
+        let settings: Settings = serde_json::from_str(r"{}").unwrap();
+        assert!(!settings.space_confirms_dialogs);
+    }
+
+    #[test]
+    fn space_confirms_dialogs_round_trips() {
+        let settings: Settings =
+            serde_json::from_str(r#"{"space_confirms_dialogs":true}"#).unwrap();
+        assert!(settings.space_confirms_dialogs);
+
+        let serialized = serde_json::to_string(&settings).unwrap();
+        let round_tripped: Settings = serde_json::from_str(&serialized).unwrap();
+        assert!(round_tripped.space_confirms_dialogs);
+    }
+}

@@ -90,6 +90,22 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let attempts = 0
 let started = false
 
+function handleMessage(e: { data: string }) {
+  try {
+    const msg: MonitorMessage = JSON.parse(e.data)
+    if ('type' in msg && msg.type === 'history') {
+      for (const fn of historyListeners) fn(msg.data)
+      if (msg.data.length > 0) {
+        monitorData.value = msg.data[msg.data.length - 1]
+      }
+    } else {
+      const d = msg as MonitorData
+      monitorData.value = d
+      for (const fn of listeners) fn(d)
+    }
+  } catch {}
+}
+
 async function connect() {
   if (ws && ws.readyState <= WebSocket.OPEN) return
 
@@ -109,21 +125,7 @@ async function connect() {
     attempts = 0
   }
 
-  ws.onmessage = (e) => {
-    try {
-      const msg: MonitorMessage = JSON.parse(e.data)
-      if ('type' in msg && msg.type === 'history') {
-        for (const fn of historyListeners) fn(msg.data)
-        if (msg.data.length > 0) {
-          monitorData.value = msg.data[msg.data.length - 1]
-        }
-      } else {
-        const d = msg as MonitorData
-        monitorData.value = d
-        for (const fn of listeners) fn(d)
-      }
-    } catch {}
-  }
+  ws.onmessage = (e) => handleMessage(e)
 
   ws.onclose = () => {
     monitorConnected.value = false

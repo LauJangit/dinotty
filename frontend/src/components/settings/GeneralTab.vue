@@ -68,9 +68,6 @@
           </div>
           <div v-if="accessUrl" class="qr-code-wrap">
             <canvas ref="qrCanvasRef"></canvas>
-            <button class="qr-refresh-btn" @click="refreshQrCode" :title="t('settings.refreshQrCode')">
-              <RefreshCw :size="12" />
-            </button>
           </div>
           <p class="settings-hint">{{ t('settings.accessUrlHint') }}</p>
         </div>
@@ -128,6 +125,7 @@
         <p v-if="tokenError" class="token-error">{{ tokenError }}</p>
       </section>
 
+      <CollapsibleSection :title="t('settings.group.advancedSecurity')" level="section">
       <section class="settings-section">
         <h3>{{ t('settings.ipWhitelist') }}</h3>
         <div v-for="(ip, idx) in settings.ip_whitelist" :key="idx" class="ip-row">
@@ -146,7 +144,214 @@
         </div>
         <p class="settings-hint">{{ t('settings.ipWhitelist.hint') }}</p>
       </section>
+
+      <section class="settings-section">
+        <h3>{{ t('security.authConfig') }}</h3>
+
+        <div class="settings-row">
+          <label>{{ t('security.lockoutStrategy') }}</label>
+          <select v-model="settings.auth.lockout_strategy" @change="saveSettings()">
+            <option value="ip">IP</option>
+            <option value="global">Global</option>
+            <option value="off">Off</option>
+          </select>
+        </div>
+
+        <template v-if="settings.auth.lockout_strategy === 'ip'">
+          <div class="settings-row">
+            <label>{{ t('security.lockoutMaxFailures') }}</label>
+            <input
+              type="number"
+              v-model.number="settings.auth.lockout_max_failures"
+              @change="saveSettings()"
+              min="1"
+              max="100"
+              class="settings-input-number"
+            />
+          </div>
+          <div class="settings-row">
+            <label>{{ t('security.lockoutSecs') }}</label>
+            <input
+              type="number"
+              v-model.number="settings.auth.lockout_secs"
+              @change="saveSettings()"
+              min="10"
+              max="3600"
+              class="settings-input-number"
+            />
+          </div>
+        </template>
+
+        <template v-if="settings.auth.lockout_strategy === 'global'">
+          <div class="settings-row">
+            <label>{{ t('security.globalLockoutMaxFailures') }}</label>
+            <input
+              type="number"
+              v-model.number="settings.auth.global_lockout_max_failures"
+              @change="saveSettings()"
+              min="1"
+              max="1000"
+              class="settings-input-number"
+            />
+          </div>
+          <div class="settings-row">
+            <label>{{ t('security.globalLockoutSecs') }}</label>
+            <input
+              type="number"
+              v-model.number="settings.auth.global_lockout_secs"
+              @change="saveSettings()"
+              min="10"
+              max="86400"
+              class="settings-input-number"
+            />
+          </div>
+        </template>
+
+        <div class="settings-row" style="margin-top: 8px">
+          <label>{{ t('security.allowedOrigins') }}</label>
+        </div>
+        <textarea
+          class="config-textarea"
+          :value="settings.auth.allowed_origins.join('\n')"
+          @input="onAllowedOriginsInput"
+          :placeholder="t('security.allowedOriginsPlaceholder')"
+          rows="3"
+        ></textarea>
+        <p class="settings-hint">{{ t('security.allowedOriginsHint') }}</p>
+
+        <div class="settings-row" style="margin-top: 8px">
+          <label>{{ t('security.trustedProxies') }}</label>
+        </div>
+        <textarea
+          class="config-textarea"
+          :value="settings.auth.trusted_proxies.join('\n')"
+          @input="onTrustedProxiesInput"
+          :placeholder="t('security.trustedProxiesPlaceholder')"
+          rows="3"
+        ></textarea>
+        <p class="settings-hint">{{ t('security.trustedProxiesHint') }}</p>
+
+        <div class="settings-row" style="margin-top: 8px">
+          <label>{{ t('security.previewAllowExternal') }}</label>
+          <label class="toggle">
+            <input type="checkbox" v-model="settings.preview.allow_external" @change="saveSettings()" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+        <p class="settings-hint">{{ t('security.previewAllowExternalHint') }}</p>
+      </section>
+      </CollapsibleSection>
     </div>
+
+    <CollapsibleSection :title="t('settings.group.filesFolders')" level="group" :default-open="true">
+      <section class="settings-section">
+        <div class="settings-row">
+          <label>{{ t('settings.uploads.defaultDir') }}</label>
+          <div class="upload-dir-control">
+            <input
+              v-model="settings.default_base_dir"
+              class="shortcut-input upload-dir-input"
+              placeholder="/Users/me/projects"
+              @change="saveSettings()"
+            />
+            <button
+              v-if="isTauri()"
+              class="icon-btn"
+              type="button"
+              @click="pickDefaultBaseDir"
+            >
+              <FolderOpen :size="14" />
+              {{ t('settings.uploads.pickDir') }}
+            </button>
+          </div>
+        </div>
+        <div class="settings-row">
+          <label>{{ t('settings.uploads.dir') }}</label>
+          <div class="upload-dir-control">
+            <input
+              v-model="settings.upload_dir"
+              class="shortcut-input upload-dir-input"
+              data-testid="upload-dir-input"
+              :placeholder="uploadDirPlaceholder"
+              @change="onUploadSettingsChange"
+              @blur="refreshUploadStatus"
+            />
+            <button
+              v-if="isTauri()"
+              class="icon-btn"
+              type="button"
+              @click="pickUploadDir"
+              :disabled="!!uploadBusy"
+            >
+              <FolderOpen :size="14" />
+              {{ t('settings.uploads.pickDir') }}
+            </button>
+          </div>
+        </div>
+        <p v-if="uploadDirError" class="settings-error" data-testid="upload-dir-error">
+          {{ uploadDirError }}
+        </p>
+        <div class="settings-row">
+          <label>{{ t('settings.uploads.capMb') }}</label>
+          <input
+            v-model.number="settings.upload_cap_mb"
+            type="number"
+            min="0"
+            class="shortcut-input upload-number-input"
+            @change="onUploadSettingsChange"
+          />
+        </div>
+        <div class="settings-row">
+          <label>{{ t('settings.uploads.fileCapMb') }}</label>
+          <input
+            v-model.number="settings.upload_file_cap_mb"
+            type="number"
+            min="0"
+            class="shortcut-input upload-number-input"
+            @change="onUploadSettingsChange"
+          />
+        </div>
+        <p class="settings-hint">{{ t('settings.uploads.fileCapUnlimited') }}</p>
+        <div class="settings-row">
+          <label>{{ t('settings.uploads.capCount') }}</label>
+          <input
+            v-model.number="settings.upload_cap_count"
+            type="number"
+            min="0"
+            class="shortcut-input upload-number-input"
+            @change="onUploadSettingsChange"
+          />
+        </div>
+        <div class="upload-actions">
+          <button
+            class="icon-btn"
+            data-testid="restore-upload-default"
+            @click="restoreDefaultUploadDir"
+            :disabled="!!uploadBusy"
+          >
+            <RefreshCw :size="14" />
+            {{ t('settings.uploads.restoreDefault') }}
+          </button>
+          <button class="icon-btn danger" @click="clearUploads" :disabled="!!uploadBusy">
+            {{
+              uploadBusy === 'clear' ? t('settings.uploads.clearing') : t('settings.uploads.clear')
+            }}
+          </button>
+          <button
+            v-if="uploadStatus.foreign"
+            class="icon-btn"
+            @click="adoptUploads"
+            :disabled="!!uploadBusy"
+          >
+            {{
+              uploadBusy === 'adopt' ? t('settings.uploads.adopting') : t('settings.uploads.adopt')
+            }}
+          </button>
+        </div>
+        <p class="settings-hint">{{ t('settings.uploads.hint') }}</p>
+        <p v-if="!uploadDirError" class="settings-hint">{{ uploadStatusLabel }}</p>
+      </section>
+    </CollapsibleSection>
 
     <div class="settings-group">
       <h3 class="settings-group-title">{{ t('settings.group.behavior') }}</h3>
@@ -179,12 +384,26 @@
         <p class="settings-hint" data-hint="confirm-before-close-tab">
           {{ t('settings.confirmBeforeCloseTabHint') }}
         </p>
+        <div class="settings-row">
+          <label>{{ t('settings.spaceConfirmsDialogs') }}</label>
+          <label class="toggle">
+            <input
+              type="checkbox"
+              v-model="settings.space_confirms_dialogs"
+              @change="saveSettings()"
+              data-setting="space-confirms-dialogs"
+            />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+        <p class="settings-hint" data-hint="space-confirms-dialogs">
+          {{ t('settings.spaceConfirmsDialogsHint') }}
+        </p>
       </section>
     </div>
 
-    <div class="settings-group">
+    <CollapsibleSection :title="t('settings.log')" level="group">
       <section class="settings-section">
-        <h3>{{ t('settings.log') }}</h3>
         <div class="settings-row">
           <label>{{ t('settings.log.enabled') }}</label>
           <label class="toggle">
@@ -220,7 +439,7 @@
           </div>
         </template>
       </section>
-    </div>
+    </CollapsibleSection>
 
     <!-- Log Viewer Modal -->
     <div v-if="logModalVisible" class="log-modal-overlay" @click.self="logModalVisible = false">
@@ -229,22 +448,30 @@
           <h3>{{ t('settings.log.viewTitle') }}</h3>
           <div class="log-modal-actions">
             <button class="icon-btn" @click="refreshLog">{{ t('settings.log.refresh') }}</button>
-            <button class="icon-btn" @click="logModalVisible = false">{{ t('settings.log.close') }}</button>
+            <button class="icon-btn" @click="logModalVisible = false">
+              {{ t('settings.log.close') }}
+            </button>
           </div>
         </div>
-        <pre class="log-content">{{ logLoading ? t('settings.log.loading') : (logContent || t('settings.log.noLog')) }}</pre>
+        <pre class="log-content">{{
+          logLoading ? t('settings.log.loading') : logContent || t('settings.log.noLog')
+        }}</pre>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { computed, ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import QRCode from 'qrcode'
-import { Eye, EyeOff, Copy, Check, Pencil, RefreshCw, Save, X } from 'lucide-vue-next'
+import { Eye, EyeOff, Copy, Check, Pencil, RefreshCw, Save, X, FolderOpen } from 'lucide-vue-next'
+import { invoke } from '@tauri-apps/api/core'
 import { useSettings } from '../../composables/useSettings'
 import { useI18n } from '../../composables/useI18n'
+import CollapsibleSection from './CollapsibleSection.vue'
 import { copyToClipboard } from '../../utils/clipboard'
+import { useToast } from 'vue-toastification'
+import { isTauri } from '../../composables/useTransport'
 import {
   apiUrl,
   authFetch,
@@ -253,10 +480,12 @@ import {
   getApiBase,
   fetchServerToken,
 } from '../../composables/apiBase'
+import type { UploadResponse } from '../../types/uploads'
 
 const emit = defineEmits<{ 'token-changed': [] }>()
 const { settings, saveSettings } = useSettings()
 const { t } = useI18n()
+const toast = useToast()
 
 const accessUrl = ref('')
 const logModalVisible = ref(false)
@@ -264,31 +493,144 @@ const logContent = ref('')
 const logLoading = ref(false)
 const copied = ref(false)
 const qrCanvasRef = ref<HTMLCanvasElement | null>(null)
-const qrCode = ref('')
 const currentToken = ref('')
+const uploadBusy = ref<'' | 'status' | 'clear' | 'adopt'>('')
+const uploadStatus = ref({ managed: false, foreign: false, empty: true })
+const uploadDirError = ref('')
 
-watch([accessUrl, qrCanvasRef, qrCode], ([url, canvas, code]) => {
+const uploadStatusLabel = computed(() => {
+  if (uploadStatus.value.foreign) return t('settings.uploads.statusForeign')
+  if (uploadStatus.value.managed) return t('settings.uploads.statusManaged')
+  return t('settings.uploads.statusUnknown')
+})
+
+const uploadDirPlaceholder = computed(() => {
+  const platform = (navigator.platform || '').toLowerCase()
+  const userAgent = (navigator.userAgent || '').toLowerCase()
+  if (platform.startsWith('win') || userAgent.includes('windows')) return '%TEMP%\\dinotty'
+  if (platform.includes('mac') || userAgent.includes('mac os')) return '$TMPDIR/dinotty'
+  return '/tmp/dinotty'
+})
+
+function setUploadStatus(data: UploadResponse) {
+  uploadDirError.value = ''
+  uploadStatus.value = {
+    managed: !!data.managed,
+    foreign: !!data.foreign,
+    empty: !!data.empty,
+  }
+}
+
+function errorStatus(err: unknown): number | undefined {
+  if (typeof err !== 'object' || err === null || !('status' in err)) return undefined
+  const status = Number((err as { status: unknown }).status)
+  return Number.isFinite(status) ? status : undefined
+}
+
+async function postUploadsStatus() {
+  const res = await authFetch(apiUrl('/api/uploads'), { method: 'GET' })
+  if (!res.ok) throw { status: res.status }
+  return (await res.json()) as UploadResponse
+}
+
+async function refreshUploadStatus() {
+  if (uploadBusy.value) return
+  uploadBusy.value = 'status'
+  try {
+    setUploadStatus(await postUploadsStatus())
+    uploadDirError.value = ''
+  } catch (err) {
+    uploadDirError.value = errorStatus(err) === 400 ? t('settings.uploads.dirInvalid') : ''
+    uploadStatus.value = { managed: false, foreign: false, empty: true }
+  } finally {
+    uploadBusy.value = ''
+  }
+}
+
+async function onUploadSettingsChange() {
+  if (!Number.isFinite(settings.upload_cap_mb as number)) settings.upload_cap_mb = 0
+  if (!Number.isFinite(settings.upload_file_cap_mb as number)) settings.upload_file_cap_mb = 0
+  if (!Number.isFinite(settings.upload_cap_count as number)) settings.upload_cap_count = 0
+  await saveSettings()
+  await refreshUploadStatus()
+}
+
+async function pickUploadDir() {
+  try {
+    const dir = await invoke<string | null>('pick_upload_dir')
+    if (!dir) return
+    settings.upload_dir = dir
+    await onUploadSettingsChange()
+  } catch {
+    uploadDirError.value = t('settings.uploads.dirInvalid')
+  }
+}
+
+async function pickDefaultBaseDir() {
+  const dir = await invoke<string | null>('pick_workspace_dir', { base: settings.default_base_dir || undefined })
+  if (!dir) return
+  settings.default_base_dir = dir
+  await saveSettings()
+}
+
+async function restoreDefaultUploadDir() {
+  try {
+    const res = await authFetch(apiUrl('/api/uploads/default-dir'), { method: 'GET' })
+    if (!res.ok) throw new Error(`default upload dir failed: ${res.status}`)
+    const data = (await res.json()) as { default_dir?: string }
+    if (!data.default_dir) return
+    settings.upload_dir = data.default_dir
+    await onUploadSettingsChange()
+  } catch {
+    uploadDirError.value = t('settings.uploads.dirInvalid')
+  }
+}
+
+async function clearUploads() {
+  uploadBusy.value = 'clear'
+  try {
+    const res = await authFetch(apiUrl('/api/uploads/clear'), { method: 'POST' })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    setUploadStatus((await res.json()) as UploadResponse)
+    toast.success(t('settings.uploads.clearDone'))
+  } catch {
+    toast.error(t('settings.uploads.clearFailed'))
+    uploadBusy.value = ''
+    await refreshUploadStatus()
+  } finally {
+    uploadBusy.value = ''
+  }
+}
+
+async function adoptUploads() {
+  uploadBusy.value = 'adopt'
+  try {
+    const res = await authFetch(apiUrl('/api/uploads/adopt'), { method: 'POST' })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    setUploadStatus((await res.json()) as UploadResponse)
+    toast.success(t('settings.uploads.adoptDone'))
+  } catch {
+    toast.error(t('settings.uploads.adoptFailed'))
+    uploadBusy.value = ''
+    await refreshUploadStatus()
+  } finally {
+    uploadBusy.value = ''
+  }
+}
+
+function onUploadStatusEvent(ev: Event) {
+  setUploadStatus((ev as CustomEvent<UploadResponse>).detail ?? {})
+}
+
+watch([accessUrl, qrCanvasRef], ([url, canvas]) => {
   if (url && canvas) {
-    const qrUrl = code ? `${url}/?code=${code}` : url
-    QRCode.toCanvas(canvas, qrUrl, {
+    QRCode.toCanvas(canvas, url, {
       width: 160,
       margin: 2,
       color: { dark: '#C7C7C7', light: '#00000000' },
     })
   }
 })
-
-async function refreshQrCode() {
-  try {
-    const res = await authFetch(apiUrl('/api/qr-code'), { method: 'POST' })
-    if (res.ok) {
-      const data = await res.json()
-      qrCode.value = data.code
-    }
-  } catch {
-    // QR code generation failed — canvas will show URL without code
-  }
-}
 
 async function fetchAccessUrl() {
   try {
@@ -306,13 +648,12 @@ async function fetchAccessUrl() {
 
 async function refreshAccessUrlAndQr() {
   await fetchAccessUrl()
-  await refreshQrCode()
 }
 
 onMounted(async () => {
   await fetchAccessUrl()
   currentToken.value = (await fetchServerToken()) || getAuthToken()
-  await refreshQrCode()
+  await refreshUploadStatus()
 })
 
 // Re-fetch IP when network changes (e.g. WiFi switch)
@@ -327,17 +668,15 @@ function onVisibilityChange() {
   }
 }
 
-// Auto-refresh QR code before the 5-minute TTL expires
-let qrRefreshTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
-  qrRefreshTimer = setInterval(refreshQrCode, 4 * 60 * 1000)
   window.addEventListener('online', onNetworkChange)
   document.addEventListener('visibilitychange', onVisibilityChange)
+  window.addEventListener('dinotty-upload-status', onUploadStatusEvent)
 })
 onUnmounted(() => {
-  if (qrRefreshTimer) clearInterval(qrRefreshTimer)
   window.removeEventListener('online', onNetworkChange)
   document.removeEventListener('visibilitychange', onVisibilityChange)
+  window.removeEventListener('dinotty-upload-status', onUploadStatusEvent)
 })
 
 async function copyAccessUrl() {
@@ -421,6 +760,18 @@ async function applyNewToken(token: string) {
 // IP whitelist
 const newIp = ref('')
 
+function onAllowedOriginsInput(e: Event) {
+  const val = (e.target as HTMLTextAreaElement).value
+  settings.auth.allowed_origins = val.split('\n').map((s) => s.trim()).filter(Boolean)
+  saveSettings()
+}
+
+function onTrustedProxiesInput(e: Event) {
+  const val = (e.target as HTMLTextAreaElement).value
+  settings.auth.trusted_proxies = val.split('\n').map((s) => s.trim()).filter(Boolean)
+  saveSettings()
+}
+
 function addIp() {
   const val = newIp.value.trim()
   if (!val) return
@@ -466,10 +817,10 @@ async function refreshLog() {
 .token-input {
   flex: 1;
   padding: 6px 10px;
-  border: 1px solid #3c3c3c;
+  border: 1px solid var(--border);
   border-radius: 5px;
-  background: #2a2a2c;
-  color: #e8e8e8;
+  background: var(--bg-input);
+  color: var(--fg-bright);
   font-size: 13px;
   font-family: monospace;
   outline: none;
@@ -477,15 +828,15 @@ async function refreshLog() {
 }
 
 .token-input:focus {
-  border-color: #007aff;
+  border-color: var(--accent);
 }
 
 .icon-btn {
   padding: 6px 10px;
-  border: 1px solid #3c3c3c;
+  border: 1px solid var(--border);
   border-radius: 5px;
-  background: #2a2a2c;
-  color: #c8c8c8;
+  background: var(--bg-input);
+  color: var(--fg);
   font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
@@ -525,9 +876,36 @@ async function refreshLog() {
   padding: 4px 2px;
 }
 
-.token-error {
+.upload-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 10px 0 6px;
+}
+
+.upload-dir-control {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+.upload-dir-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.upload-number-input {
+  max-width: 120px;
+}
+
+.token-error,
+.settings-error {
   color: #f44747;
-  font-size: 12px;
+  font-size: 14px;
+  font-weight: 600;
   margin: 4px 0 0;
 }
 
@@ -541,14 +919,14 @@ async function refreshLog() {
 
 .qr-code-wrap canvas {
   border-radius: 8px;
-  background: var(--bg-input, #1a1a1a);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
   padding: 8px;
 }
 
 .qr-refresh-btn {
   background: none;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 6px;
   color: var(--text-secondary, #888);
   cursor: pointer;
@@ -556,7 +934,9 @@ async function refreshLog() {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: color 0.2s, border-color 0.2s;
+  transition:
+    color 0.2s,
+    border-color 0.2s;
 }
 
 .qr-refresh-btn:hover {
@@ -579,7 +959,7 @@ async function refreshLog() {
 
 .log-modal {
   background: var(--bg, #1a1a1a);
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 12px;
   width: 90vw;
   max-width: 900px;
@@ -594,7 +974,7 @@ async function refreshLog() {
   justify-content: space-between;
   align-items: center;
   padding: 16px 20px;
-  border-bottom: 1px solid var(--border, #333);
+  border-bottom: 1px solid var(--border);
 }
 
 .log-modal-header h3 {
@@ -619,5 +999,29 @@ async function refreshLog() {
   color: var(--text-secondary, #aaa);
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.config-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  padding: 8px 10px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  resize: vertical;
+}
+
+.settings-input-number {
+  width: 80px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  padding: 6px 8px;
+  font-size: 12px;
+  text-align: center;
 }
 </style>

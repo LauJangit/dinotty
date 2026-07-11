@@ -1,6 +1,6 @@
 <template>
   <div>
-    <section class="settings-section">
+    <div class="settings-group">
       <div class="settings-row">
         <label>{{ t('notification.enabled') }}</label>
         <label class="toggle">
@@ -8,14 +8,9 @@
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
-    </section>
+    </div>
 
-    <section class="settings-section">
-      <h3 class="section-title section-title--collapsible" @click="triggersOpen = !triggersOpen">
-        <span class="chevron" :class="{ open: triggersOpen }">&#x25B8;</span>
-        {{ t('notification.triggers') }}
-      </h3>
-      <template v-if="triggersOpen">
+    <CollapsibleSection :title="t('notification.triggers')" level="group" default-open>
         <div class="settings-row">
           <label>Terminal Bell (\a)</label>
           <label class="toggle">
@@ -43,11 +38,10 @@
             <span class="toggle-track"><span class="toggle-thumb"></span></span>
           </label>
         </div>
-      </template>
-    </section>
+    </CollapsibleSection>
 
-    <section class="settings-section">
-      <h3 class="section-title">{{ t('notification.channels') }}</h3>
+    <div class="settings-group">
+      <h3 class="settings-group-title">{{ t('notification.channels') }}</h3>
       <div class="settings-row">
         <label>{{ t('notification.sound') }}</label>
         <label class="toggle">
@@ -76,10 +70,10 @@
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
-    </section>
+    </div>
 
-    <section class="settings-section">
-      <h3 class="section-title">{{ t('notification.sounds') }}</h3>
+    <div class="settings-group">
+      <h3 class="settings-group-title">{{ t('notification.sounds') }}</h3>
       <div v-for="key in soundTypes" :key="key" class="settings-row sound-row">
         <label class="sound-label">{{ t(`notification.type.${key}`) }}</label>
         <select class="sound-select" v-model="cfg.sounds[key].value" @change="saveSettings()">
@@ -98,10 +92,9 @@
         />
         <button class="preview-btn" @click="previewSound(key)">▶</button>
       </div>
-    </section>
+    </div>
 
-    <section class="settings-section">
-      <h3 class="section-title">{{ t('notification.hooks') }}</h3>
+    <CollapsibleSection :title="t('notification.hooks')" level="group">
       <p class="hook-hint">{{ t('notification.hookEnvHint') }}</p>
       <div v-for="(hook, idx) in cfg.hooks" :key="idx" class="hook-row">
         <label class="toggle toggle-sm">
@@ -129,10 +122,9 @@
       >
         + {{ t('notification.hookAdd') }}
       </button>
-    </section>
+    </CollapsibleSection>
 
-    <section class="settings-section">
-      <h3 class="section-title">{{ t('notification.test') }}</h3>
+    <CollapsibleSection :title="t('notification.test')" level="group">
       <div class="api-test">
         <div class="api-method-row">
           <span class="method-badge">POST</span>
@@ -180,13 +172,14 @@
           }}</span>
         </div>
       </div>
-    </section>
+    </CollapsibleSection>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useSettings } from '../../composables/useSettings'
+import CollapsibleSection from './CollapsibleSection.vue'
 import { useI18n } from '../../composables/useI18n'
 import {
   playSound,
@@ -198,7 +191,6 @@ import { getApiBase, authFetch } from '../../composables/apiBase'
 const { settings, saveSettings } = useSettings()
 const { t } = useI18n()
 
-const triggersOpen = ref(true)
 const cfg = computed(() => settings.notification)
 const builtinNames = getBuiltinSoundNames()
 const soundTypes: NotificationType[] = ['info', 'success', 'warning', 'error', 'urgent']
@@ -300,42 +292,16 @@ async function sendTest() {
 </script>
 
 <style scoped>
-.section-title {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--fg-muted, #666);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin: 0 0 10px;
-}
-.section-title--collapsible {
-  cursor: pointer;
-  user-select: none;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.section-title--collapsible:hover {
-  color: var(--fg, #ccc);
-}
-.chevron {
-  font-size: 10px;
-  transition: transform 0.15s ease;
-  display: inline-block;
-}
-.chevron.open {
-  transform: rotate(90deg);
-}
 .sub {
   padding-left: 16px;
 }
 .num-input {
   width: 60px;
   padding: 2px 6px;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: var(--bg, #111);
-  color: var(--fg, #ccc);
+  background: var(--bg);
+  color: var(--fg);
   font-size: 12px;
 }
 .sound-row {
@@ -351,10 +317,10 @@ async function sendTest() {
 .sound-select {
   flex: 1;
   padding: 2px 4px;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: var(--bg, #111);
-  color: var(--fg, #ccc);
+  background: var(--bg);
+  color: var(--fg);
   font-size: 12px;
 }
 .vol-slider {
@@ -362,66 +328,66 @@ async function sendTest() {
 }
 .preview-btn {
   background: none;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  color: var(--fg, #ccc);
+  color: var(--fg);
   cursor: pointer;
   padding: 3px 8px;
   font-size: 12px;
 }
 .preview-btn:hover {
-  border-color: var(--fg-muted, #666);
+  border-color: var(--fg-muted);
 }
 .api-test {
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 10px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  background: var(--bg-secondary, rgba(255, 255, 255, 0.03));
+  background: var(--bg-secondary, var(--bg-surface)));
 }
 .api-method-row {
   display: flex;
   align-items: center;
   gap: 8px;
   padding-bottom: 6px;
-  border-bottom: 1px solid var(--border, #333);
+  border-bottom: 1px solid var(--border);
 }
 .mode-tabs {
   margin-left: auto;
   display: flex;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 4px;
   overflow: hidden;
 }
 .mode-tabs button {
   background: none;
   border: none;
-  color: var(--fg-muted, #999);
+  color: var(--fg-muted);
   font-size: 11px;
   padding: 2px 10px;
   cursor: pointer;
 }
 .mode-tabs button.active {
   background: var(--fg-muted, #555);
-  color: var(--bg, #111);
+  color: var(--bg);
 }
 .raw-editor {
   width: 100%;
   box-sizing: border-box;
   padding: 8px;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: var(--bg, #111);
-  color: var(--fg, #ccc);
+  background: var(--bg);
+  color: var(--fg);
   font-family: monospace;
   font-size: 12px;
   resize: vertical;
   line-height: 1.5;
 }
 .method-badge {
-  background: #49cc90;
+  background: var(--success);
   color: #000;
   font-size: 10px;
   font-weight: 700;
@@ -432,7 +398,7 @@ async function sendTest() {
 .api-url {
   font-family: monospace;
   font-size: 12px;
-  color: var(--fg, #ccc);
+  color: var(--fg);
 }
 .api-field {
   display: flex;
@@ -444,19 +410,19 @@ async function sendTest() {
   flex-shrink: 0;
   font-size: 12px;
   font-family: monospace;
-  color: var(--fg-muted, #999);
+  color: var(--fg-muted);
 }
 .api-field .required {
-  color: #ef4444;
+  color: var(--danger);
 }
 .api-field input,
 .api-field select {
   flex: 1;
   padding: 4px 8px;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: var(--bg, #111);
-  color: var(--fg, #ccc);
+  background: var(--bg);
+  color: var(--fg);
   font-size: 12px;
   font-family: monospace;
 }
@@ -470,7 +436,7 @@ async function sendTest() {
   padding-top: 4px;
 }
 .send-btn {
-  background: #49cc90;
+  background: var(--success);
   color: #000;
   border: none;
   border-radius: 4px;
@@ -491,14 +457,14 @@ async function sendTest() {
   font-family: monospace;
 }
 .api-result.ok {
-  color: #49cc90;
+  color: var(--success);
 }
 .api-result.err {
-  color: #ef4444;
+  color: var(--danger);
 }
 .hook-hint {
   font-size: 11px;
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
   margin: 0 0 8px;
   font-family: monospace;
   word-break: break-all;
@@ -526,45 +492,45 @@ async function sendTest() {
 .hook-type-select {
   width: 80px;
   padding: 3px 4px;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: var(--bg, #111);
-  color: var(--fg, #ccc);
+  background: var(--bg);
+  color: var(--fg);
   font-size: 11px;
 }
 .hook-cmd-input {
   flex: 1;
   padding: 4px 8px;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: var(--bg, #111);
-  color: var(--fg, #ccc);
+  background: var(--bg);
+  color: var(--fg);
   font-size: 12px;
   font-family: monospace;
 }
 .hook-del-btn {
   background: none;
   border: none;
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
   font-size: 16px;
   cursor: pointer;
   padding: 0 4px;
 }
 .hook-del-btn:hover {
-  color: #ef4444;
+  color: var(--danger);
 }
 .hook-add-btn {
   background: none;
-  border: 1px dashed var(--border, #333);
+  border: 1px dashed var(--border);
   border-radius: 4px;
-  color: var(--fg-muted, #999);
+  color: var(--fg-muted);
   font-size: 12px;
   padding: 4px 12px;
   cursor: pointer;
   width: 100%;
 }
 .hook-add-btn:hover {
-  border-color: var(--fg-muted, #666);
-  color: var(--fg, #ccc);
+  border-color: var(--fg-muted);
+  color: var(--fg);
 }
 </style>

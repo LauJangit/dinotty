@@ -106,7 +106,7 @@ const defs: KeyBindingDef[] = [
   },
   {
     id: 'sshConnect',
-    defaultBinding: { key: 't', shift: true },
+    defaultBinding: { key: 'n', shift: true },
     icon: '🔗',
     titleKey: 'keybinding.sshConnect',
   },

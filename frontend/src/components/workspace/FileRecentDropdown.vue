@@ -147,8 +147,8 @@ function ctxRemoveRecent() {
   right: 0;
   max-height: 300px;
   overflow-y: auto;
-  background: var(--bg-surface, #252526);
-  border: 1px solid var(--border, #3c3c3c);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
   border-radius: 6px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
   z-index: 500;
@@ -196,7 +196,7 @@ function ctxRemoveRecent() {
   overflow: hidden;
 }
 .file-cwd-item:hover {
-  background: var(--tab-hover-bg, #2a2a2c);
+  background: var(--tab-hover-bg);
 }
 
 .file-cwd-name {
@@ -226,8 +226,8 @@ function ctxRemoveRecent() {
 .file-cwd-ctx-menu {
   position: fixed;
   min-width: 180px;
-  background: #252526;
-  border: 1px solid #3c3c3c;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
   border-radius: 6px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   padding: 4px 0;
@@ -255,7 +255,7 @@ function ctxRemoveRecent() {
 }
 .file-cwd-ctx-menu .tree-ctx-sep {
   height: 1px;
-  background: #3c3c3c;
+  background: var(--border);
   margin: 4px 0;
 }
 </style>

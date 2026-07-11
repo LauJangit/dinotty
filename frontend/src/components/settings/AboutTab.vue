@@ -1,7 +1,7 @@
 <template>
   <div>
-    <section class="settings-section">
-      <h3>{{ t('settings.about.title') }}</h3>
+    <div class="settings-group">
+      <h3 class="settings-group-title">{{ t('settings.about.title') }}</h3>
       <div class="about-logo-row">
         <img src="/logo.png" alt="Dinotty" class="about-logo" />
         <span class="about-name">Dinotty</span>
@@ -21,7 +21,7 @@
           https://github.com/xichan96/dinotty
         </a>
       </div>
-    </section>
+    </div>
   </div>
 </template>
 
@@ -72,11 +72,11 @@ onMounted(loadInfo)
 .about-name {
   font-size: 18px;
   font-weight: 600;
-  color: var(--fg-bright, #f0f6fc);
+  color: var(--fg-bright);
 }
 .about-val {
   font-size: 13px;
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
 }
 .about-link {
   font-size: 13px;

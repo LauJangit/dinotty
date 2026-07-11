@@ -194,8 +194,8 @@ function onSave() {
   width: 90vw;
   max-width: 440px;
   max-height: 85vh;
-  background: var(--bg-surface, #1a1a1a);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
   display: flex;
@@ -207,7 +207,7 @@ function onSave() {
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  border-bottom: 1px solid var(--border, #333);
+  border-bottom: 1px solid var(--border);
 }
 .ssh-edit-header h2 {
   font-size: 15px;
@@ -306,7 +306,7 @@ function onSave() {
   justify-content: flex-end;
   gap: 8px;
   padding: 12px 16px;
-  border-top: 1px solid var(--border, #333);
+  border-top: 1px solid var(--border);
   padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
 }
 
@@ -319,7 +319,7 @@ function onSave() {
   border: 1px solid var(--border);
 }
 .ssh-edit-cancel:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--bg-hover);
 }
 
 .ssh-edit-save {
