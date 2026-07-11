@@ -1,7 +1,7 @@
 <template>
   <div>
-    <div class="settings-group">
-      <h3 class="settings-group-title">{{ t('settings.about.title') }}</h3>
+    <section class="settings-section">
+      <h3>{{ t('settings.about.title') }}</h3>
       <div class="about-logo-row">
         <img src="/logo.png" alt="Dinotty" class="about-logo" />
         <span class="about-name">Dinotty</span>
@@ -21,7 +21,7 @@
           https://github.com/xichan96/dinotty
         </a>
       </div>
-    </div>
+    </section>
   </div>
 </template>
 

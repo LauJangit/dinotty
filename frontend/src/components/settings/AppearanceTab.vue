@@ -1,7 +1,7 @@
 <template>
   <div>
-    <div class="settings-group">
-      <h3 class="settings-group-title">{{ t('settings.theme') }}</h3>
+    <section class="settings-section">
+      <h3>{{ t('settings.theme') }}</h3>
       <div class="theme-grid">
         <button
           v-for="th in themes"
@@ -36,17 +36,10 @@
           <span class="theme-name">{{ themeLabel(th.name) }}</span>
         </button>
       </div>
-    </div>
+    </section>
 
-    <div class="settings-group">
-      <h3
-        class="settings-group-title section-title--collapsible"
-        @click="customColorsOpen = !customColorsOpen"
-      >
-        <span class="chevron" :class="{ open: customColorsOpen }">▶</span>
-        {{ t('settings.customColors') }}
-      </h3>
-      <template v-if="customColorsOpen">
+    <section class="settings-section">
+      <h3>{{ t('settings.customColors') }}</h3>
       <p class="settings-hint">{{ t('settings.customColorsHint') }}</p>
       <div class="custom-colors-grid">
         <label class="color-field">
@@ -80,11 +73,10 @@
           </label>
         </div>
       </details>
-      </template>
-    </div>
+    </section>
 
-    <div class="settings-group">
-      <h3 class="settings-group-title">{{ t('settings.text') }}</h3>
+    <section class="settings-section">
+      <h3>{{ t('settings.text') }}</h3>
 
       <div class="settings-row">
         <label>{{ t('settings.text.fontSize') }}</label>
@@ -162,9 +154,6 @@
         </div>
       </div>
 
-      <details class="ansi-details">
-        <summary>{{ t('settings.advancedText') }}</summary>
-
       <div class="settings-row">
         <label>{{ t('settings.text.lineHeight') }}</label>
         <div class="range-wrap">
@@ -235,11 +224,9 @@
           <span class="range-val">{{ settings.text.scrollback.toLocaleString() }}</span>
         </div>
       </div>
+    </section>
 
-      </details>
-    </div>
-
-    <div class="settings-group" style="text-align: right">
+    <div class="settings-section" style="text-align: right">
       <button class="shortcut-add" @click="resetCustomColors">
         {{ t('settings.color.reset') }}
       </button>
@@ -381,8 +368,6 @@ const fontFamilies = [
   { label: 'Ubuntu Mono', value: '"Ubuntu Mono", monospace' },
 ]
 
-const customColorsOpen = ref(false)
-const advancedTextOpen = ref(false)
 const fontDropdownOpen = ref(false)
 const customFontEditing = ref(false)
 const customFontName = ref('')
