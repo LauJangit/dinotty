@@ -7,18 +7,14 @@ mod websocket;
 
 use axum::{
     body::Body,
-    extract::{ConnectInfo, Path, Request, State},
+    extract::{Path, Request},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
 };
 use bytes::Bytes;
 use reqwest::Client;
-use std::net::SocketAddr;
-use std::sync::{Arc, LazyLock};
+use std::sync::LazyLock;
 use std::time::Duration;
-
-use crate::auth::session::SessionStore;
-use crate::settings::SettingsState;
 
 pub use external::external_proxy_handler;
 
@@ -89,77 +85,13 @@ fn is_valid_proxy_host(host: &str) -> bool {
         && !host.contains(':')
 }
 
-/// Auth check for `/preview/*` requests.
-/// - `allow_external = false`: only loopback IPs allowed.
-/// - `allow_external = true`: any IP, but must have a valid session cookie or Bearer token.
-///
-/// Returns `Some(Response)` if the request should be rejected, `None` to proceed.
-fn check_preview_auth(
-    req: &Request,
-    real_ip: std::net::IpAddr,
-    allow_external: bool,
-    sessions: &SessionStore,
-    token: &str,
-) -> Option<Response> {
-    if !allow_external && !real_ip.is_loopback() {
-        return Some(
-            Response::builder()
-                .status(StatusCode::FORBIDDEN)
-                .body(Body::from("Preview proxy is only available from localhost"))
-                .unwrap(),
-        );
-    }
-    if allow_external && !crate::auth::has_valid_auth(req, sessions, token) {
-        return Some(
-            Response::builder()
-                .status(StatusCode::UNAUTHORIZED)
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(r#"{"error":"unauthorized"}"#))
-                .unwrap(),
-        );
-    }
-    None
-}
-
-pub async fn proxy_handler_root(
-    Path(port): Path<u16>,
-    State(settings): State<SettingsState>,
-    State(sessions): State<Arc<SessionStore>>,
-    State(auth_token): State<Arc<tokio::sync::RwLock<String>>>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    req: Request,
-) -> impl IntoResponse {
-    let (allow_external, allowed_origins, real_ip) = {
-        let s = settings.read().await;
-        let ip = crate::auth::real_client_ip(req.headers(), addr.ip(), &s.auth.trusted_proxies);
-        (s.preview.allow_external, s.auth.allowed_origins.clone(), ip)
-    };
-    let token = auth_token.read().await.clone();
-    if let Some(resp) = check_preview_auth(&req, real_ip, allow_external, &sessions, &token) {
-        return resp;
-    }
-    proxy_internal("127.0.0.1", port, String::new(), req, &allowed_origins).await
+pub async fn proxy_handler_root(Path(port): Path<u16>, req: Request) -> impl IntoResponse {
+    proxy_internal("127.0.0.1", port, String::new(), req).await
 }
 
 /// # Panics
 /// Panics if the response builder fails (which should not happen with valid status codes and bodies).
-pub async fn proxy_handler_wildcard(
-    State(settings): State<SettingsState>,
-    State(sessions): State<Arc<SessionStore>>,
-    State(auth_token): State<Arc<tokio::sync::RwLock<String>>>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    req: Request,
-) -> impl IntoResponse {
-    let (allow_external, allowed_origins, real_ip) = {
-        let s = settings.read().await;
-        let ip = crate::auth::real_client_ip(req.headers(), addr.ip(), &s.auth.trusted_proxies);
-        (s.preview.allow_external, s.auth.allowed_origins.clone(), ip)
-    };
-    let token = auth_token.read().await.clone();
-    if let Some(resp) = check_preview_auth(&req, real_ip, allow_external, &sessions, &token) {
-        return resp;
-    }
-
+pub async fn proxy_handler_wildcard(req: Request) -> impl IntoResponse {
     let uri_path = req.uri().path().to_string();
     let after = uri_path.strip_prefix("/preview/").unwrap_or("");
 
@@ -169,7 +101,7 @@ pub async fn proxy_handler_wildcard(
             .body(Body::from("Invalid preview path"))
             .unwrap();
     };
-    proxy_internal(&host, port, path, req, &allowed_origins).await
+    proxy_internal(&host, port, path, req).await
 }
 
 fn parse_preview_path(after: &str) -> Option<(String, u16, String)> {
@@ -202,13 +134,7 @@ fn parse_preview_path(after: &str) -> Option<(String, u16, String)> {
     }
 }
 
-async fn proxy_internal(
-    host: &str,
-    port: u16,
-    path: String,
-    req: Request,
-    allowed_origins: &[String],
-) -> Response {
+async fn proxy_internal(host: &str, port: u16, path: String, req: Request) -> Response {
     if port < 1024 {
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
@@ -240,7 +166,7 @@ async fn proxy_internal(
 
     if is_websocket {
         let ws_url = format!("ws://{host}:{port}{path_part}{query}");
-        return proxy_websocket(req, ws_url, allowed_origins).await;
+        return proxy_websocket(req, ws_url).await;
     }
 
     let target_url = format!("http://{host}:{port}{path_part}{query}");

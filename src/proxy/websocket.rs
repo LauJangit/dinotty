@@ -13,23 +13,7 @@ use tokio_tungstenite::tungstenite;
 use tungstenite::client::IntoClientRequest;
 
 #[allow(clippy::too_many_lines)]
-pub async fn proxy_websocket(
-    req: Request,
-    upstream_url: String,
-    allowed_origins: &[String],
-) -> Response {
-    // WS Origin check (prevents cross-site WebSocket hijacking).
-    let client_ip = req
-        .extensions()
-        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-        .map_or_else(|| "127.0.0.1".parse().unwrap(), |ci| ci.ip());
-    if !crate::auth::check_ws_origin(req.headers(), allowed_origins, client_ip) {
-        return Response::builder()
-            .status(StatusCode::FORBIDDEN)
-            .body(Body::from("origin not allowed"))
-            .unwrap();
-    }
-
+pub async fn proxy_websocket(req: Request, upstream_url: String) -> Response {
     let protocols: Vec<String> = req
         .headers()
         .get("sec-websocket-protocol")
