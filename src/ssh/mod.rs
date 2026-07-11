@@ -816,7 +816,7 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// Test: borrow() + conditional apply with 300ms debounce.
+    /// Test: `borrow()` + conditional apply with 300ms debounce.
     /// Simulates rapid frontend resize messages during a divider drag,
     /// then verifies only one resize is applied after the drag stops.
     #[tokio::test]
@@ -894,8 +894,8 @@ mod tests {
             }
         });
 
-        // Simulate a3-second drag: resize every 25ms, cols from80 to200
-        let total_steps = (3000 / 25) as u16; //120 steps
+        // Simulate a 3-second drag: resize every 25ms, cols from 80 to 200.
+        let total_steps: u16 = 3000 / 25;
         for i in 0..total_steps {
             let cols = 80 + i;
             let _ = tx.send(Some((cols, 24)));
@@ -959,7 +959,7 @@ mod tests {
         println!("Return to original - apply count: {count}, final size: {final_size:?}");
 
         // tmux also applies twice for the "return to original" edge case
-        assert!(count >= 1 && count <= 2, "Expected 1-2 applies, got {count}");
+        assert!((1..=2).contains(&count), "Expected 1-2 applies, got {count}");
         assert_eq!(final_size, Some((100, 24)));
     }
 }
