@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="settings-group">
+    <section class="settings-section">
       <div class="settings-row">
         <label>{{ t('notification.enabled') }}</label>
         <label class="toggle">
@@ -8,11 +8,11 @@
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
-    </div>
+    </section>
 
-    <div class="settings-group">
-      <h3 class="settings-group-title section-title--collapsible" @click="triggersOpen = !triggersOpen">
-        <span class="chevron" :class="{ open: triggersOpen }">▶</span>
+    <section class="settings-section">
+      <h3 class="section-title section-title--collapsible" @click="triggersOpen = !triggersOpen">
+        <span class="chevron" :class="{ open: triggersOpen }">&#x25B8;</span>
         {{ t('notification.triggers') }}
       </h3>
       <template v-if="triggersOpen">
@@ -44,10 +44,10 @@
           </label>
         </div>
       </template>
-    </div>
+    </section>
 
-    <div class="settings-group">
-      <h3 class="settings-group-title">{{ t('notification.channels') }}</h3>
+    <section class="settings-section">
+      <h3 class="section-title">{{ t('notification.channels') }}</h3>
       <div class="settings-row">
         <label>{{ t('notification.sound') }}</label>
         <label class="toggle">
@@ -76,10 +76,10 @@
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
-    </div>
+    </section>
 
-    <div class="settings-group">
-      <h3 class="settings-group-title">{{ t('notification.sounds') }}</h3>
+    <section class="settings-section">
+      <h3 class="section-title">{{ t('notification.sounds') }}</h3>
       <div v-for="key in soundTypes" :key="key" class="settings-row sound-row">
         <label class="sound-label">{{ t(`notification.type.${key}`) }}</label>
         <select class="sound-select" v-model="cfg.sounds[key].value" @change="saveSettings()">
@@ -98,17 +98,10 @@
         />
         <button class="preview-btn" @click="previewSound(key)">▶</button>
       </div>
-    </div>
+    </section>
 
-    <div class="settings-group">
-      <h3
-        class="settings-group-title section-title--collapsible"
-        @click="hooksOpen = !hooksOpen"
-      >
-        <span class="chevron" :class="{ open: hooksOpen }">▶</span>
-        {{ t('notification.hooks') }}
-      </h3>
-      <template v-if="hooksOpen">
+    <section class="settings-section">
+      <h3 class="section-title">{{ t('notification.hooks') }}</h3>
       <p class="hook-hint">{{ t('notification.hookEnvHint') }}</p>
       <div v-for="(hook, idx) in cfg.hooks" :key="idx" class="hook-row">
         <label class="toggle toggle-sm">
@@ -136,18 +129,10 @@
       >
         + {{ t('notification.hookAdd') }}
       </button>
-      </template>
-    </div>
+    </section>
 
-    <div class="settings-group">
-      <h3
-        class="settings-group-title section-title--collapsible"
-        @click="testOpen = !testOpen"
-      >
-        <span class="chevron" :class="{ open: testOpen }">▶</span>
-        {{ t('notification.test') }}
-      </h3>
-      <template v-if="testOpen">
+    <section class="settings-section">
+      <h3 class="section-title">{{ t('notification.test') }}</h3>
       <div class="api-test">
         <div class="api-method-row">
           <span class="method-badge">POST</span>
@@ -195,8 +180,7 @@
           }}</span>
         </div>
       </div>
-      </template>
-    </div>
+    </section>
   </div>
 </template>
 
@@ -215,8 +199,6 @@ const { settings, saveSettings } = useSettings()
 const { t } = useI18n()
 
 const triggersOpen = ref(true)
-const hooksOpen = ref(false)
-const testOpen = ref(false)
 const cfg = computed(() => settings.notification)
 const builtinNames = getBuiltinSoundNames()
 const soundTypes: NotificationType[] = ['info', 'success', 'warning', 'error', 'urgent']
@@ -318,6 +300,32 @@ async function sendTest() {
 </script>
 
 <style scoped>
+.section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg-muted, #666);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 0 0 10px;
+}
+.section-title--collapsible {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.section-title--collapsible:hover {
+  color: var(--fg, #ccc);
+}
+.chevron {
+  font-size: 10px;
+  transition: transform 0.15s ease;
+  display: inline-block;
+}
+.chevron.open {
+  transform: rotate(90deg);
+}
 .sub {
   padding-left: 16px;
 }

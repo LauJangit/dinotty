@@ -35,6 +35,7 @@ export function useSyncWebSocket(opts: {
   const { workspaces, activeWorkspaceId } = useWorkspaces()
 
   let syncWs: WebSocket | null = null
+  let syncSse: EventSource | null = null
   let suppressSync = false
   let syncReconnectDelay = 1000
 
@@ -58,6 +59,13 @@ export function useSyncWebSocket(opts: {
     if (suppressSync) return
     if (syncWs && syncWs.readyState === WebSocket.OPEN) {
       syncWs.send(JSON.stringify(msg))
+    } else if (syncSse) {
+      fetch('/http/sync/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(msg),
+      }).catch(() => {})
     }
   }
 
@@ -92,6 +100,23 @@ export function useSyncWebSocket(opts: {
       )
     } catch {
       return null
+    }
+  }
+
+  function connectHttpFallback(handleMsgFn: (e: { data: string }) => void) {
+    console.log('[sync] WebSocket failed, falling back to HTTP')
+    if (syncWs) {
+      syncWs.close()
+      syncWs = null
+    }
+    syncSse = new EventSource('/http/sync')
+    syncSse.onopen = () => {
+      console.log('[sync] HTTP fallback connected')
+      syncConnected.value = true
+    }
+    syncSse.onmessage = (e) => handleMsgFn(e)
+    syncSse.onerror = () => {
+      // EventSource auto-reconnects
     }
   }
 
@@ -435,9 +460,22 @@ export function useSyncWebSocket(opts: {
 
     syncWs.onmessage = (e) => handleMsg(e)
 
+    // If WS doesn't connect within 3 seconds, fall back to HTTP SSE
+    const wsFallbackTimer = setTimeout(() => {
+      if (syncWs && syncWs.readyState !== WebSocket.OPEN) {
+        console.warn('[sync] WebSocket timeout, falling back to HTTP')
+        syncWs.close()
+        syncWs = null
+        connectHttpFallback(handleMsg)
+      }
+    }, 3000)
+
     syncWs.onclose = (e) => {
+      clearTimeout(wsFallbackTimer)
       console.warn('[sync] disconnected', e.code, e.reason)
       syncWs = null
+      // Don't reconnect via WS if we already fell back to HTTP SSE
+      if (syncSse) return
       syncConnected.value = false
       setTimeout(connectSyncWS, syncReconnectDelay)
       syncReconnectDelay = Math.min(syncReconnectDelay * 2, 30000)
@@ -453,10 +491,14 @@ export function useSyncWebSocket(opts: {
       syncWs.close()
       syncWs = null
     }
+    if (syncSse) {
+      syncSse.close()
+      syncSse = null
+    }
   }
 
   function isConnected(): boolean {
-    return !!syncWs && syncWs.readyState === WebSocket.OPEN
+    return (!!syncWs && syncWs.readyState === WebSocket.OPEN) || !!syncSse
   }
 
   return {

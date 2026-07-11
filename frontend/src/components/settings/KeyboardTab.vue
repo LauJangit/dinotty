@@ -1,7 +1,7 @@
 <template>
   <div>
-    <div class="settings-group">
-      <h3 class="settings-group-title">{{ t('keybinding.title') }}</h3>
+    <section class="settings-section">
+      <h3>{{ t('keybinding.title') }}</h3>
       <div v-if="isWindowsClient" class="settings-row">
         <label>{{ t('keybinding.windowsAltAsCmd') }}</label>
         <label class="toggle">
@@ -36,11 +36,7 @@
         </div>
 
         <div class="kb-category">
-          <h5 class="section-title--collapsible" @click="paneOpen = !paneOpen">
-            <span class="chevron" :class="{ open: paneOpen }">▶</span>
-            {{ t('keybinding.group.pane') }}
-          </h5>
-          <template v-if="paneOpen">
+          <h5>{{ t('keybinding.group.pane') }}</h5>
           <div
             v-for="def in paneDefs"
             :key="def.id"
@@ -60,15 +56,10 @@
               </template>
             </div>
           </div>
-          </template>
         </div>
 
         <div class="kb-category">
-          <h5 class="section-title--collapsible" @click="navOpen = !navOpen">
-            <span class="chevron" :class="{ open: navOpen }">▶</span>
-            {{ t('keybinding.group.nav') }}
-          </h5>
-          <template v-if="navOpen">
+          <h5>{{ t('keybinding.group.nav') }}</h5>
           <div
             v-for="def in navDefs"
             :key="def.id"
@@ -88,15 +79,10 @@
               </template>
             </div>
           </div>
-          </template>
         </div>
 
         <div class="kb-category">
-          <h5 class="section-title--collapsible" @click="fontOpen = !fontOpen">
-            <span class="chevron" :class="{ open: fontOpen }">▶</span>
-            {{ t('keybinding.group.font') }}
-          </h5>
-          <template v-if="fontOpen">
+          <h5>{{ t('keybinding.group.font') }}</h5>
           <div
             v-for="def in fontDefs"
             :key="def.id"
@@ -116,7 +102,6 @@
               </template>
             </div>
           </div>
-          </template>
         </div>
       </div>
 
@@ -171,17 +156,10 @@
           </p>
         </div>
       </div>
-    </div>
+    </section>
 
-    <div class="settings-group">
-      <h3
-        class="settings-group-title section-title--collapsible"
-        @click="actionKeyboardOpen = !actionKeyboardOpen"
-      >
-        <span class="chevron" :class="{ open: actionKeyboardOpen }">▶</span>
-        {{ t('settings.actionKeyboard') }}
-      </h3>
-      <template v-if="actionKeyboardOpen">
+    <section class="settings-section">
+      <h3>{{ t('settings.actionKeyboard') }}</h3>
       <p class="settings-hint">{{ t('settings.akHint') }}</p>
       <div class="ak-wysiwyg">
         <div v-for="(row, ri) in actionRows" :key="ri" class="ak-wyg-row-outer">
@@ -307,11 +285,10 @@
           </div>
         </div>
       </div>
-      </template>
-    </div>
+    </section>
 
-    <div class="settings-group">
-      <h3 class="settings-group-title">{{ t('settings.keyboard.feedback') }}</h3>
+    <section class="settings-section">
+      <h3>{{ t('settings.keyboard.feedback') }}</h3>
       <div class="settings-row">
         <label>{{ t('settings.keyboard.sound') }}</label>
         <label class="toggle">
@@ -319,17 +296,10 @@
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
-    </div>
+    </section>
 
-    <div class="settings-group">
-      <h3
-        class="settings-group-title section-title--collapsible"
-        @click="openApiOpen = !openApiOpen"
-      >
-        <span class="chevron" :class="{ open: openApiOpen }">▶</span>
-        {{ t('settings.keyboard.openApi') }}
-      </h3>
-      <template v-if="openApiOpen">
+    <section class="settings-section">
+      <h3>{{ t('settings.keyboard.openApi') }}</h3>
       <p class="settings-hint">{{ t('settings.keyboard.openApiHint') }}</p>
       <div class="settings-row">
         <label>{{ t('settings.keyboard.openApiEnabled') }}</label>
@@ -394,8 +364,7 @@
           >
         </details>
       </div>
-      </template>
-    </div>
+    </section>
   </div>
 </template>
 
@@ -442,11 +411,6 @@ getApiBase().then((b) => {
 // --- Keyboard shortcuts recording ---
 const kbRecording = ref<string | null>(null)
 const kbRecordError = ref('')
-const paneOpen = ref(false)
-const navOpen = ref(false)
-const fontOpen = ref(false)
-const actionKeyboardOpen = ref(false)
-const openApiOpen = ref(false)
 let kbRecordHandler: ((e: KeyboardEvent) => void) | null = null
 
 function startKbRecord(id: string) {

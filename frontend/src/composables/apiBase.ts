@@ -36,11 +36,7 @@ export function hasAuthToken(): boolean {
   return !!localStorage.getItem(STORAGE_KEY)
 }
 
-export type ValidateTokenResult =
-  | { ok: true }
-  | { ok: false; reason: 'invalid' | 'locked'; retryAfter?: number }
-
-export async function validateToken(token: string): Promise<ValidateTokenResult> {
+export async function validateToken(token: string): Promise<boolean> {
   try {
     await getApiBase()
     const init: RequestInit = {
@@ -54,21 +50,12 @@ export async function validateToken(token: string): Promise<ValidateTokenResult>
     const res = await fetch(apiUrl('/api/auth'), init)
     if (res.ok) {
       setAuthToken(token)
-      return { ok: true }
+      return true
     }
-    if (res.status === 429) {
-      return { ok: false, reason: 'locked', retryAfter: parseRetryAfter(res.headers.get('Retry-After')) }
-    }
-    return { ok: false, reason: 'invalid' }
+    return false
   } catch {
-    return { ok: false, reason: 'invalid' }
+    return false
   }
-}
-
-function parseRetryAfter(value: string | null): number | undefined {
-  if (!value) return undefined
-  const n = parseInt(value, 10)
-  return Number.isFinite(n) && n > 0 ? n : undefined
 }
 
 export async function checkTokenConfigured(): Promise<{
