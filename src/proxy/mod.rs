@@ -129,21 +129,16 @@ pub async fn proxy_handler_root(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     req: Request,
 ) -> impl IntoResponse {
-    let (allow_external, allowed_origins, trusted_proxies, real_ip) = {
+    let (allow_external, allowed_origins, real_ip) = {
         let s = settings.read().await;
         let ip = crate::auth::real_client_ip(req.headers(), addr.ip(), &s.auth.trusted_proxies);
-        (
-            s.preview.allow_external,
-            s.auth.allowed_origins.clone(),
-            s.auth.trusted_proxies.clone(),
-            ip,
-        )
+        (s.preview.allow_external, s.auth.allowed_origins.clone(), ip)
     };
     let token = auth_token.read().await.clone();
     if let Some(resp) = check_preview_auth(&req, real_ip, allow_external, &sessions, &token) {
         return resp;
     }
-    proxy_internal("127.0.0.1", port, String::new(), req, &allowed_origins, &trusted_proxies).await
+    proxy_internal("127.0.0.1", port, String::new(), req, &allowed_origins).await
 }
 
 /// # Panics
@@ -155,15 +150,10 @@ pub async fn proxy_handler_wildcard(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     req: Request,
 ) -> impl IntoResponse {
-    let (allow_external, allowed_origins, trusted_proxies, real_ip) = {
+    let (allow_external, allowed_origins, real_ip) = {
         let s = settings.read().await;
         let ip = crate::auth::real_client_ip(req.headers(), addr.ip(), &s.auth.trusted_proxies);
-        (
-            s.preview.allow_external,
-            s.auth.allowed_origins.clone(),
-            s.auth.trusted_proxies.clone(),
-            ip,
-        )
+        (s.preview.allow_external, s.auth.allowed_origins.clone(), ip)
     };
     let token = auth_token.read().await.clone();
     if let Some(resp) = check_preview_auth(&req, real_ip, allow_external, &sessions, &token) {
@@ -179,7 +169,7 @@ pub async fn proxy_handler_wildcard(
             .body(Body::from("Invalid preview path"))
             .unwrap();
     };
-    proxy_internal(&host, port, path, req, &allowed_origins, &trusted_proxies).await
+    proxy_internal(&host, port, path, req, &allowed_origins).await
 }
 
 fn parse_preview_path(after: &str) -> Option<(String, u16, String)> {
@@ -218,7 +208,6 @@ async fn proxy_internal(
     path: String,
     req: Request,
     allowed_origins: &[String],
-    trusted_proxies: &[String],
 ) -> Response {
     if port < 1024 {
         return Response::builder()
@@ -251,7 +240,7 @@ async fn proxy_internal(
 
     if is_websocket {
         let ws_url = format!("ws://{host}:{port}{path_part}{query}");
-        return proxy_websocket(req, ws_url, allowed_origins, trusted_proxies).await;
+        return proxy_websocket(req, ws_url, allowed_origins).await;
     }
 
     let target_url = format!("http://{host}:{port}{path_part}{query}");
