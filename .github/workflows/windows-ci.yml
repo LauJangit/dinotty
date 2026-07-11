@@ -38,16 +38,49 @@ jobs:
 
       - name: Configure Rust toolchain
         run: |
-          $cargoBin = Join-Path $env:USERPROFILE ".cargo\bin"
-          if (Test-Path $cargoBin) {
-            $env:PATH = "$cargoBin;$env:PATH"
-            Add-Content -Path $env:GITHUB_PATH -Value $cargoBin
+          $ErrorActionPreference = "Stop"
+
+          function Add-CargoPathIfExists([string]$Path) {
+            if (-not $Path -or -not (Test-Path -LiteralPath $Path)) {
+              return
+            }
+
+            $resolved = (Resolve-Path -LiteralPath $Path).Path
+            if (($env:PATH -split ";") -notcontains $resolved) {
+              $env:PATH = "$resolved;$env:PATH"
+              Add-Content -Path $env:GITHUB_PATH -Value $resolved
+            }
           }
 
-          if (Get-Command rustup -ErrorAction SilentlyContinue) {
-            rustup toolchain install stable --profile minimal
-            rustup default stable
+          $candidateCargoBins = @()
+          if ($env:CARGO_HOME) {
+            $candidateCargoBins += Join-Path $env:CARGO_HOME "bin"
           }
+          if ($env:USERPROFILE) {
+            $candidateCargoBins += Join-Path $env:USERPROFILE ".cargo\bin"
+          }
+
+          $usersRoot = Join-Path $env:SystemDrive "Users"
+          if (Test-Path -LiteralPath $usersRoot) {
+            $candidateCargoBins += Get-ChildItem -LiteralPath $usersRoot -Directory -ErrorAction SilentlyContinue |
+              ForEach-Object { Join-Path $_.FullName ".cargo\bin" }
+          }
+
+          $candidateCargoBins | Select-Object -Unique | ForEach-Object { Add-CargoPathIfExists $_ }
+
+          if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
+            $rustupInit = Join-Path $env:RUNNER_TEMP "rustup-init.exe"
+            Invoke-WebRequest -UseBasicParsing -Uri "https://win.rustup.rs" -OutFile $rustupInit
+            & $rustupInit -y --profile minimal --default-toolchain stable
+            if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+            }
+            Add-CargoPathIfExists (Join-Path $env:USERPROFILE ".cargo\bin")
+          }
+
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup component add clippy rustfmt
 
           cargo --version
           rustc --version
