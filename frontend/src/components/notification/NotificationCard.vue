@@ -44,7 +44,7 @@ const formattedTime = computed(() => {
   display: flex;
   border-radius: 6px;
   background: var(--bg-surface, #1e1e2e);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border, #333);
   cursor: pointer;
   transition: background 0.15s;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
@@ -115,7 +115,7 @@ const formattedTime = computed(() => {
 .card-close {
   background: none;
   border: none;
-  color: var(--fg-muted);
+  color: var(--fg-muted, #666);
   cursor: pointer;
   padding: 2px;
   line-height: 1;
@@ -124,13 +124,13 @@ const formattedTime = computed(() => {
   border-radius: 3px;
 }
 .card-close:hover {
-  color: var(--fg);
-  background: var(--bg-hover);
+  color: var(--fg, #ccc);
+  background: rgba(255, 255, 255, 0.05);
 }
 .card-body {
   margin-top: 4px;
   font-size: 12px;
-  color: var(--fg);
+  color: var(--fg, #ccc);
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 3;
@@ -141,7 +141,7 @@ const formattedTime = computed(() => {
   display: flex;
   justify-content: space-between;
   font-size: 11px;
-  color: var(--fg-muted);
+  color: var(--fg-muted, #666);
 }
 .card-pane {
   overflow: hidden;

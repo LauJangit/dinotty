@@ -92,7 +92,7 @@ onBeforeUnmount(clearLockdown)
   justify-content: center;
   width: 100%;
   height: 100dvh;
-  background: var(--bg);
+  background: #1e1e1e;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
     env(safe-area-inset-left);
 }
@@ -116,7 +116,7 @@ onBeforeUnmount(clearLockdown)
 .login-title {
   font-size: 24px;
   font-weight: 700;
-  color: var(--fg-bright);
+  color: #e8e8e8;
   margin: 0;
   font-family:
     'Inter',
@@ -127,7 +127,7 @@ onBeforeUnmount(clearLockdown)
 
 .login-subtitle {
   font-size: 13px;
-  color: var(--fg-muted);
+  color: #858585;
   margin: 0;
   text-align: center;
 }
@@ -135,10 +135,10 @@ onBeforeUnmount(clearLockdown)
 .login-input {
   width: 100%;
   padding: 10px 14px;
-  border: 1px solid var(--border);
+  border: 1px solid #3c3c3c;
   border-radius: 6px;
-  background: var(--bg-input);
-  color: var(--fg-bright);
+  background: #2a2a2c;
+  color: #e8e8e8;
   font-size: 14px;
   font-family: 'Inter', system-ui, sans-serif;
   outline: none;
@@ -146,10 +146,10 @@ onBeforeUnmount(clearLockdown)
   margin-top: 8px;
 }
 .login-input:focus {
-  border-color: var(--accent);
+  border-color: #007aff;
 }
 .login-input::placeholder {
-  color: var(--fg-muted);
+  color: #666;
 }
 
 .login-btn {
@@ -157,7 +157,7 @@ onBeforeUnmount(clearLockdown)
   padding: 10px 14px;
   border: none;
   border-radius: 6px;
-  background: var(--accent);
+  background: #007aff;
   color: #fff;
   font-size: 14px;
   font-weight: 600;
@@ -167,7 +167,7 @@ onBeforeUnmount(clearLockdown)
   transition: background 0.15s;
 }
 .login-btn:hover {
-  background: var(--accent-hover);
+  background: #3395ff;
 }
 .login-btn:disabled {
   opacity: 0.5;
