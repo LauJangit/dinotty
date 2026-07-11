@@ -33,8 +33,6 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 24
-          cache: pnpm
-          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Configure Rust toolchain
         run: |
@@ -51,8 +49,6 @@ jobs:
 
           cargo --version
           rustc --version
-
-      - uses: Swatinem/rust-cache@v2
 
       - name: Install frontend dependencies
         working-directory: frontend
@@ -78,3 +74,9 @@ jobs:
 
       - name: Test Rust workspace
         run: cargo test --workspace --all-targets
+
+      - name: Build server binary
+        run: cargo build --bin dinotty-server
+
+      - name: Smoke test Windows server
+        run: .\scripts\windows-smoke-test.ps1
