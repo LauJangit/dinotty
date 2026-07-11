@@ -10,7 +10,12 @@
       </div>
     </div>
 
-    <CollapsibleSection :title="t('notification.triggers')" level="group" default-open>
+    <div class="settings-group">
+      <h3 class="settings-group-title section-title--collapsible" @click="triggersOpen = !triggersOpen">
+        <span class="chevron" :class="{ open: triggersOpen }">▶</span>
+        {{ t('notification.triggers') }}
+      </h3>
+      <template v-if="triggersOpen">
         <div class="settings-row">
           <label>Terminal Bell (\a)</label>
           <label class="toggle">
@@ -38,7 +43,8 @@
             <span class="toggle-track"><span class="toggle-thumb"></span></span>
           </label>
         </div>
-    </CollapsibleSection>
+      </template>
+    </div>
 
     <div class="settings-group">
       <h3 class="settings-group-title">{{ t('notification.channels') }}</h3>
@@ -94,7 +100,15 @@
       </div>
     </div>
 
-    <CollapsibleSection :title="t('notification.hooks')" level="group">
+    <div class="settings-group">
+      <h3
+        class="settings-group-title section-title--collapsible"
+        @click="hooksOpen = !hooksOpen"
+      >
+        <span class="chevron" :class="{ open: hooksOpen }">▶</span>
+        {{ t('notification.hooks') }}
+      </h3>
+      <template v-if="hooksOpen">
       <p class="hook-hint">{{ t('notification.hookEnvHint') }}</p>
       <div v-for="(hook, idx) in cfg.hooks" :key="idx" class="hook-row">
         <label class="toggle toggle-sm">
@@ -122,9 +136,18 @@
       >
         + {{ t('notification.hookAdd') }}
       </button>
-    </CollapsibleSection>
+      </template>
+    </div>
 
-    <CollapsibleSection :title="t('notification.test')" level="group">
+    <div class="settings-group">
+      <h3
+        class="settings-group-title section-title--collapsible"
+        @click="testOpen = !testOpen"
+      >
+        <span class="chevron" :class="{ open: testOpen }">▶</span>
+        {{ t('notification.test') }}
+      </h3>
+      <template v-if="testOpen">
       <div class="api-test">
         <div class="api-method-row">
           <span class="method-badge">POST</span>
@@ -172,14 +195,14 @@
           }}</span>
         </div>
       </div>
-    </CollapsibleSection>
+      </template>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useSettings } from '../../composables/useSettings'
-import CollapsibleSection from './CollapsibleSection.vue'
 import { useI18n } from '../../composables/useI18n'
 import {
   playSound,
@@ -191,6 +214,9 @@ import { getApiBase, authFetch } from '../../composables/apiBase'
 const { settings, saveSettings } = useSettings()
 const { t } = useI18n()
 
+const triggersOpen = ref(true)
+const hooksOpen = ref(false)
+const testOpen = ref(false)
 const cfg = computed(() => settings.notification)
 const builtinNames = getBuiltinSoundNames()
 const soundTypes: NotificationType[] = ['info', 'success', 'warning', 'error', 'urgent']
@@ -387,7 +413,7 @@ async function sendTest() {
   line-height: 1.5;
 }
 .method-badge {
-  background: var(--success);
+  background: #49cc90;
   color: #000;
   font-size: 10px;
   font-weight: 700;
@@ -413,7 +439,7 @@ async function sendTest() {
   color: var(--fg-muted);
 }
 .api-field .required {
-  color: var(--danger);
+  color: #ef4444;
 }
 .api-field input,
 .api-field select {
@@ -436,7 +462,7 @@ async function sendTest() {
   padding-top: 4px;
 }
 .send-btn {
-  background: var(--success);
+  background: #49cc90;
   color: #000;
   border: none;
   border-radius: 4px;
@@ -457,10 +483,10 @@ async function sendTest() {
   font-family: monospace;
 }
 .api-result.ok {
-  color: var(--success);
+  color: #49cc90;
 }
 .api-result.err {
-  color: var(--danger);
+  color: #ef4444;
 }
 .hook-hint {
   font-size: 11px;
@@ -517,7 +543,7 @@ async function sendTest() {
   padding: 0 4px;
 }
 .hook-del-btn:hover {
-  color: var(--danger);
+  color: #ef4444;
 }
 .hook-add-btn {
   background: none;

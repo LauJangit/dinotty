@@ -35,7 +35,12 @@
           </div>
         </div>
 
-        <CollapsibleSection :title="t('keybinding.group.pane')" level="section">
+        <div class="kb-category">
+          <h5 class="section-title--collapsible" @click="paneOpen = !paneOpen">
+            <span class="chevron" :class="{ open: paneOpen }">▶</span>
+            {{ t('keybinding.group.pane') }}
+          </h5>
+          <template v-if="paneOpen">
           <div
             v-for="def in paneDefs"
             :key="def.id"
@@ -55,9 +60,15 @@
               </template>
             </div>
           </div>
-        </CollapsibleSection>
+          </template>
+        </div>
 
-        <CollapsibleSection :title="t('keybinding.group.nav')" level="section">
+        <div class="kb-category">
+          <h5 class="section-title--collapsible" @click="navOpen = !navOpen">
+            <span class="chevron" :class="{ open: navOpen }">▶</span>
+            {{ t('keybinding.group.nav') }}
+          </h5>
+          <template v-if="navOpen">
           <div
             v-for="def in navDefs"
             :key="def.id"
@@ -77,9 +88,15 @@
               </template>
             </div>
           </div>
-        </CollapsibleSection>
+          </template>
+        </div>
 
-        <CollapsibleSection :title="t('keybinding.group.font')" level="section">
+        <div class="kb-category">
+          <h5 class="section-title--collapsible" @click="fontOpen = !fontOpen">
+            <span class="chevron" :class="{ open: fontOpen }">▶</span>
+            {{ t('keybinding.group.font') }}
+          </h5>
+          <template v-if="fontOpen">
           <div
             v-for="def in fontDefs"
             :key="def.id"
@@ -99,7 +116,8 @@
               </template>
             </div>
           </div>
-        </CollapsibleSection>
+          </template>
+        </div>
       </div>
 
       <div class="kb-group">
@@ -155,7 +173,15 @@
       </div>
     </div>
 
-    <CollapsibleSection :title="t('settings.actionKeyboard')" level="group">
+    <div class="settings-group">
+      <h3
+        class="settings-group-title section-title--collapsible"
+        @click="actionKeyboardOpen = !actionKeyboardOpen"
+      >
+        <span class="chevron" :class="{ open: actionKeyboardOpen }">▶</span>
+        {{ t('settings.actionKeyboard') }}
+      </h3>
+      <template v-if="actionKeyboardOpen">
       <p class="settings-hint">{{ t('settings.akHint') }}</p>
       <div class="ak-wysiwyg">
         <div v-for="(row, ri) in actionRows" :key="ri" class="ak-wyg-row-outer">
@@ -281,7 +307,8 @@
           </div>
         </div>
       </div>
-    </CollapsibleSection>
+      </template>
+    </div>
 
     <div class="settings-group">
       <h3 class="settings-group-title">{{ t('settings.keyboard.feedback') }}</h3>
@@ -294,7 +321,15 @@
       </div>
     </div>
 
-    <CollapsibleSection :title="t('settings.keyboard.openApi')" level="group">
+    <div class="settings-group">
+      <h3
+        class="settings-group-title section-title--collapsible"
+        @click="openApiOpen = !openApiOpen"
+      >
+        <span class="chevron" :class="{ open: openApiOpen }">▶</span>
+        {{ t('settings.keyboard.openApi') }}
+      </h3>
+      <template v-if="openApiOpen">
       <p class="settings-hint">{{ t('settings.keyboard.openApiHint') }}</p>
       <div class="settings-row">
         <label>{{ t('settings.keyboard.openApiEnabled') }}</label>
@@ -359,14 +394,14 @@
           >
         </details>
       </div>
-    </CollapsibleSection>
+      </template>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, nextTick, onBeforeUnmount } from 'vue'
 import { useSettings, DEFAULT_ACTION_KEYBOARD } from '../../composables/useSettings'
-import CollapsibleSection from './CollapsibleSection.vue'
 import { useI18n } from '../../composables/useI18n'
 import { useKeybindings } from '../../composables/useKeybindings'
 import type { ActionKey } from '../../composables/useSettings'
@@ -407,6 +442,11 @@ getApiBase().then((b) => {
 // --- Keyboard shortcuts recording ---
 const kbRecording = ref<string | null>(null)
 const kbRecordError = ref('')
+const paneOpen = ref(false)
+const navOpen = ref(false)
+const fontOpen = ref(false)
+const actionKeyboardOpen = ref(false)
+const openApiOpen = ref(false)
 let kbRecordHandler: ((e: KeyboardEvent) => void) | null = null
 
 function startKbRecord(id: string) {
@@ -934,7 +974,7 @@ function unescapeFromDisplay(s: string): string {
   line-height: 1.5;
 }
 .method-badge {
-  background: var(--success);
+  background: #49cc90;
   color: #000;
   font-size: 10px;
   font-weight: 700;
@@ -983,7 +1023,7 @@ function unescapeFromDisplay(s: string): string {
   padding-top: 4px;
 }
 .send-btn {
-  background: var(--success);
+  background: #49cc90;
   color: #000;
   border: none;
   border-radius: 4px;
@@ -1004,7 +1044,7 @@ function unescapeFromDisplay(s: string): string {
   font-family: monospace;
 }
 .api-result.ok {
-  color: var(--success);
+  color: #49cc90;
 }
 .api-result.err {
   color: #ef4444;
