@@ -46,6 +46,7 @@ $env:APPDATA = Join-Path $tmp "AppData\Roaming"
 $env:LOCALAPPDATA = Join-Path $tmp "AppData\Local"
 $env:USERPROFILE = Join-Path $tmp "User"
 $env:DINOTTY_TOKEN = "smoke-token"
+$headers = @{ Authorization = "Bearer $env:DINOTTY_TOKEN" }
 New-Item -ItemType Directory -Force -Path $env:APPDATA, $env:LOCALAPPDATA, $env:USERPROFILE |
   Out-Null
 
@@ -71,7 +72,7 @@ try {
       throw "server exited early with code $($proc.ExitCode)"
     }
     try {
-      $info = Invoke-RestMethod "http://127.0.0.1:$port/api/info"
+      $info = Invoke-RestMethod "http://127.0.0.1:$port/api/info" -Headers $headers
       $ready = $true
     } catch {
       Start-Sleep -Milliseconds 500
@@ -90,7 +91,7 @@ try {
     throw "index smoke check failed"
   }
 
-  $settings = Invoke-RestMethod "http://127.0.0.1:$port/api/settings"
+  $settings = Invoke-RestMethod "http://127.0.0.1:$port/api/settings" -Headers $headers
   if ($null -eq $settings.theme) {
     throw "settings smoke check failed"
   }
