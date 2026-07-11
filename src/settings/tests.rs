@@ -25,7 +25,11 @@ fn settings_empty_json_is_valid() {
     assert!(!settings.show_virtual_keyboard);
     assert!(settings.confirm_before_close_tab);
     assert!(settings.bookmarks.is_empty());
-    assert_eq!(settings.ip_whitelist, vec!["127.0.0.1", "::1"]);
+    if cfg!(feature = "server") {
+        assert!(settings.ip_whitelist.is_empty());
+    } else {
+        assert_eq!(settings.ip_whitelist, vec!["127.0.0.1", "::1"]);
+    }
     assert_eq!(settings.upload_dir, default_upload_dir());
 }
 

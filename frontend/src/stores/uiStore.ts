@@ -17,6 +17,13 @@ export const useUiStore = defineStore('ui', () => {
   /** Whether the user is authenticated */
   const authenticated = ref(hasAuthToken())
 
+  /** Whether the initial auth probe (cookie / token validation) has finished.
+   *  'pending' on first paint after reload; flipped to 'done' once onMounted
+   *  decides whether to restore the session or show the login page. Prevents
+   *  LoginPage from flashing when the cookie is still valid but the in-memory
+   *  `loggedIn` flag has been reset by a reload. */
+  const authProbe = ref<'pending' | 'done'>('pending')
+
   /** Whether initial server setup is required */
   const needsSetup = ref(false)
 
@@ -57,12 +64,18 @@ export const useUiStore = defineStore('ui', () => {
     authenticated.value = value
   }
 
+  /** Mark the initial auth probe as complete */
+  function markAuthProbeDone() {
+    authProbe.value = 'done'
+  }
+
   return {
     // State
     syncConnected,
     kbVisible,
     settingsOpen,
     authenticated,
+    authProbe,
     needsSetup,
     pendingCloseTabId,
     pendingClosePaneId,
@@ -73,5 +86,6 @@ export const useUiStore = defineStore('ui', () => {
     requestClosePane,
     cancelClose,
     setAuthenticated,
+    markAuthProbeDone,
   }
 })

@@ -112,8 +112,8 @@ const tabs = computed(() => [
   right: 0;
   width: min(520px, calc(100vw - 12px));
   max-width: 100%;
-  background: var(--bg-surface, #1a1a1a);
-  border-left: 1px solid var(--border, #333);
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   transform: translateX(100%);
@@ -130,12 +130,12 @@ const tabs = computed(() => [
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  border-bottom: 1px solid var(--border, #333);
+  border-bottom: 1px solid var(--border);
 }
 .settings-header h2 {
   font-size: 16px;
   font-weight: 600;
-  color: var(--fg-bright, #f0f6fc);
+  color: var(--fg-bright);
 }
 .settings-close {
   width: 28px;
@@ -145,17 +145,17 @@ const tabs = computed(() => [
   align-items: center;
   justify-content: center;
   font-size: 14px;
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
 }
 .settings-close:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--fg-bright, #f0f6fc);
+  background: var(--bg-hover);
+  color: var(--fg-bright);
 }
 
 .settings-tabs {
   display: flex;
   gap: 0;
-  border-bottom: 1px solid var(--border, #333);
+  border-bottom: 1px solid var(--border);
   padding: 0 20px;
   overflow-x: auto;
   scrollbar-width: none;
@@ -167,7 +167,7 @@ const tabs = computed(() => [
   padding: 12px 16px 10px;
   font-size: 13px;
   font-weight: 500;
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
   border-bottom: 2px solid transparent;
   transition:
     color 0.15s,
@@ -194,7 +194,7 @@ const tabs = computed(() => [
   opacity: 1;
 }
 .settings-tab:hover {
-  color: var(--fg, #c7c7c7);
+  color: var(--fg);
 }
 .settings-tab.active {
   color: var(--accent, #8a8a8a);
@@ -209,21 +209,22 @@ const tabs = computed(() => [
 }
 
 .settings-group {
-  background: var(--bg-input, rgba(255, 255, 255, 0.03));
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.06));
+  background: var(--bg-input);
+  border: 1px solid var(--border);
   border-radius: 10px;
   padding: 16px;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
 }
 .settings-group-title {
   font-size: 11px;
   font-weight: 600;
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
   text-transform: uppercase;
   letter-spacing: 0.8px;
   margin: 0 0 14px;
   padding-bottom: 8px;
-  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.06));
+  border-bottom: 1px solid var(--border);
 }
 .settings-group .settings-section:last-child {
   margin-bottom: 0;
@@ -235,7 +236,7 @@ const tabs = computed(() => [
 .settings-section h3 {
   font-size: 13px;
   font-weight: 600;
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-bottom: 12px;
@@ -247,7 +248,7 @@ const tabs = computed(() => [
   gap: 8px;
 }
 .theme-card {
-  border: 2px solid var(--border, #333);
+  border: 2px solid var(--border);
   border-radius: 6px;
   overflow: hidden;
   cursor: pointer;
@@ -302,7 +303,7 @@ const tabs = computed(() => [
   display: block;
   padding: 4px 8px 5px;
   font-size: 10px;
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
   text-align: center;
 }
 
@@ -314,8 +315,8 @@ const tabs = computed(() => [
   display: flex;
   align-items: center;
   gap: 8px;
-  background: var(--bg-input, #1a1a1a);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 8px 12px;
   margin-bottom: 6px;
@@ -336,12 +337,12 @@ const tabs = computed(() => [
   align-items: center;
   justify-content: center;
   font-size: 14px;
-  color: var(--fg-muted, #666);
-  background: rgba(255, 255, 255, 0.05);
+  color: var(--fg-muted);
+  background: var(--bg-hover);
 }
 .access-url-copy:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--fg-bright, #f0f6fc);
+  background: var(--bg-hover);
+  color: var(--fg-bright);
 }
 
 /* ── Custom Colors ──────────────────────────────────────── */
@@ -358,14 +359,14 @@ const tabs = computed(() => [
 }
 .color-field > span {
   font-size: 11px;
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
 }
 .color-input-wrap {
   display: flex;
   align-items: center;
   gap: 6px;
-  background: var(--bg-input, #1a1a1a);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 4px 8px;
 }
@@ -382,13 +383,13 @@ const tabs = computed(() => [
   padding: 0;
 }
 .color-input-wrap input[type='color']::-webkit-color-swatch {
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border);
   border-radius: 4px;
 }
 .color-hex {
   font-size: 11px;
   font-family: var(--font-mono);
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
   text-transform: uppercase;
 }
 .ansi-details {
@@ -396,13 +397,13 @@ const tabs = computed(() => [
 }
 .ansi-details summary {
   font-size: 12px;
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
   cursor: pointer;
   padding: 4px 0;
   user-select: none;
 }
 .ansi-details summary:hover {
-  color: var(--fg, #c7c7c7);
+  color: var(--fg);
 }
 .ansi-grid {
   display: grid;
@@ -419,7 +420,7 @@ const tabs = computed(() => [
 .ansi-field input[type='color'] {
   width: 28px;
   height: 28px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border);
   border-radius: 4px;
   cursor: pointer;
   padding: 0;
@@ -434,7 +435,7 @@ const tabs = computed(() => [
 }
 .ansi-label {
   font-size: 8px;
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
   text-align: center;
   line-height: 1.1;
 }
@@ -448,15 +449,15 @@ const tabs = computed(() => [
 }
 .settings-row label {
   font-size: 13px;
-  color: var(--fg, #c7c7c7);
+  color: var(--fg);
   white-space: nowrap;
 }
 .settings-row select,
 .settings-row input[type='color'] {
-  background: var(--bg-input, #1a1a1a);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  color: var(--fg, #c7c7c7);
+  color: var(--fg);
   padding: 4px 8px;
   font-size: 13px;
 }
@@ -466,7 +467,7 @@ const tabs = computed(() => [
 }
 .settings-row input[type='file'] {
   font-size: 12px;
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
 }
 
 /* ── Font Dropdown ──────────────────────────────────────── */
@@ -489,7 +490,7 @@ const tabs = computed(() => [
 }
 .font-dropdown-arrow {
   font-size: 10px;
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
   flex-shrink: 0;
 }
 .font-dropdown-backdrop {
@@ -504,8 +505,8 @@ const tabs = computed(() => [
   right: 0;
   max-height: 260px;
   overflow-y: auto;
-  background: var(--bg-surface, #1a1a1a);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
   border-radius: 6px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
   z-index: 1000;
@@ -518,12 +519,12 @@ const tabs = computed(() => [
   gap: 8px;
   padding: 6px 12px;
   font-size: 13px;
-  color: var(--fg, #c7c7c7);
+  color: var(--fg);
   cursor: pointer;
   transition: background 0.1s;
 }
 .font-dropdown-item:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--bg-hover);
 }
 .font-dropdown-item.active {
   background: rgba(77, 127, 255, 0.15);
@@ -538,13 +539,13 @@ const tabs = computed(() => [
 }
 .font-item-sample {
   font-size: 12px;
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
   flex-shrink: 0;
 }
 .font-dropdown-divider {
   height: 1px;
   margin: 4px 8px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--bg-hover);
 }
 .font-custom-input-wrap {
   padding: 4px 8px 6px;
@@ -565,7 +566,7 @@ const tabs = computed(() => [
   height: 4px;
   -webkit-appearance: none;
   appearance: none;
-  background: var(--border, #333);
+  background: var(--border);
   border-radius: 2px;
   outline: none;
 }
@@ -580,7 +581,7 @@ const tabs = computed(() => [
 .range-val {
   font-size: 12px;
   font-family: var(--font-mono);
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
   min-width: 40px;
   text-align: right;
 }
@@ -600,7 +601,7 @@ const tabs = computed(() => [
   width: 36px;
   height: 20px;
   border-radius: 10px;
-  background: var(--border, #333);
+  background: var(--border);
   transition: background 0.2s;
 }
 .toggle input:checked + .toggle-track {
@@ -622,16 +623,16 @@ const tabs = computed(() => [
 
 .shortcut-input {
   flex: 1;
-  background: var(--bg-input, #1a1a1a);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  color: var(--fg, #c7c7c7);
+  color: var(--fg);
   padding: 4px 8px;
   font-size: 12px;
 }
 .shortcut-check {
   font-size: 12px;
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
   display: flex;
   align-items: center;
   gap: 2px;
@@ -642,7 +643,7 @@ const tabs = computed(() => [
   height: 22px;
   border-radius: 50%;
   font-size: 11px;
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -660,7 +661,7 @@ const tabs = computed(() => [
 /* ── Action Keyboard Settings ─────────────────────────────── */
 .settings-hint {
   font-size: 11px;
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
   margin-bottom: 10px;
 }
 
@@ -670,8 +671,8 @@ const tabs = computed(() => [
   gap: 4px;
   padding: 8px 6px 10px;
   margin-bottom: 10px;
-  background: #1c1c1e;
-  border: 1px solid #38383a;
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: 6px;
 }
 
@@ -738,7 +739,7 @@ const tabs = computed(() => [
   display: flex;
   align-items: center;
   justify-content: center;
-  color: rgba(255, 255, 255, 0.45);
+  color: var(--fg-muted);
   z-index: 3;
   padding: 0;
 }
@@ -757,7 +758,7 @@ const tabs = computed(() => [
   cursor: ew-resize;
   touch-action: none;
   border-radius: 0 6px 6px 0;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--bg-hover);
   z-index: 2;
 }
 
@@ -781,9 +782,9 @@ const tabs = computed(() => [
   height: 26px;
   border-radius: 6px;
   font-size: 12px;
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
   border: 1px solid var(--border, #444);
-  background: var(--bg-input, #1a1a1a);
+  background: var(--bg-input);
 }
 
 .ak-wyg-remove-row:hover {
@@ -808,7 +809,7 @@ const tabs = computed(() => [
 }
 
 .ak-reset {
-  color: var(--fg-muted, #666) !important;
+  color: var(--fg-muted) !important;
 }
 
 /* Edit modal */
@@ -823,8 +824,8 @@ const tabs = computed(() => [
 }
 
 .ak-modal {
-  background: var(--bg-surface, #1a1a1a);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
   border-radius: 10px;
   padding: 20px;
   width: 300px;
@@ -834,7 +835,7 @@ const tabs = computed(() => [
 .ak-modal h4 {
   font-size: 14px;
   font-weight: 600;
-  color: var(--fg-bright, #f0f6fc);
+  color: var(--fg-bright);
   margin-bottom: 12px;
 }
 
@@ -845,7 +846,7 @@ const tabs = computed(() => [
 .ak-field > span {
   display: block;
   font-size: 11px;
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
   margin-bottom: 4px;
 }
 
@@ -869,7 +870,7 @@ const tabs = computed(() => [
   flex: 1;
   min-width: 0;
   font-size: 10px;
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -896,8 +897,8 @@ const tabs = computed(() => [
   border-radius: 4px;
   font-size: 11px;
   background: #2c2c2e;
-  color: var(--fg, #c7c7c7);
-  border: 1px solid var(--border, #333);
+  color: var(--fg);
+  border: 1px solid var(--border);
 }
 .ak-record-btn.recording {
   background: #ff3b30;
@@ -933,6 +934,6 @@ const tabs = computed(() => [
   transition: background 0.15s;
 }
 .settings-save:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--bg-hover);
 }
 </style>

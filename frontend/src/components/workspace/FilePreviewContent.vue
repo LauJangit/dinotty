@@ -286,7 +286,7 @@ video.file-media {
   gap: 14px;
   padding: clamp(12px, 2.4vmin, 22px);
   box-sizing: border-box;
-  color: var(--fg, #d6d6d6);
+  color: var(--fg);
 }
 
 .file-audio-el {
@@ -303,13 +303,13 @@ video.file-media {
   width: clamp(64px, 9vmin, 92px);
   height: clamp(64px, 9vmin, 92px);
   border-radius: 14px;
-  background: linear-gradient(140deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.03));
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: clamp(26px, 4.6vmin, 36px);
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--fg-bright);
   flex: 0 0 auto;
 }
 
@@ -326,12 +326,12 @@ video.file-media {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--fg-bright, #ededed);
+  color: var(--fg-bright);
 }
 
 .file-audio-sub {
   font-size: clamp(12px, 2.3vmin, 14px);
-  color: var(--fg-muted, #9a9a9a);
+  color: var(--fg-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -349,11 +349,11 @@ video.file-media {
 .file-audio-time {
   font-variant-numeric: tabular-nums;
   font-size: 12px;
-  color: var(--fg-muted, #9a9a9a);
+  color: var(--fg-muted);
 }
 .file-audio-seek {
   width: 100%;
-  accent-color: rgba(255, 255, 255, 0.85);
+  accent-color: var(--accent);
 }
 
 .file-audio-controls {
@@ -363,9 +363,9 @@ video.file-media {
 }
 
 .file-audio-btn {
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--fg, #d6d6d6);
+  border: 1px solid var(--border);
+  background: var(--bg-hover);
+  color: var(--fg);
   border-radius: 12px;
   padding: 8px 10px;
   line-height: 1;
@@ -382,13 +382,13 @@ video.file-media {
   min-width: 0;
 }
 .file-audio-vol-ico {
-  color: var(--fg-muted, #9a9a9a);
+  color: var(--fg-muted);
   font-size: 12px;
 }
 .file-audio-vol {
   width: 140px;
   max-width: 30vw;
-  accent-color: rgba(255, 255, 255, 0.85);
+  accent-color: var(--accent);
 }
 
 .file-office {
@@ -396,7 +396,7 @@ video.file-media {
   min-height: 0;
   overflow: auto;
   padding: clamp(10px, 2.2vmin, 18px);
-  color: var(--fg, #ccc);
+  color: var(--fg);
 }
 
 .file-office-body :deep(p) {
@@ -428,7 +428,7 @@ video.file-media {
   vertical-align: top;
 }
 .file-office-body :deep(th) {
-  background: var(--tab-bg, #252525);
+  background: var(--tab-bg);
 }
 
 .file-pdf {
@@ -453,8 +453,8 @@ video.file-media {
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  border-bottom: 1px solid var(--border, #333);
-  background: var(--tab-bg, #252525);
+  border-bottom: 1px solid var(--border);
+  background: var(--tab-bg);
   flex-shrink: 0;
 }
 
@@ -474,7 +474,7 @@ video.file-media {
 }
 
 .file-editor-tab:hover {
-  color: var(--fg, #ccc);
+  color: var(--fg);
 }
 
 .file-editor-save {
@@ -507,7 +507,7 @@ video.file-media {
   padding: clamp(8px, 2vmin, 16px);
   font-family: var(--font-mono);
   font-size: var(--preview-code-fs, clamp(11px, 2.5vw, 15px));
-  color: var(--fg, #ccc);
+  color: var(--fg);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -537,7 +537,7 @@ video.file-media {
 }
 .file-md-body :deep(h1) {
   font-size: 1.45em;
-  border-bottom: 1px solid var(--border, #333);
+  border-bottom: 1px solid var(--border);
   padding-bottom: 0.25em;
 }
 .file-md-body :deep(h2) {
@@ -572,7 +572,7 @@ video.file-media {
 }
 .file-md-body :deep(hr) {
   border: none;
-  border-top: 1px solid var(--border, #333);
+  border-top: 1px solid var(--border);
   margin: 1em 0;
 }
 .file-md-body :deep(table) {
@@ -588,14 +588,14 @@ video.file-media {
   text-align: left;
 }
 .file-md-body :deep(th) {
-  background: var(--tab-bg, #252525);
+  background: var(--tab-bg);
 }
 .file-md-body :deep(pre) {
   margin: 0.65em 0;
   padding: 10px 12px;
   overflow: auto;
   background: var(--bg, #1a1a1a);
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 4px;
   font-family: var(--font-mono);
   font-size: var(--preview-code-fs);
@@ -611,7 +611,7 @@ video.file-media {
   font-family: var(--font-mono);
   font-size: 0.88em;
   padding: 0.12em 0.38em;
-  background: var(--tab-bg, #252525);
+  background: var(--tab-bg);
   border-radius: 3px;
 }
 .file-md-body :deep(img) {

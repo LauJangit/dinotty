@@ -12,9 +12,10 @@
           :placeholder="t('login.placeholder')"
           autocomplete="current-password"
           autofocus
+          :disabled="retryIn > 0"
           @focus="error = ''"
         />
-        <button type="submit" class="login-btn" :disabled="loading">
+        <button type="submit" class="login-btn" :disabled="loading || retryIn > 0">
           {{ loading ? t('login.loading') : t('login.submit') }}
         </button>
       </form>
@@ -24,8 +25,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import { setAuthToken, validateToken } from '../composables/apiBase'
+import { ref, onBeforeUnmount } from 'vue'
+import { validateToken } from '../composables/apiBase'
 import { useI18n } from '../composables/useI18n'
 
 const emit = defineEmits<{ (e: 'success'): void }>()
@@ -34,6 +35,31 @@ const { t } = useI18n()
 const token = ref('')
 const error = ref('')
 const loading = ref(false)
+const retryIn = ref(0)
+let lockdownTimer: number | undefined
+
+function clearLockdown() {
+  if (lockdownTimer !== undefined) {
+    window.clearInterval(lockdownTimer)
+    lockdownTimer = undefined
+  }
+  retryIn.value = 0
+}
+
+function startLockdown(seconds: number) {
+  clearLockdown()
+  retryIn.value = seconds
+  error.value = t('login.locked', { seconds })
+  lockdownTimer = window.setInterval(() => {
+    retryIn.value -= 1
+    if (retryIn.value <= 0) {
+      clearLockdown()
+      error.value = ''
+      return
+    }
+    error.value = t('login.locked', { seconds: retryIn.value })
+  }, 1000)
+}
 
 async function onSubmit() {
   const val = token.value.trim()
@@ -43,15 +69,20 @@ async function onSubmit() {
   }
   loading.value = true
   error.value = ''
-  const ok = await validateToken(val)
+  const r = await validateToken(val)
   loading.value = false
-  if (ok) {
-    setAuthToken(val)
+  if (r.ok) {
     emit('success')
+    return
+  }
+  if (r.reason === 'locked') {
+    startLockdown(r.retryAfter ?? 60)
   } else {
     error.value = t('login.invalid')
   }
 }
+
+onBeforeUnmount(clearLockdown)
 </script>
 
 <style scoped>
@@ -61,7 +92,7 @@ async function onSubmit() {
   justify-content: center;
   width: 100%;
   height: 100dvh;
-  background: #1e1e1e;
+  background: var(--bg);
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
     env(safe-area-inset-left);
 }
@@ -85,7 +116,7 @@ async function onSubmit() {
 .login-title {
   font-size: 24px;
   font-weight: 700;
-  color: #e8e8e8;
+  color: var(--fg-bright);
   margin: 0;
   font-family:
     'Inter',
@@ -96,7 +127,7 @@ async function onSubmit() {
 
 .login-subtitle {
   font-size: 13px;
-  color: #858585;
+  color: var(--fg-muted);
   margin: 0;
   text-align: center;
 }
@@ -104,10 +135,10 @@ async function onSubmit() {
 .login-input {
   width: 100%;
   padding: 10px 14px;
-  border: 1px solid #3c3c3c;
+  border: 1px solid var(--border);
   border-radius: 6px;
-  background: #2a2a2c;
-  color: #e8e8e8;
+  background: var(--bg-input);
+  color: var(--fg-bright);
   font-size: 14px;
   font-family: 'Inter', system-ui, sans-serif;
   outline: none;
@@ -115,10 +146,10 @@ async function onSubmit() {
   margin-top: 8px;
 }
 .login-input:focus {
-  border-color: #007aff;
+  border-color: var(--accent);
 }
 .login-input::placeholder {
-  color: #666;
+  color: var(--fg-muted);
 }
 
 .login-btn {
@@ -126,7 +157,7 @@ async function onSubmit() {
   padding: 10px 14px;
   border: none;
   border-radius: 6px;
-  background: #007aff;
+  background: var(--accent);
   color: #fff;
   font-size: 14px;
   font-weight: 600;
@@ -136,7 +167,7 @@ async function onSubmit() {
   transition: background 0.15s;
 }
 .login-btn:hover {
-  background: #3395ff;
+  background: var(--accent-hover);
 }
 .login-btn:disabled {
   opacity: 0.5;

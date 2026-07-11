@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 use axum::{
     body::Body,
-    extract::{Path, Query, State},
+    extract::{ConnectInfo, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
@@ -183,8 +183,19 @@ pub async fn plugin_spawn_ws(
     Path(id): Path<String>,
     Query(params): Query<SpawnQuery>,
     State(pm): State<PluginManagerState>,
+    State(settings): State<crate::settings::SettingsState>,
     ws: axum::extract::WebSocketUpgrade,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
 ) -> Response {
+    let s = settings.read().await;
+    let allowed_origins = s.auth.allowed_origins.clone();
+    let trusted_proxies = s.auth.trusted_proxies.clone();
+    drop(s);
+    let real_ip = crate::auth::real_client_ip(&headers, addr.ip(), &trusted_proxies);
+    if !crate::auth::check_ws_origin(&headers, &allowed_origins, real_ip, &trusted_proxies) {
+        return plugin_err(StatusCode::FORBIDDEN, "origin not allowed");
+    }
     let Some(info) = pm.registry.get(&id) else {
         return plugin_err(StatusCode::NOT_FOUND, "plugin not found");
     };

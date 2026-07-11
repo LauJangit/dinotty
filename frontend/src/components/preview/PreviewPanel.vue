@@ -123,7 +123,7 @@ import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import FileWorkspacePreview from './FileWorkspacePreview.vue'
 import DevToolsPanel from './DevToolsPanel.vue'
 import { isWebPreviewInput, normalizeWebUrl, urlToPreviewSrc } from '../../utils/previewRouting'
-import { getApiBase, getAuthToken } from '../../composables/apiBase'
+import { getApiBase } from '../../composables/apiBase'
 import { useI18n } from '../../composables/useI18n'
 import {
   ChevronLeft,
@@ -302,10 +302,8 @@ const resolvedIframeSrc = computed(() => {
   const base = urlToPreviewSrc(props.webUrl, previewHttpBase.value || undefined)
   const sep = base.includes('?') ? '&' : '?'
   let src = `${base}${sep}_t=${navCounter.value}`
-  if (base.startsWith('/api/proxy')) {
-    const token = getAuthToken()
-    if (token) src += `&token=${encodeURIComponent(token)}`
-  }
+  // Browser: same-origin iframe sends cookies automatically.
+  // Tauri: proxy routes bypass auth via loopback, no token needed.
   return src
 })
 
@@ -495,7 +493,7 @@ onBeforeUnmount(() => {
 
 .preview-panel-divider {
   flex-shrink: 0;
-  background: var(--border, #333);
+  background: var(--border);
   transition: background 0.15s;
   z-index: 2;
 }
@@ -535,7 +533,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   background: var(--bg, #1a1a1a);
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 4px;
   overflow: hidden;
   flex-shrink: 0;
@@ -552,7 +550,7 @@ onBeforeUnmount(() => {
 }
 
 .preview-mode-switch button:hover:not(.active) {
-  color: var(--fg, #ccc);
+  color: var(--fg);
   background: var(--tab-hover-bg, #333);
 }
 
@@ -564,7 +562,7 @@ onBeforeUnmount(() => {
 .preview-toolbar-sep {
   width: 1px;
   height: 16px;
-  background: var(--border, #333);
+  background: var(--border);
   flex-shrink: 0;
   margin: 0 2px;
 }
@@ -574,8 +572,8 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 4px;
   padding: 4px 8px;
-  background: var(--tab-bg, #252525);
-  border-bottom: 1px solid var(--border, #333);
+  background: var(--tab-bg);
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 
@@ -590,7 +588,7 @@ onBeforeUnmount(() => {
 }
 
 .preview-toolbar button:hover:not(:disabled) {
-  color: var(--fg, #ccc);
+  color: var(--fg);
   background: var(--tab-hover-bg, #333);
 }
 
@@ -605,7 +603,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   background: var(--bg, #1a1a1a);
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 3px;
 }
 
@@ -618,7 +616,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   background: none;
   border: none;
-  color: var(--fg, #ccc);
+  color: var(--fg);
   font-family: var(--font-mono);
   font-size: 12px;
   padding: 2px 8px;
@@ -635,7 +633,7 @@ onBeforeUnmount(() => {
 }
 
 .go-btn:hover {
-  color: var(--fg, #ccc);
+  color: var(--fg);
 }
 
 .preview-body {

@@ -2,7 +2,7 @@
 
 use dinotty_server::{
     agent, audit, auth, file_watcher, history, mcp, monitor, notification, openapi, plugin, proxy,
-    qr_code, session, settings, tabs, token, webhook, workspace, workspace_mgmt, ws,
+    session, settings, tabs, token, webhook, workspace, workspace_mgmt, ws,
 };
 
 use axum::{
@@ -19,9 +19,9 @@ use std::fs;
 use std::net::SocketAddr;
 
 use std::sync::Arc;
-use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use crate::auth::session::SessionStore;
 use crate::file_watcher::FileWatcherState;
 use crate::history::HistoryState;
 use crate::monitor::MonitorState;
@@ -30,28 +30,60 @@ use crate::plugin::PluginManagerState;
 use crate::session::SessionManager;
 use crate::settings::SettingsState;
 
-async fn index(
-    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+/// Dynamic CORS middleware that reads `allowed_origins` from settings on each request.
+/// Default empty = same-origin only (Origin = Host, which browsers allow without CORS).
+/// Tauri desktop mode does not go through CORS (`tauri_fetch` is not a browser fetch).
+async fn dynamic_cors_middleware(
     State(state): State<AppState>,
-) -> impl IntoResponse {
-    let content = StaticFiles::get("index.html").expect("index.html must exist in frontend/dist/");
-    let html = String::from_utf8_lossy(&content.data);
+    req: axum::extract::Request,
+    next: middleware::Next,
+) -> Response<Body> {
+    let origin =
+        req.headers().get(header::ORIGIN).and_then(|v| v.to_str().ok()).map(str::to_string);
 
-    let stored_token = state.auth_token.read().await.clone();
-
-    // Accept either ?code=xxx (one-time QR code) or ?token=xxx (direct token)
-    let token_value = if let Some(code) = params.get("code") {
-        state.qr_codes.consume(code).unwrap_or_default()
-    } else {
-        params
-            .get("token")
-            .filter(|t| urlencoding::decode(t).is_ok_and(|d| d == stored_token))
-            .map(|_| stored_token)
-            .unwrap_or_default()
+    let allowed_origins = {
+        let s = state.settings.read().await;
+        s.auth.allowed_origins.clone()
     };
 
-    let tag = format!("<meta name=\"auth-token\" content=\"{token_value}\">\n</head>");
-    let html = html.replace("</head>", &tag);
+    let is_preflight = req.method() == axum::http::Method::OPTIONS;
+
+    // Determine if origin is allowed
+    let allowed_origin = origin.as_ref().and_then(|o| {
+        if allowed_origins.iter().any(|a| a.trim() == o) {
+            Some(o.clone())
+        } else {
+            None
+        }
+    });
+
+    let mut response = if is_preflight {
+        // For preflight, return 204 without calling the next handler
+        Response::builder().status(StatusCode::NO_CONTENT).body(Body::empty()).unwrap()
+    } else {
+        next.run(req).await
+    };
+
+    let headers = response.headers_mut();
+    if let Some(ref ao) = allowed_origin {
+        headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, ao.parse().unwrap());
+        headers.insert(header::ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
+        headers.insert(
+            header::ACCESS_CONTROL_ALLOW_METHODS,
+            HeaderValue::from_static("GET, POST, PUT, DELETE, OPTIONS"),
+        );
+        headers.insert(
+            header::ACCESS_CONTROL_ALLOW_HEADERS,
+            HeaderValue::from_static("Content-Type, Authorization"),
+        );
+    }
+
+    response
+}
+
+async fn index(State(_state): State<AppState>) -> impl IntoResponse {
+    let content = StaticFiles::get("index.html").expect("index.html must exist in frontend/dist/");
+    let html = String::from_utf8_lossy(&content.data).into_owned();
     ([(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))], Html(html))
 }
 
@@ -104,8 +136,8 @@ pub struct AppState {
     pub webhooks: webhook::WebhookState,
     pub mcp: mcp::transport::McpState,
     pub mcp_sse: Arc<mcp::transport::SseState>,
-    pub qr_codes: Arc<qr_code::QrCodeState>,
     pub workspaces: workspace_mgmt::WorkspacesState,
+    pub sessions: Arc<SessionStore>,
 }
 
 // Allow extracting Arc<SessionManager> from AppState for ws handlers
@@ -119,6 +151,12 @@ impl axum::extract::FromRef<AppState> for Arc<SessionManager> {
 impl axum::extract::FromRef<AppState> for (Arc<SessionManager>, SettingsState) {
     fn from_ref(state: &AppState) -> Self {
         (state.manager.clone(), state.settings.clone())
+    }
+}
+
+impl axum::extract::FromRef<AppState> for SettingsState {
+    fn from_ref(state: &AppState) -> Self {
+        state.settings.clone()
     }
 }
 
@@ -189,9 +227,15 @@ impl axum::extract::FromRef<AppState> for Arc<mcp::transport::SseState> {
     }
 }
 
-impl axum::extract::FromRef<AppState> for Arc<qr_code::QrCodeState> {
+impl axum::extract::FromRef<AppState> for Arc<SessionStore> {
     fn from_ref(state: &AppState) -> Self {
-        state.qr_codes.clone()
+        state.sessions.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<tokio::sync::RwLock<String>> {
+    fn from_ref(state: &AppState) -> Self {
+        state.auth_token.clone()
     }
 }
 
@@ -329,8 +373,201 @@ struct UpdateTokenRequest {
     token: String,
 }
 
-async fn check_auth(State(state): State<AppState>) -> impl IntoResponse {
-    let _ = state;
+#[derive(serde::Deserialize)]
+struct LoginRequest {
+    token: String,
+}
+
+fn build_session_cookie(session_id: &str, ttl_days: u64) -> String {
+    let max_age = ttl_days * 86_400;
+    format!(
+        "{name}={value}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age}",
+        name = auth::SESSION_COOKIE_NAME,
+        value = session_id,
+    )
+}
+
+fn clear_session_cookie() -> String {
+    format!("{name}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0", name = auth::SESSION_COOKIE_NAME)
+}
+
+/// Login endpoint: validate the posted token, create a session, set cookie.
+/// Brute-force accounting is done here (the middleware exempts /api/auth).
+async fn login(
+    State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<LoginRequest>,
+) -> impl IntoResponse {
+    let stored = state.auth_token.read().await.clone();
+    if stored.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            [(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))],
+            Json(serde_json::json!({"error": "no token configured"})),
+        )
+            .into_response();
+    }
+
+    let (
+        real_ip,
+        lockout_strategy,
+        max_failures,
+        lockout_secs,
+        global_max_failures,
+        global_lockout_secs,
+    ) = {
+        let s = state.settings.read().await;
+        (
+            auth::real_client_ip(&headers, addr.ip(), &s.auth.trusted_proxies),
+            s.auth.lockout_strategy.clone(),
+            s.auth.lockout_max_failures,
+            s.auth.lockout_secs,
+            s.auth.global_lockout_max_failures,
+            s.auth.global_lockout_secs,
+        )
+    };
+
+    // Brute-force lockout check before token validation. The login endpoint is
+    // exempt from the middleware's check (so unauthenticated users can reach
+    // it), so we must enforce it here.
+    if let Some(retry_after) = auth::check_lockout(
+        real_ip,
+        &lockout_strategy,
+        max_failures,
+        lockout_secs,
+        global_max_failures,
+        global_lockout_secs,
+    ) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            [
+                (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
+                (header::RETRY_AFTER, HeaderValue::from_str(&retry_after.to_string()).unwrap()),
+            ],
+            Json(serde_json::json!({"error": "too many failed attempts, please try again later"})),
+        )
+            .into_response();
+    }
+
+    if !auth::constant_time_eq(body.token.trim(), &stored) {
+        auth::record_auth_failure(real_ip, global_lockout_secs);
+        return (
+            StatusCode::UNAUTHORIZED,
+            [(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))],
+            Json(serde_json::json!({"error": "unauthorized"})),
+        )
+            .into_response();
+    }
+    let ua = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .map(std::string::ToString::to_string);
+    let session_id = state.sessions.create(Some(real_ip), ua);
+    let ttl_days = {
+        let s = state.settings.read().await;
+        s.auth.session_ttl_days
+    };
+    let cookie = build_session_cookie(&session_id, ttl_days);
+
+    // Audit log
+    let () = state.audit.record(
+        &session_id,
+        "login",
+        "session",
+        serde_json::json!({ "ip": real_ip.to_string() }),
+    );
+
+    (
+        StatusCode::OK,
+        [
+            (header::SET_COOKIE, HeaderValue::from_str(&cookie).unwrap()),
+            (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
+        ],
+        Json(serde_json::json!({"ok": true})),
+    )
+        .into_response()
+}
+
+async fn logout(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    // Best-effort: extract session id from Cookie header and revoke it.
+    if let Some(cookie_hdr) = headers.get(header::COOKIE).and_then(|v| v.to_str().ok()) {
+        for pair in cookie_hdr.split(';') {
+            let pair = pair.trim();
+            if let Some(rest) = pair.strip_prefix(&format!("{}=", auth::SESSION_COOKIE_NAME)) {
+                let sid = rest.to_string();
+                let () = state.audit.record(&sid, "logout", "session", serde_json::json!({}));
+                let _ = state.sessions.revoke(&sid);
+                break;
+            }
+        }
+    }
+    (
+        StatusCode::OK,
+        [
+            (header::SET_COOKIE, HeaderValue::from_str(&clear_session_cookie()).unwrap()),
+            (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
+        ],
+        Json(serde_json::json!({"ok": true})),
+    )
+}
+
+async fn put_settings_with_session_ttl(
+    State(state): State<AppState>,
+    body: axum::extract::Json<settings::Settings>,
+) -> impl IntoResponse {
+    let new_ttl = body.auth.session_ttl_days;
+    let status =
+        settings::put_settings(State((state.manager.clone(), state.settings.clone())), body).await;
+    state.sessions.update_ttl_days(new_ttl);
+    status
+}
+
+async fn list_sessions(State(state): State<AppState>) -> impl IntoResponse {
+    let sessions = state.sessions.list();
+    Json(serde_json::json!({ "sessions": sessions }))
+}
+
+#[derive(serde::Deserialize)]
+struct RevokeSessionPath {
+    id: String,
+}
+
+async fn revoke_session(
+    State(state): State<AppState>,
+    Path(path): Path<RevokeSessionPath>,
+) -> impl IntoResponse {
+    let ok = state.sessions.revoke(&path.id);
+    let () = state.audit.record(&path.id, "revoke", "session", serde_json::json!({ "by": "user" }));
+    Json(serde_json::json!({ "ok": ok }))
+}
+
+async fn revoke_other_sessions(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    // Preserve the caller's session by extracting it from the cookie.
+    let current = headers.get(header::COOKIE).and_then(|v| v.to_str().ok()).and_then(|raw| {
+        for pair in raw.split(';') {
+            let pair = pair.trim();
+            if let Some(rest) = pair.strip_prefix(&format!("{}=", auth::SESSION_COOKIE_NAME)) {
+                return Some(rest.to_string());
+            }
+        }
+        None
+    });
+    match current {
+        Some(ref sid) => state.sessions.revoke_all_except(sid),
+        None => state.sessions.revoke_all(),
+    }
+    Json(serde_json::json!({ "ok": true }))
+}
+
+async fn check_auth(State(_state): State<AppState>) -> impl IntoResponse {
+    // Legacy endpoint kept for backward compat - returns 200 if middleware passed.
     StatusCode::OK
 }
 
@@ -347,9 +584,19 @@ async fn token_configured(State(state): State<AppState>) -> impl IntoResponse {
     }))
 }
 
-async fn auto_token(State(state): State<AppState>) -> impl IntoResponse {
+async fn auto_token(
+    State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> impl IntoResponse {
     if cfg!(feature = "server") {
         return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "not available"})))
+            .into_response();
+    }
+    if !addr.ip().is_loopback() {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": "auto-token is only available from localhost"})),
+        )
             .into_response();
     }
     let token = state.auth_token.read().await;
@@ -383,20 +630,10 @@ async fn update_token(
         )
             .into_response();
     }
+    // Revoke all existing sessions: they were authenticated against the old
+    // token; if it was compromised, all sessions must be invalidated.
+    state.sessions.revoke_all();
     StatusCode::OK.into_response()
-}
-
-async fn generate_qr_code(State(state): State<AppState>) -> impl IntoResponse {
-    let token = state.auth_token.read().await;
-    if token.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "no token configured"})),
-        )
-            .into_response();
-    }
-    let code = state.qr_codes.generate(&token);
-    Json(serde_json::json!({ "code": code })).into_response()
 }
 
 #[tokio::main]
@@ -523,10 +760,11 @@ async fn main() {
 
     let mcp_server = Arc::new(mcp::server::McpServer::new(manager.clone(), settings_state.clone()));
     let mcp_sse = Arc::new(mcp::transport::SseState::new());
-    let qr_codes = Arc::new(qr_code::QrCodeState::new());
-    qr_codes.clone().start_cleanup_task();
-
     let workspaces_state = workspace_mgmt::create_workspaces_state();
+
+    let session_ttl_days = initial_settings.auth.session_ttl_days;
+    let sessions = Arc::new(SessionStore::new(session_ttl_days));
+    sessions.clone().start_cleanup_task();
 
     let state = AppState {
         manager,
@@ -545,8 +783,8 @@ async fn main() {
         webhooks,
         mcp: mcp_server,
         mcp_sse,
-        qr_codes,
         workspaces: workspaces_state,
+        sessions,
     };
 
     state.plugins.watch_changes(state.manager.clone());
@@ -577,10 +815,14 @@ async fn main() {
             .route("/api/tabs/:tab_id/pane/:pane_id", delete(tabs::close_pane))
             .route("/api/tabs/:tab_id/pane/:pane_id/activate", put(tabs::activate_pane))
             .route("/api/tabs/:tab_id/layout", put(tabs::update_layout))
-            .route("/api/auth", post(check_auth))
+            .route("/api/auth", post(login))
+            .route("/api/auth/check", get(check_auth))
+            .route("/api/auth/logout", post(logout))
+            .route("/api/sessions", get(list_sessions).delete(revoke_other_sessions))
+            .route("/api/sessions/:id", delete(revoke_session))
             .route("/api/token-configured", get(token_configured))
             .route("/api/auto-token", get(auto_token))
-            .route("/api/settings", get(settings::get_settings).put(settings::put_settings))
+            .route("/api/settings", get(settings::get_settings).put(put_settings_with_session_ttl))
             .route(
                 "/api/settings/background",
                 post(settings::upload_background).get(settings::get_background),
@@ -634,7 +876,6 @@ async fn main() {
             .route("/api/proxy", any(proxy::external_proxy_handler))
             .route("/api/info", get(server_info))
             .route("/api/token", get(get_token).put(update_token))
-            .route("/api/qr-code", post(generate_qr_code))
             // Plugin management
             .route("/api/plugins", get(plugin::list_plugins))
             .route("/api/plugins/market", get(plugin::get_market_registry))
@@ -719,10 +960,11 @@ async fn main() {
                  req,
                  next| async move {
                     let token = s.auth_token.read().await.clone();
-                    auth::auth_middleware(req, next, &token, &s.settings, addr.ip()).await
+                    auth::auth_middleware(req, next, &token, &s.settings, &s.sessions, addr.ip())
+                        .await
                 },
             ))
-            .layer(CorsLayer::permissive())
+            .layer(middleware::from_fn_with_state(state.clone(), dynamic_cors_middleware))
             .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));

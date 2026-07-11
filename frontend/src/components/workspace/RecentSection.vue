@@ -129,7 +129,7 @@ function ctxRemove() {
 
 <style scoped>
 .recent-section {
-  border-bottom: 1px solid var(--border, #3c3c3c);
+  border-bottom: 1px solid var(--border);
   padding-bottom: 2px;
   margin-bottom: 2px;
 }
@@ -149,7 +149,7 @@ function ctxRemove() {
   user-select: none;
 }
 .recent-section-header:hover {
-  background: var(--tree-row-hover, rgba(255, 255, 255, 0.06));
+  background: var(--tree-row-hover));
 }
 
 .recent-twistie {
@@ -194,7 +194,7 @@ function ctxRemove() {
   overflow: hidden;
 }
 .recent-item:hover {
-  background: var(--tree-row-hover, rgba(255, 255, 255, 0.06));
+  background: var(--tree-row-hover));
 }
 
 .recent-icon {
@@ -237,8 +237,8 @@ function ctxRemove() {
 .recent-ctx-menu {
   position: fixed;
   min-width: 180px;
-  background: #252526;
-  border: 1px solid #3c3c3c;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
   border-radius: 6px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   padding: 4px 0;
@@ -266,7 +266,7 @@ function ctxRemove() {
 }
 .recent-ctx-menu .tree-ctx-sep {
   height: 1px;
-  background: #3c3c3c;
+  background: var(--border);
   margin: 4px 0;
 }
 
@@ -281,8 +281,8 @@ function ctxRemove() {
   z-index: 100002;
 }
 .recent-confirm-dialog {
-  background: var(--bg-surface, #252526);
-  border: 1px solid var(--border, #3c3c3c);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 20px;
   max-width: 320px;
@@ -307,7 +307,7 @@ function ctxRemove() {
   cursor: pointer;
 }
 .recent-confirm-cancel {
-  background: var(--bg-input, #2a2a2c);
+  background: var(--bg-input);
   color: var(--fg, #cccccc);
 }
 .recent-confirm-ok {

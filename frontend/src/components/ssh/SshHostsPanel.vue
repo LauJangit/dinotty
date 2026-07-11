@@ -518,8 +518,8 @@ defineExpose({ open, close })
   width: 90vw;
   max-width: 520px;
   max-height: 80vh;
-  background: var(--bg-surface, #1a1a1a);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
   display: flex;
@@ -531,7 +531,7 @@ defineExpose({ open, close })
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  border-bottom: 1px solid var(--border, #333);
+  border-bottom: 1px solid var(--border);
 }
 .ssh-header h2 {
   font-size: 15px;
@@ -565,13 +565,13 @@ defineExpose({ open, close })
   cursor: pointer;
 }
 .ssh-new-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--bg-hover);
   color: var(--fg);
 }
 
 .ssh-search {
   padding: 8px 16px;
-  border-bottom: 1px solid var(--border, #333);
+  border-bottom: 1px solid var(--border);
 }
 .ssh-search-input {
   width: 100%;
@@ -592,14 +592,14 @@ defineExpose({ open, close })
   gap: 6px;
   flex-wrap: wrap;
   padding: 4px 16px 8px;
-  border-bottom: 1px solid var(--border, #333);
+  border-bottom: 1px solid var(--border);
 }
 .group-tag {
   padding: 3px 10px;
   border-radius: 12px;
   font-size: 11px;
-  background: var(--bg-input, #1a1a1a);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
   color: var(--fg-muted);
   cursor: pointer;
 }
@@ -638,7 +638,7 @@ defineExpose({ open, close })
 }
 .ssh-item:hover,
 .ssh-item.active {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--bg-hover);
 }
 .ssh-item.dragging {
   opacity: 0.4;
@@ -650,7 +650,7 @@ defineExpose({ open, close })
   border-bottom-color: var(--accent, #4d7fff);
 }
 .ssh-grip {
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
   cursor: grab;
   flex-shrink: 0;
   opacity: 0.5;
@@ -705,7 +705,7 @@ defineExpose({ open, close })
   color: var(--fg-muted);
 }
 .ssh-icon-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--bg-hover);
   color: var(--fg);
 }
 .ssh-icon-btn.danger:hover {
@@ -720,7 +720,7 @@ defineExpose({ open, close })
 }
 
 .ssh-quick {
-  border-top: 1px solid var(--border, #333);
+  border-top: 1px solid var(--border);
   padding: 12px 16px;
   padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
 }
@@ -789,13 +789,13 @@ defineExpose({ open, close })
   border-radius: 3px;
   border: 1px solid var(--border, #555);
   background: transparent;
-  color: var(--fg, #ccc);
+  color: var(--fg);
   font-size: 11px;
   cursor: pointer;
   transition: background 0.15s;
 }
 .ssh-retry-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--bg-hover);
 }
 .ssh-connecting {
   display: flex;
@@ -803,7 +803,7 @@ defineExpose({ open, close })
   gap: 8px;
   margin-top: 8px;
   font-size: 12px;
-  color: var(--fg-muted, #999);
+  color: var(--fg-muted);
 }
 .ssh-spinner {
   width: 14px;
@@ -822,12 +822,12 @@ defineExpose({ open, close })
   border-radius: 3px;
   border: 1px solid var(--border, #555);
   background: transparent;
-  color: var(--fg, #ccc);
+  color: var(--fg);
   font-size: 11px;
   cursor: pointer;
   transition: background 0.15s;
 }
 .ssh-cancel-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--bg-hover);
 }
 </style>

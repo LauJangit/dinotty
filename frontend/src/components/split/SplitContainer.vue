@@ -304,8 +304,8 @@ function getChildStyle(idx: number) {
 }
 
 .pane-close-btn:hover {
-  background: var(--hover-bg, rgba(255, 255, 255, 0.08));
-  color: var(--text-primary, #e0e0e0);
+  background: var(--hover-bg, var(--bg-hover));
+  color: var(--text-primary, var(--fg-bright));
 }
 
 /* Broadcast indicator — radar style */

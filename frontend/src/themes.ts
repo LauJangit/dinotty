@@ -13,12 +13,17 @@ export const themes: ThemeDefinition[] = [
       '--bg-surface': '#252526',
       '--bg-overlay': '#1E1E1E',
       '--bg-input': '#2A2A2C',
+      '--bg-hover': '#2A2A2C',
+      '--bg-surface-hover': '#333333',
       '--border': '#3C3C3C',
       '--border-focus': '#8A8A8A',
+      '--border-hover': '#555555',
       '--divider': '#2D2D2D',
       '--fg': '#CCCCCC',
       '--fg-bright': '#D0D0D0',
       '--fg-muted': '#858585',
+      '--scrollbar-thumb': '#4A4A4A',
+      '--scrollbar-thumb-hover': '#5A5A5A',
       '--accent': '#8A8A8A',
       '--accent-hover': '#9E9E9E',
       '--tab-bg': '#181818',
@@ -26,6 +31,10 @@ export const themes: ThemeDefinition[] = [
       '--tab-hover-bg': '#2A2A2C',
       '--tab-text': '#858585',
       '--tab-active-text': '#D0D0D0',
+      '--palette-bg': 'rgba(30, 30, 30, 0.97)',
+      '--palette-border': '#3C3C3C',
+      '--palette-select': '#2A2D2E',
+      '--palette-text': '#CCCCCC',
       '--color-black': '#000000',
       '--color-red': '#F44747',
       '--color-green': '#6A9955',
@@ -52,8 +61,11 @@ export const themes: ThemeDefinition[] = [
       '--bg-surface': '#F5F5F5',
       '--bg-overlay': '#FFFFFF',
       '--bg-input': '#FFFFFF',
+      '--bg-hover': '#ECECEC',
+      '--bg-surface-hover': '#EBEBEB',
       '--border': '#E0E0E0',
       '--border-focus': '#2563EB',
+      '--border-hover': '#CCCCCC',
       '--divider': '#EEEEEE',
       '--fg': '#333333',
       '--fg-bright': '#111111',
@@ -67,6 +79,10 @@ export const themes: ThemeDefinition[] = [
       '--tab-hover-bg': '#EEEEEE',
       '--tab-text': '#666666',
       '--tab-active-text': '#111111',
+      '--palette-bg': 'rgba(255, 255, 255, 0.97)',
+      '--palette-border': '#E0E0E0',
+      '--palette-select': '#E8E8E8',
+      '--palette-text': '#333333',
       '--color-black': '#000000',
       '--color-red': '#C91B00',
       '--color-green': '#00A600',
@@ -477,8 +493,28 @@ export const themes: ThemeDefinition[] = [
   },
 ]
 
+// Fill in derived variables that every theme needs but may not list explicitly.
+// This avoids repeating scrollbar / hover / palette tokens in every theme.
+// Explicit values in the theme always win (spread order).
+function fillDefaults(t: ThemeDefinition): ThemeDefinition {
+  const c = t.colors
+  const defaults: Record<string, string> = {
+    '--bg-hover': c['--bg-input'] || c['--bg-surface'],
+    '--bg-surface-hover': c['--bg-input'] || c['--bg-surface'],
+    '--border-hover': c['--border'],
+    '--scrollbar-thumb': c['--bg-input'] || c['--border'],
+    '--scrollbar-thumb-hover': c['--border'],
+    '--palette-bg': c['--bg'],
+    '--palette-border': c['--border'],
+    '--palette-select': c['--bg-input'] || c['--bg-surface'],
+    '--palette-text': c['--fg'],
+  }
+  return { ...t, colors: { ...defaults, ...c } }
+}
+
 export function getThemeByName(name: string): ThemeDefinition {
-  return themes.find((t) => t.name === name) || themes[0]
+  const raw = themes.find((t) => t.name === name) || themes[0]
+  return fillDefaults(raw)
 }
 
 export function applyThemeToDOM(theme: ThemeDefinition) {

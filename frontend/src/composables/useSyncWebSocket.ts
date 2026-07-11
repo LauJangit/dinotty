@@ -55,7 +55,8 @@ export function useSyncWebSocket(opts: {
   }
 
   function sendSync(msg: SyncClientMsg) {
-    if (syncWs && syncWs.readyState === WebSocket.OPEN && !suppressSync) {
+    if (suppressSync) return
+    if (syncWs && syncWs.readyState === WebSocket.OPEN) {
       syncWs.send(JSON.stringify(msg))
     }
   }
@@ -115,7 +116,7 @@ export function useSyncWebSocket(opts: {
       syncReconnectDelay = 1000
     }
 
-    syncWs.onmessage = (e) => {
+    function handleMsg(e: { data: string }) {
       let msg: SyncServerMsg
       try {
         msg = JSON.parse(e.data)
@@ -431,6 +432,8 @@ export function useSyncWebSocket(opts: {
         workspaces.value.sort((a, b) => a.order - b.order)
       }
     }
+
+    syncWs.onmessage = (e) => handleMsg(e)
 
     syncWs.onclose = (e) => {
       console.warn('[sync] disconnected', e.code, e.reason)

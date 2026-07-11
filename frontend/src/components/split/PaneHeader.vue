@@ -237,8 +237,8 @@ onBeforeUnmount(() => {
   align-items: center;
   height: 26px;
   padding: 0 8px;
-  background: var(--bg-secondary, #1e1e1e);
-  border-bottom: 1px solid var(--border-color, #333);
+  background: var(--bg-secondary, var(--bg-surface));
+  border-bottom: 1px solid var(--border-color, var(--border));
   cursor: grab;
   user-select: none;
   flex-shrink: 0;
@@ -256,7 +256,7 @@ onBeforeUnmount(() => {
 }
 
 .pane-header.active {
-  background: var(--bg-tertiary, #252525);
+  background: var(--bg-tertiary, var(--bg-hover));
 }
 
 .pane-header.dragging {

@@ -6,10 +6,16 @@ import { SearchAddon } from '@xterm/addon-search'
 import type { ClientMsg, ServerMsg } from '../types/protocol'
 import { isTauri, createTransport, type Transport } from './useTransport'
 import { onThemeChange, saveSettings, settings, onTextChange } from './useSettings'
+import {
+  computeWheelPlan,
+  type TrackingWheelState,
+  type WheelPlanInput,
+} from './computeWheelPlan'
 import { wsUrlWithToken } from './apiBase'
 import { terminalKeyBindingDefs, useKeybindings, type KeyBinding } from './useKeybindings'
 import { isWindowsClient } from '../utils/clientPlatform'
 import { trailingPathDeleteLen } from '../utils/shell'
+import { setupTouchScroll } from '../utils/touchScroll'
 
 export function isTouchDevice(): boolean {
   return 'ontouchstart' in window || navigator.maxTouchPoints > 0
@@ -210,6 +216,10 @@ export class TerminalInstance {
   private _resizeDebounce: number = 0
   private _lastInputData = ''
   private _lastInputTime = 0
+  private _wheelBypass = false
+  private _lastWheelTime = 0
+  private _trackingWheelState: TrackingWheelState | null = null
+  private _wheelRowHeightWarned = false
   private _symCredits: Array<{ data: string; src: 0 | 1; at: number }> = []
   private _writeQueue: string[] = []
   private _writing = false
@@ -511,7 +521,16 @@ export class TerminalInstance {
     }
     this._setupDragDrop(wrapper)
     this._setupPasteUpload((wrapper.querySelector('.xterm') as HTMLElement | null) || wrapper)
-    this._setupTouchScroll(wrapper)
+    this._touchCleanup = setupTouchScroll(wrapper, {
+      getXterm: () => this.xterm,
+      isInTouchSelection: () => this.inTouchSelection,
+      setTouchMoved: (v) => {
+        this.touchMoved = v
+      },
+      sendWheelEvent: (deltaY, clientX, clientY) =>
+        this._sendWheelEvent(deltaY, clientX, clientY),
+    })
+    this._setupAdaptiveWheel()
 
     this._resizeObserver = new ResizeObserver(() => this._refit())
     this._resizeObserver.observe(wrapper)
@@ -596,6 +615,13 @@ export class TerminalInstance {
   }
 
   private _handleXtermData(rawData: string) {
+    // Mouse reports produced synchronously by our synthetic wheel dispatches
+    // (_sendWheelEvent) are legitimate identical repeats; the WKWebView
+    // key-replay dedup below must not eat them.
+    if (this._wheelBypass) {
+      this._emitInput(rawData)
+      return
+    }
     const tauri = isTauri()
     const data = tauri ? stripImeConfirmSpace(rawData) : rawData
     if (!data) return
@@ -793,6 +819,16 @@ export class TerminalInstance {
     }
     this._writing = true
 
+    // Snapshot whether the viewport is at the bottom BEFORE writing this batch.
+    // During burst output, the rAF yields between batches let pending wheel events
+    // (e.g. macOS trackpad inertia) fire. Even a 1-px upward delta sets
+    // xterm.js's isUserScrolling=true, which prevents ydisp from following ybase
+    // in subsequent write() calls — the viewport gets stuck above the bottom.
+    // By recording the at-bottom state here and restoring it after the batch, we
+    // keep the viewport pinned to the bottom when the user hasn't intentionally
+    // scrolled away.
+    const wasAtBottom = this._isAtBottom()
+
     // Process up to SYNC_BATCH_LIMIT chunks per frame, then yield.
     // This prevents the xterm.write() callback chain from monopolizing
     // the main thread and starving keyboard input events.
@@ -802,6 +838,9 @@ export class TerminalInstance {
 
     const processNext = () => {
       if (!this.xterm || this._writeQueue.length === 0 || processed >= SYNC_BATCH_LIMIT) {
+        if (wasAtBottom && this.xterm) {
+          this.xterm.scrollToBottom()
+        }
         if (this._writeQueue.length > 0) {
           // More data to process — yield to the browser, then continue
           requestAnimationFrame(() => this._processWriteQueue())
@@ -823,6 +862,12 @@ export class TerminalInstance {
     }
 
     processNext()
+  }
+
+  private _isAtBottom(): boolean {
+    if (!this.xterm) return true
+    const buf = this.xterm.buffer.active
+    return buf.viewportY >= buf.baseY
   }
 
   private _scheduleReconnect() {
@@ -950,6 +995,7 @@ export class TerminalInstance {
     } catch {
       return
     }
+
     const cols = this.xterm.cols
     const rows = this.xterm.rows
     if (cols < 2 || rows < 2) return
@@ -1137,154 +1183,108 @@ export class TerminalInstance {
     }
   }
 
-  private _setupTouchScroll(wrapper: HTMLElement) {
-    // Prevent native browser scroll on the wrapper from conflicting with our
-    // custom touch-to-wheel translation.
-    wrapper.style.touchAction = 'none'
-
-    let startX = 0
-    let startY = 0
-    let lastY = 0
-    let lastTime = 0
-    let accumulatedDeltaY = 0
-    let velocity = 0
-    let momentumId = 0
-    let mode: 'undecided' | 'scroll' | 'select' = 'undecided'
-    let scrollEventFired = false
-    const THRESHOLD = 10
-    const SCROLL_THRESHOLD = 12 // Lower threshold for more responsive feel
-
-    const clearMomentum = () => {
-      if (momentumId) {
-        cancelAnimationFrame(momentumId)
-        momentumId = 0
-      }
-    }
-
-    const onTouchStart = (e: TouchEvent) => {
-      clearMomentum()
-      this.touchMoved = false
-      scrollEventFired = false
-      startX = e.touches[0].clientX
-      startY = e.touches[0].clientY
-      lastY = startY
-      lastTime = Date.now()
-      accumulatedDeltaY = 0
-      velocity = 0
-      mode = 'undecided'
-    }
-    const onTouchMove = (e: TouchEvent) => {
-      if (this.inTouchSelection) return
-      const cx = e.touches[0].clientX
-      const cy = e.touches[0].clientY
-      const now = Date.now()
-      if (mode === 'undecided') {
-        const dx = Math.abs(cx - startX)
-        const dy = Math.abs(cy - startY)
-        if (dy > THRESHOLD || dx > THRESHOLD) {
-          mode = dy > dx ? 'scroll' : 'select'
-          if (mode === 'scroll') this.touchMoved = true
-        } else {
-          return
-        }
-      }
-      if (mode === 'scroll') {
-        e.preventDefault() // suppress native scroll — safe because passive: false
-        // Fire terminal-scroll on first scroll movement to collapse virtual keyboard
-        if (!scrollEventFired) {
-          scrollEventFired = true
-          wrapper.dispatchEvent(new CustomEvent('terminal-scroll', { bubbles: true }))
-        }
-        const deltaY = lastY - cy
-        const dt = now - lastTime || 1
-        velocity = deltaY / dt // px/ms
-        accumulatedDeltaY += deltaY
-
-        if (this.xterm && Math.abs(accumulatedDeltaY) >= SCROLL_THRESHOLD) {
-          this._sendWheelEvent(wrapper, accumulatedDeltaY, cx, cy)
-          accumulatedDeltaY = 0
-        }
-      }
-      lastY = cy
-      lastTime = now
-    }
-
-    const onTouchEnd = () => {
-      if (mode !== 'scroll') return
-      // Flush remaining delta
-      if (this.xterm && Math.abs(accumulatedDeltaY) > 2) {
-        this._sendWheelEvent(wrapper, accumulatedDeltaY, lastY, lastY)
-      }
-      accumulatedDeltaY = 0
-
-      // Momentum: keep sending wheel events with decaying velocity
-      if (this.xterm && Math.abs(velocity) > 0.15) {
-        const friction = 0.92
-        let v = velocity
-        const step = () => {
-          v *= friction
-          if (Math.abs(v) < 0.05) return
-          const delta = v * 16 // ~1 frame at 60fps
-          this._sendWheelEvent(wrapper, delta, lastY, lastY)
-          momentumId = requestAnimationFrame(step)
-        }
-        momentumId = requestAnimationFrame(step)
-      }
-
-      // Notify that a scroll gesture ended — used to dismiss the virtual keyboard.
-      wrapper.dispatchEvent(new CustomEvent('terminal-scroll', { bubbles: true }))
-    }
-
-    // Attach to the wrapper element, NOT .xterm-viewport. The xterm.js canvas
-    // (.xterm-screen) sits on top of .xterm-viewport in the DOM and intercepts
-    // all touch events — handlers on the viewport never fire. The wrapper
-    // receives touch events first (before the canvas) and already has
-    // touch-action: none set.
-    wrapper.addEventListener('touchstart', onTouchStart, { passive: true })
-    wrapper.addEventListener('touchmove', onTouchMove, { passive: false })
-    wrapper.addEventListener('touchend', onTouchEnd, { passive: true })
-    // Wheel listener: collapse virtual keyboard on trackpad/mouse scroll
-    const onWheel = () => {
-      wrapper.dispatchEvent(new CustomEvent('terminal-scroll', { bubbles: true }))
-    }
-    wrapper.addEventListener('wheel', onWheel, { passive: true })
-    this._touchCleanup = () => {
-      clearMomentum()
-      wrapper.removeEventListener('touchstart', onTouchStart)
-      wrapper.removeEventListener('touchmove', onTouchMove)
-      wrapper.removeEventListener('touchend', onTouchEnd)
-      wrapper.removeEventListener('wheel', onWheel)
-    }
-  }
-
-  private _sendWheelEvent(_target: HTMLElement, deltaY: number, clientX: number, clientY: number) {
+  private _sendWheelEvent(
+    deltaY: number,
+    clientX: number,
+    clientY: number,
+    deltaMode = 0
+  ) {
     if (!this.xterm || deltaY === 0) return
 
-    // Always dispatch a synthetic WheelEvent on the xterm element and let xterm.js
-    // handle it through its own event pipeline. This matches how real desktop wheel
-    // events are processed:
-    //   - Mouse tracking active: xterm.js sends mouse report escape sequences to PTY
-    //   - No scrollback (alt screen): xterm.js converts to Up/Down arrow sequences
-    //   - Normal shell with scrollback: xterm.js scrolls the viewport
-    // Previously the no-mouse-tracking path called scrollLines() directly, which only
-    // moves xterm's internal viewport — it never sends data to the PTY. On the alt
-    // screen (no scrollback) this was a no-op, so TUI apps like opencode never
-    // received scroll input on mobile.
     const xtermEl = this.xterm.element
-    if (xtermEl) {
+    if (!xtermEl) return
+
+    // Synthetic dispatches must never re-enter the adaptive-wheel planner.
+    this._wheelBypass = true
+    try {
       xtermEl.dispatchEvent(
         new WheelEvent('wheel', {
           deltaY,
           deltaX: 0,
           deltaZ: 0,
-          deltaMode: 0,
+          deltaMode,
           bubbles: true,
           cancelable: true,
           clientX,
           clientY,
         })
       )
+    } finally {
+      this._wheelBypass = false
     }
+  }
+
+  private _setupAdaptiveWheel() {
+    this.xterm?.attachCustomWheelEventHandler((e: WheelEvent): boolean => {
+      if (this._wheelBypass) return true
+      if (!this.xterm) return true
+
+      const now = Date.now()
+      const elapsed = now - this._lastWheelTime
+      if (elapsed > 500) this._trackingWheelState = null
+      const dt = elapsed || 1
+      const rowHeight = this._getWheelRowHeight()
+      const lines =
+        e.deltaMode === 1
+          ? Math.abs(e.deltaY)
+          : e.deltaMode === 0 && rowHeight > 0
+            ? Math.abs(e.deltaY) / rowHeight
+            : 0
+      const velocity = lines / dt
+      this._lastWheelTime = now
+
+      const sensitivity = settings.text.scroll_sensitivity ?? 1
+      const acceleration = settings.text.scroll_acceleration ?? 0
+      const isMouseTracking = this.isMouseModeEnabled()
+      if (!isMouseTracking) this._trackingWheelState = null
+      const input: WheelPlanInput = {
+        deltaY: e.deltaY,
+        deltaX: e.deltaX,
+        deltaMode: e.deltaMode,
+        shiftKey: e.shiftKey,
+        ctrlKey: e.ctrlKey,
+        altKey: e.altKey,
+        metaKey: e.metaKey,
+        velocity,
+        isMouseTracking,
+      }
+      const plan = computeWheelPlan(
+        input,
+        sensitivity,
+        acceleration,
+        this._trackingWheelState
+      )
+      if (plan.action === 'native') {
+        this._trackingWheelState = null
+        return true
+      }
+      this._trackingWheelState = plan.nextTrackingState ?? null
+
+      e.preventDefault()
+      e.stopPropagation()
+      for (let i = 0; i < plan.count; i++) {
+        this._sendWheelEvent(plan.deltaY, e.clientX, e.clientY, plan.deltaMode)
+      }
+      return false
+    })
+  }
+
+  private _getWheelRowHeight(): number {
+    try {
+      const h = Number(
+        (this.xterm as any)?._core?._renderService?.dimensions?.css?.cell?.height
+      )
+      if (Number.isFinite(h) && h > 0) return h
+    } catch {
+      // fall through to the one-time warning below
+    }
+    if (!this._wheelRowHeightWarned) {
+      this._wheelRowHeightWarned = true
+      console.warn(
+        '[useTerminal] xterm private cell-height API (_core._renderService.dimensions.css.cell.height) unavailable or invalid; wheel-scroll acceleration (velocity term) is disabled, sensitivity still applies. xterm.js internals may have changed.'
+      )
+    }
+    return 0
   }
 
   isMouseModeEnabled(): boolean {

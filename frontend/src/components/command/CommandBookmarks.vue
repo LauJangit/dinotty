@@ -423,8 +423,8 @@ defineExpose({ open, close })
   width: 90vw;
   max-width: 500px;
   max-height: 70vh;
-  background: var(--bg-surface, #1a1a1a);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
   display: flex;
   flex-direction: column;
@@ -436,7 +436,7 @@ defineExpose({ open, close })
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  border-bottom: 1px solid var(--border, #333);
+  border-bottom: 1px solid var(--border);
 }
 .bookmarks-search {
   display: flex;
@@ -476,7 +476,7 @@ defineExpose({ open, close })
 }
 .bookmarks-add-toggle:hover,
 .bookmarks-close:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--bg-hover);
 }
 .bookmarks-add-toggle.active {
   background: var(--accent, #8a8a8a);
@@ -500,8 +500,8 @@ defineExpose({ open, close })
   padding: 3px 10px;
   border-radius: 12px;
   font-size: 11px;
-  background: var(--bg-input, #1a1a1a);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
   color: var(--fg-muted);
 }
 .group-tag.active {
@@ -530,7 +530,7 @@ defineExpose({ open, close })
 }
 .bookmark-item:hover,
 .bookmark-item.selected {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--bg-hover);
 }
 .bookmark-item.selected {
   outline: 1px solid var(--accent, #007acc);
@@ -547,7 +547,7 @@ defineExpose({ open, close })
 }
 
 .bookmark-grip {
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
   cursor: grab;
   flex-shrink: 0;
   opacity: 0.5;
@@ -611,8 +611,8 @@ defineExpose({ open, close })
   border-radius: 8px;
 }
 .confirm-popup {
-  background: var(--bg-surface, #1a1a1a);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 16px 20px;
   min-width: 240px;
@@ -634,7 +634,7 @@ defineExpose({ open, close })
 .confirm-popup-cancel,
 .confirm-popup-ok {
   padding: 5px 14px;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 4px;
   font-size: 12px;
   cursor: pointer;
@@ -642,7 +642,7 @@ defineExpose({ open, close })
   color: var(--fg);
 }
 .confirm-popup-cancel:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--bg-hover);
 }
 .confirm-popup-ok {
   background: #e55353;
@@ -703,7 +703,7 @@ defineExpose({ open, close })
   gap: 6px;
   margin-bottom: 12px;
   padding-bottom: 12px;
-  border-bottom: 1px solid var(--border, #333);
+  border-bottom: 1px solid var(--border);
 }
 .bookmark-input {
   flex: 1;

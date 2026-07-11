@@ -90,8 +90,8 @@ function onConnect() {
 .ssh-pw-panel {
   width: 90vw;
   max-width: 380px;
-  background: var(--bg-surface, #1a1a1a);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
   display: flex;
@@ -103,7 +103,7 @@ function onConnect() {
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  border-bottom: 1px solid var(--border, #333);
+  border-bottom: 1px solid var(--border);
 }
 .ssh-pw-header h2 {
   font-size: 15px;
@@ -170,7 +170,7 @@ function onConnect() {
   justify-content: flex-end;
   gap: 8px;
   padding: 12px 16px;
-  border-top: 1px solid var(--border, #333);
+  border-top: 1px solid var(--border);
 }
 
 .ssh-pw-cancel {
@@ -182,7 +182,7 @@ function onConnect() {
   border: 1px solid var(--border);
 }
 .ssh-pw-cancel:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--bg-hover);
 }
 
 .ssh-pw-connect {

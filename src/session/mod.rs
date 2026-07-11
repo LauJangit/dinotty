@@ -301,6 +301,7 @@ impl Session {
     /// the latest size after a 25ms quiet period. Ensures the final resize is
     /// always applied even if no further calls arrive.
     pub fn resize_debounced(&self, cols: u16, rows: u16) {
+        tracing::debug!("resize_debounced: {cols}x{rows}");
         let _ = self.resize_tx.send(Some((cols, rows)));
     }
 

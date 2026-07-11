@@ -440,6 +440,11 @@ pub async fn update_layout(
         }),
     );
 
+    // Sync global active pane: frontend only syncs layout for the active tab,
+    // so the leaf active_pane_id here reflects the user's current focus.
+    *manager.active_pane_id.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+        Some(req.active_pane_id.clone());
+
     // Broadcast to all sync clients
     manager.broadcast_sync(&SyncMsg::LayoutUpdated {
         pane_id: tab_id,

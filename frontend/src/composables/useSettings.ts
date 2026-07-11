@@ -36,6 +36,7 @@ export interface SettingsData {
   keyboard_sound: boolean
   show_virtual_keyboard: boolean
   confirm_before_close_tab: boolean
+  space_confirms_dialogs: boolean
   windowsAltAsCmd: boolean
   locale: string
   panel_position: 'auto' | 'right' | 'left' | 'top' | 'bottom'
@@ -45,6 +46,19 @@ export interface SettingsData {
   open_api: OpenApiConfig
   auth_token?: string
   ip_whitelist: string[]
+  auth: {
+    allowed_origins: string[]
+    trusted_proxies: string[]
+    lockout_strategy: string
+    session_ttl_days: number
+    lockout_max_failures: number
+    lockout_secs: number
+    global_lockout_max_failures: number
+    global_lockout_secs: number
+  }
+  preview: {
+    allow_external: boolean
+  }
   keybindings: Record<string, KeyBinding>
   log: LogConfig
   ssh_profiles: SshProfile[]
@@ -100,6 +114,9 @@ export interface TextConfig {
   cursor_style: 'block' | 'underline' | 'bar'
   cursor_blink: boolean
   scrollback: number
+  scroll_sensitivity: number
+  scroll_acceleration: number
+  scrollbar_width: number
 }
 
 export interface SshProfile {
@@ -196,6 +213,9 @@ export const settings = reactive<SettingsData>({
     cursor_style: 'block',
     cursor_blink: true,
     scrollback: 10000,
+    scroll_sensitivity: 1,
+    scroll_acceleration: 0,
+    scrollbar_width: 8,
   },
   bookmarks: [],
   workspace_bookmarks: [],
@@ -210,6 +230,7 @@ export const settings = reactive<SettingsData>({
   keyboard_sound: false,
   show_virtual_keyboard: false,
   confirm_before_close_tab: true,
+  space_confirms_dialogs: false,
   windowsAltAsCmd: isWindowsClient,
   locale: 'zh',
   panel_position: 'auto',
@@ -247,6 +268,19 @@ export const settings = reactive<SettingsData>({
     enabled: false,
   },
   ip_whitelist: ['127.0.0.1', '::1'],
+  auth: {
+    allowed_origins: [],
+    trusted_proxies: [],
+    lockout_strategy: 'ip',
+    session_ttl_days: 7,
+    lockout_max_failures: 5,
+    lockout_secs: 60,
+    global_lockout_max_failures: 50,
+    global_lockout_secs: 300,
+  },
+  preview: {
+    allow_external: false,
+  },
   keybindings: {},
   log: {
     enabled: true,
