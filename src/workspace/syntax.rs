@@ -83,9 +83,12 @@ fn parse_python_diagnostics(stderr: &str, content: &str) -> Vec<SyntaxDiagnostic
 }
 
 fn check_python_syntax(content: &str) -> Vec<SyntaxDiagnostic> {
+    use crate::platform::process::CommandNoWindowExt;
     use std::io::Write;
     use std::process::{Command, Stdio};
-    let Ok(mut child) = Command::new("python3")
+    let mut command = Command::new("python3");
+    let Ok(mut child) = command
+        .no_window()
         .arg("-m")
         .arg("py_compile")
         .arg("-")
@@ -142,12 +145,15 @@ fn parse_go_diagnostics(stderr: &str, content: &str) -> Vec<SyntaxDiagnostic> {
 }
 
 fn check_go_syntax(content: &str) -> Vec<SyntaxDiagnostic> {
+    use crate::platform::process::CommandNoWindowExt;
     use std::process::{Command, Stdio};
     let Ok(tmp) = tempfile::Builder::new().suffix(".go").tempfile() else { return vec![] };
     if std::fs::write(tmp.path(), content.as_bytes()).is_err() {
         return vec![];
     }
-    let Ok(output) = Command::new("go")
+    let mut command = Command::new("go");
+    let Ok(output) = command
+        .no_window()
         .args(["tool", "compile", "-e", "-p", "main"])
         .arg(tmp.path())
         .stdin(Stdio::null())

@@ -15,6 +15,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::platform::process::CommandNoWindowExt;
 use crate::session::SessionManager;
 use crate::settings::SettingsState;
 
@@ -344,7 +345,9 @@ impl McpTools {
     }
 
     fn tool_git_status(&self, _args: Value) -> Result<String, String> {
-        let output = std::process::Command::new("git")
+        let mut command = std::process::Command::new("git");
+        let output = command
+            .no_window()
             .args(["status", "--porcelain"])
             .output()
             .map_err(|e| format!("git failed: {e}"))?;
@@ -353,7 +356,9 @@ impl McpTools {
 
     fn tool_git_diff(&self, args: Value) -> Result<String, String> {
         let path = args.get("path").and_then(|v| v.as_str()).ok_or("Missing path")?;
-        let output = std::process::Command::new("git")
+        let mut command = std::process::Command::new("git");
+        let output = command
+            .no_window()
             .args(["diff", path])
             .output()
             .map_err(|e| format!("git failed: {e}"))?;

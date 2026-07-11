@@ -1,3 +1,5 @@
+#![cfg_attr(all(not(debug_assertions), windows), windows_subsystem = "windows")]
+
 use base64::Engine;
 use dinotty_server::pty;
 use dinotty_server::session::{SessionClientEvent, SessionManager, SessionStatus, SyncMsg};
@@ -43,44 +45,41 @@ fn spawn_tauri_output_forwarder(
     // app.emit() may block when the WKWebView IPC queue is full — if this
     // happened on a tokio worker thread it would freeze the entire runtime,
     // killing all terminals and the embedded Axum server.
-    match std::thread::Builder::new()
-        .name(format!("fwd-{}", pane_id))
-        .spawn(move || {
-            let mut pending = None;
-            while let Some(event) = pending.take().or_else(|| rx.blocking_recv()) {
-                match event {
-                    SessionClientEvent::Output(mut batch) => {
-                        loop {
-                            match rx.try_recv() {
-                                Ok(SessionClientEvent::Output(data)) => batch.push_str(&data),
-                                Ok(event @ SessionClientEvent::Resize { .. }) => {
-                                    pending = Some(event);
-                                    break;
-                                }
-                                Err(_) => break,
+    match std::thread::Builder::new().name(format!("fwd-{}", pane_id)).spawn(move || {
+        let mut pending = None;
+        while let Some(event) = pending.take().or_else(|| rx.blocking_recv()) {
+            match event {
+                SessionClientEvent::Output(mut batch) => {
+                    loop {
+                        match rx.try_recv() {
+                            Ok(SessionClientEvent::Output(data)) => batch.push_str(&data),
+                            Ok(event @ SessionClientEvent::Resize { .. }) => {
+                                pending = Some(event);
+                                break;
                             }
-                        }
-                        if app
-                            .emit("pty-output", PtyOutput { pane_id: pane_id.clone(), data: batch })
-                            .is_err()
-                        {
-                            break;
+                            Err(_) => break,
                         }
                     }
-                    SessionClientEvent::Resize { cols, rows } => {
-                        if app
-                            .emit("pty-resize", PtyResize { pane_id: pane_id.clone(), cols, rows })
-                            .is_err()
-                        {
-                            break;
-                        }
+                    if app
+                        .emit("pty-output", PtyOutput { pane_id: pane_id.clone(), data: batch })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                SessionClientEvent::Resize { cols, rows } => {
+                    if app
+                        .emit("pty-resize", PtyResize { pane_id: pane_id.clone(), cols, rows })
+                        .is_err()
+                    {
+                        break;
                     }
                 }
             }
-            fwd_session.remove_client(client_id);
-            fwd_session.clear_tauri_client_if(client_id);
-        })
-    {
+        }
+        fwd_session.remove_client(client_id);
+        fwd_session.clear_tauri_client_if(client_id);
+    }) {
         Ok(_) => {}
         Err(_) => {
             session.remove_client(client_id);
@@ -578,12 +577,16 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error building tauri application")
         .run(|app_handle, event| {
+            #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {
                 if let Some(win) = app_handle.get_webview_window("main") {
                     let _ = win.show();
                     let _ = win.set_focus();
                 }
             }
+
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app_handle, event);
         });
 }
 
