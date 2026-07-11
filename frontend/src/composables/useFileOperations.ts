@@ -1,6 +1,7 @@
 import { ref, computed, type Ref } from 'vue'
 import { getApiBase, apiUrl, authFetch, getAuthToken } from './apiBase'
 import { isTauri, tauriInvoke } from './useTransport'
+import { isInternalDragActive, getInternalDragRel, clearInternalDrag } from './internalDragState'
 import type { DirEntry } from '../components/workspace/TreeRows'
 
 // --- Tauri native drag-drop support ---
@@ -35,8 +36,43 @@ function setupTauriFileDrop() {
 
   // Tauri v2 listen() returns Promise<UnlistenFn>
   const unlistenDrop = listen('file-drop-paths', async (event: any) => {
+    // Internal tree drag → emit on the target EditorPane
+    if (isInternalDragActive()) {
+      const rel = getInternalDragRel()
+      clearInternalDrag()
+      if (rel) {
+        const payload = event.payload || {}
+        const pos = payload.position || { x: 0, y: 0 }
+        // Tauri position is in physical pixels; convert to CSS pixels
+        const dpr = window.devicePixelRatio || 1
+        const cx = (pos.x ?? 0) / dpr
+        const cy = (pos.y ?? 0) / dpr
+        const el = cx && cy ? document.elementFromPoint(cx, cy) : null
+        const pane = el?.closest('.editor-pane') as HTMLElement | null
+        if (pane) {
+          const rect = pane.getBoundingClientRect()
+          const x = cx - rect.left
+          const y = cy - rect.top
+          const w = rect.width
+          const h = rect.height
+          const edge = Math.min(Math.min(w, h) * 0.25, 40)
+          let position: string
+          if (x < edge) position = 'left'
+          else if (x > w - edge) position = 'right'
+          else if (y < edge) position = 'top'
+          else if (y > h - edge) position = 'bottom'
+          else position = 'center'
+          const leafId = pane.dataset.leafId || ''
+          pane.dispatchEvent(
+            new CustomEvent('file-drop', { detail: { leafId, rel, position }, bubbles: true })
+          )
+        }
+      }
+      return
+    }
     if (!_activeUploadFn) return
-    const paths: string[] = event.payload || []
+    const payload = event.payload || []
+    const paths: string[] = Array.isArray(payload) ? payload : (payload.paths || [])
     if (!paths.length) return
     const files: { file: File; path: string }[] = []
     for (const p of paths) {
@@ -57,6 +93,7 @@ function setupTauriFileDrop() {
 
   // Listen for drag-enter/leave to show drop overlay
   const unlistenActive = listen('file-drop-active', (event: any) => {
+    if (isInternalDragActive()) return // ignore native events for internal tree drags
     if (!_dragCounterRef) return
     _dragCounterRef.value = event.payload ? 1 : 0
   })

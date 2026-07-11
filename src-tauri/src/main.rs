@@ -544,11 +544,15 @@ fn main() {
                 tauri::DragDropEvent::Leave => {
                     let _ = window.emit("file-drop-active", false);
                 }
-                tauri::DragDropEvent::Drop { paths, .. } => {
+                tauri::DragDropEvent::Drop { paths, position } => {
                     let _ = window.emit("file-drop-active", false);
                     let path_strings: Vec<String> =
                         paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
-                    let _ = window.emit("file-drop-paths", &path_strings);
+                    let payload = serde_json::json!({
+                        "paths": path_strings,
+                        "position": { "x": position.x, "y": position.y }
+                    });
+                    let _ = window.emit("file-drop-paths", &payload);
                 }
                 _ => {}
             },

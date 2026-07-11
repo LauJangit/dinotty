@@ -6,9 +6,9 @@
       class="file-workspace-body"
       :class="{ embedded }"
       @dragover.prevent
-      @dragenter.prevent="ops.onWorkspaceDragEnter()"
+      @dragenter.prevent="onWorkspaceDragEnter($event)"
       @dragleave="ops.onWorkspaceDragLeave()"
-      @drop.prevent="ops.onWorkspaceDrop($event)"
+      @drop.prevent="onWorkspaceDrop($event)"
     >
       <div v-if="ops.dragging.value" class="file-workspace-drop-overlay">
         {{ t('filePreview.dropHint') }}
@@ -69,45 +69,14 @@
         >
           <component :is="treeCollapsed ? PanelLeftOpen : PanelLeftClose" :size="12" />
         </button>
-        <FilePreviewContent
-          ref="previewContentRef1"
+        <EditorSplitContainer
+          :layout="editorSplit.editorLayout.value"
+          :active-leaf-id="editorSplit.activeEditorLeafId.value"
           :pane-id="paneId"
-          :file-path="selectedRel ?? undefined"
-          :preview-loading="previewLoading"
-          :preview-err="previewErr"
-          :selected-rel="selectedRel"
-          :selected-is-dir="selectedIsDir"
-          :meta="meta"
-          :raw-url="ops.rawUrl.value"
-          :show-save="false"
-          :audio-title="audioTitle"
-          :audio-sub="audioSub"
-          :audio-time-now="audio.audioTimeNow.value"
-          :audio-time-total="audio.audioTimeTotal.value"
-          :audio-seek-value="audio.audioSeekValue.value"
-          :audio-vol-value="audio.audioVolValue.value"
-          :audio-playing="audio.audioPlaying.value"
-          :editor-dirty="editor.editorDirty.value"
-          :editor-text="editor.editorText.value"
-          :can-save-editor="editor.canSaveEditor.value"
-          :md-show-preview="editor.mdShowPreview.value"
-          :html-show-preview="editor.htmlShowPreview.value"
-          :markdown-editor-html="editor.markdownEditorHtml.value"
-          :office-loading="office.officeLoading.value"
-          :office-err="office.officeErr.value"
-          :office-html="office.officeHtml.value"
-          @audio-time-update="audio.onAudioTimeUpdate(audioRef)"
-          @audio-loaded-metadata="audio.onAudioLoadedMetadata(audioRef)"
-          @audio-ended="audio.onAudioEnded()"
-          @audio-seek-input="(ev) => audio.onAudioSeekInput(audioRef, ev)"
-          @seek-audio="(d) => audio.seekAudio(audioRef, d)"
-          @toggle-audio="audio.toggleAudio(audioRef)"
-          @audio-volume-input="(ev) => audio.onAudioVolumeInput(audioRef, ev)"
-          @update:md-show-preview="editor.mdShowPreview.value = $event"
-          @update:html-show-preview="editor.htmlShowPreview.value = $event"
-          @update:editor-text="editor.editorText.value = $event"
-          @save-editor="editor.saveEditor"
-          @selection-change="editor.onEditorSelectionChange"
+          :show-header="editorSplit.isSplit.value"
+          @focus="(id: string) => editorSplit.focusEditorPane(id)"
+          @close="(id: string) => editorSplit.closeEditorPane(id)"
+          @file-drop="onEditorFileDrop"
         />
       </div>
     </div>
@@ -200,9 +169,9 @@
         ref="fileWorkspaceBodyRef"
         class="file-workspace-body"
         @dragover.prevent
-        @dragenter.prevent="ops.onWorkspaceDragEnter()"
+        @dragenter.prevent="onWorkspaceDragEnter($event)"
         @dragleave="ops.onWorkspaceDragLeave()"
-        @drop.prevent="ops.onWorkspaceDrop($event)"
+        @drop.prevent="onWorkspaceDrop($event)"
       >
         <div v-if="ops.dragging.value" class="file-workspace-drop-overlay">
           {{ t('filePreview.dropHint') }}
@@ -260,45 +229,14 @@
           >
             <component :is="treeCollapsed ? PanelLeftOpen : PanelLeftClose" :size="12" />
           </button>
-          <FilePreviewContent
-            ref="previewContentRef2"
+          <EditorSplitContainer
+            :layout="editorSplit.editorLayout.value"
+            :active-leaf-id="editorSplit.activeEditorLeafId.value"
             :pane-id="paneId"
-            :file-path="selectedRel ?? undefined"
-            :preview-loading="previewLoading"
-            :preview-err="previewErr"
-            :selected-rel="selectedRel"
-            :selected-is-dir="selectedIsDir"
-            :meta="meta"
-            :raw-url="ops.rawUrl.value"
-            :show-save="true"
-            :audio-title="audioTitle"
-            :audio-sub="audioSub"
-            :audio-time-now="audio.audioTimeNow.value"
-            :audio-time-total="audio.audioTimeTotal.value"
-            :audio-seek-value="audio.audioSeekValue.value"
-            :audio-vol-value="audio.audioVolValue.value"
-            :audio-playing="audio.audioPlaying.value"
-            :editor-dirty="editor.editorDirty.value"
-            :editor-text="editor.editorText.value"
-            :can-save-editor="editor.canSaveEditor.value"
-            :md-show-preview="editor.mdShowPreview.value"
-            :html-show-preview="editor.htmlShowPreview.value"
-            :markdown-editor-html="editor.markdownEditorHtml.value"
-            :office-loading="office.officeLoading.value"
-            :office-err="office.officeErr.value"
-            :office-html="office.officeHtml.value"
-            @audio-time-update="audio.onAudioTimeUpdate(audioRef)"
-            @audio-loaded-metadata="audio.onAudioLoadedMetadata(audioRef)"
-            @audio-ended="audio.onAudioEnded()"
-            @audio-seek-input="(ev) => audio.onAudioSeekInput(audioRef, ev)"
-            @seek-audio="(d) => audio.seekAudio(audioRef, d)"
-            @toggle-audio="audio.toggleAudio(audioRef)"
-            @audio-volume-input="(ev) => audio.onAudioVolumeInput(audioRef, ev)"
-            @update:md-show-preview="editor.mdShowPreview.value = $event"
-            @update:html-show-preview="editor.htmlShowPreview.value = $event"
-            @save-editor="editor.saveEditor"
-            @update:editor-text="editor.editorText.value = $event"
-            @selection-change="editor.onEditorSelectionChange"
+            :show-header="editorSplit.isSplit.value"
+            @focus="(id: string) => editorSplit.focusEditorPane(id)"
+            @close="(id: string) => editorSplit.closeEditorPane(id)"
+            @file-drop="onEditorFileDrop"
           />
         </div>
       </div>
@@ -327,6 +265,16 @@
         <span class="tree-ctx-label">{{ t('filePreview.ctxNewFolder') }}</span>
       </button>
       <template v-if="ctxMenu.contextMenu.value?.rel || selectedRel">
+        <div class="tree-ctx-sep" />
+        <button
+          v-if="!ctxMenu.contextMenu.value?.isDir"
+          type="button"
+          class="tree-ctx-item"
+          role="menuitem"
+          @click="ctxOpenToSide"
+        >
+          <span class="tree-ctx-label">{{ t('filePreview.ctxOpenToSide') }}</span>
+        </button>
         <div class="tree-ctx-sep" />
         <button
           type="button"
@@ -405,9 +353,9 @@
     @cancel="ctxMenu.cancelDelete"
   />
   <SelectionToolbar
-    :selected-text="editor.editorSelection.value?.text ?? ''"
-    :anchor-rect="editor.editorSelection.value?.rect ?? null"
-    @dismiss="editor.onSelectionDismiss"
+    :selected-text="''"
+    :anchor-rect="null"
+    @dismiss="() => {}"
   />
 </template>
 
@@ -419,16 +367,15 @@ import { isTauri } from '../../composables/useTransport'
 import { copyToClipboard } from '../../utils/clipboard'
 import { usePaneResize } from '../../composables/usePaneResize'
 import { useFileNavigation, useSelectedPath } from '../../composables/useFileNavigation'
-import { useAudioPlayer } from '../../composables/useAudioPlayer'
 import { useFileWorkspaceLayout } from '../../composables/useFileWorkspaceLayout'
 import { useFileWatch } from '../../composables/useFileWatch'
-import { useFileEditor } from '../../composables/useFileEditor'
-import { useOfficePreview } from '../../composables/useOfficePreview'
+import { useEditorSplit } from '../../composables/useEditorSplit'
 import { useFileOperations } from '../../composables/useFileOperations'
+import type { DropPosition } from '../../types/pane'
 import { useTreeContextMenu } from '../../composables/useTreeContextMenu'
 import { TreeRows } from '../workspace/TreeRows'
 import type { DirEntry } from '../workspace/TreeRows'
-import FilePreviewContent from '../workspace/FilePreviewContent.vue'
+import EditorSplitContainer from '../workspace/EditorSplitContainer.vue'
 import SelectionToolbar from '../workspace/SelectionToolbar.vue'
 import ConfirmModal from '../ui/ConfirmModal.vue'
 import { useRecentFiles } from '../../composables/useRecentAccess'
@@ -454,11 +401,6 @@ const { t } = useI18n()
 const cwdLabel = ref('')
 const childCache = ref<Record<string, DirEntry[]>>({})
 const expanded = ref<Set<string>>(new Set())
-const selectedRel = ref<string | null>(null)
-const selectedIsDir = ref(false)
-const meta = ref<any | null>(null)
-const previewLoading = ref(false)
-const previewErr = ref('')
 const lastTreePointerTs = ref(0)
 const gitStatusMap = ref<Record<string, string>>({})
 const inlineCreate = ref<{ parentRel: string; kind: 'file' | 'dir' } | null>(null)
@@ -468,19 +410,26 @@ const fileWorkspaceBodyRef = ref<HTMLElement | null>(null)
 
 // --- Composables ---
 const nav = useFileNavigation()
-const audio = useAudioPlayer()
 const layout = useFileWorkspaceLayout()
 const recentFiles = useRecentFiles()
 const workspaceBookmarks = useWorkspaceBookmarks()
+const editorSplit = useEditorSplit({ paneId: () => props.paneId })
 
-const editor = useFileEditor({
-  paneId: () => props.paneId,
-  selectedRel,
-  selectedIsDir,
-  meta,
-})
+// Derived from active editor pane — keeps tree highlight and context menu working
+const selectedRel = ref<string | null>(null)
+const selectedIsDir = ref(false)
+const meta = ref<any | null>(null)
+const previewErr = ref('')
 
-const office = useOfficePreview({ paneId: () => props.paneId })
+// Keep selectedRel in sync with active editor pane
+watch(
+  () => editorSplit.activeLeaf.value?.filePath,
+  (fp) => { selectedRel.value = fp ?? null }
+)
+watch(
+  () => editorSplit.activeLeaf.value?.isDir,
+  (isDir) => { selectedIsDir.value = isDir ?? false }
+)
 
 const ops = useFileOperations({
   paneId: () => props.paneId,
@@ -499,9 +448,9 @@ const ctxMenu = useTreeContextMenu({
   selectedRel,
   selectedIsDir,
   meta,
-  editorDirty: editor.editorDirty,
-  editorText: editor.editorText,
-  editorBaseline: editor.editorBaseline,
+  editorDirty: ref(false),
+  editorText: ref(''),
+  editorBaseline: ref(''),
   childCache,
   expanded,
   inlineCreate,
@@ -530,17 +479,17 @@ const fileWatch = useFileWatch({
   selectedRel,
   selectedIsDir,
   meta,
-  editorDirty: () => editor.editorDirty.value,
+  editorDirty: () => false,
   onFileDeleted: () => {
-    selectedRel.value = null
-    selectedIsDir.value = false
+    const leaf = editorSplit.activeLeaf.value
+    if (leaf) {
+      leaf.filePath = null
+      leaf.isDir = false
+    }
     meta.value = null
-    previewErr.value = ''
   },
   onFileChanged: (newMeta) => {
     meta.value = newMeta
-    editor.editorText.value = newMeta.content ?? ''
-    editor.editorBaseline.value = newMeta.content ?? ''
     fetchGitStatus()
   },
   onBinaryChanged: () => {
@@ -548,18 +497,6 @@ const fileWatch = useFileWatch({
   },
   fetchList,
 })
-
-// --- Audio ---
-const previewContentRef1 = ref<InstanceType<typeof FilePreviewContent> | null>(null)
-const previewContentRef2 = ref<InstanceType<typeof FilePreviewContent> | null>(null)
-const audioRef = computed(
-  () => previewContentRef1.value?.audioRef ?? previewContentRef2.value?.audioRef ?? null
-)
-
-const audioTitle = computed(() =>
-  selectedRel.value ? selectedRel.value.split('/').pop() || selectedRel.value : ''
-)
-const audioSub = computed(() => '')
 
 // --- Computed ---
 const cwdShort = computed(() => {
@@ -611,6 +548,41 @@ function ctxToggleBookmark() {
   workspaceBookmarks.toggleBookmark(name, ops.absolutePath(targetRel), isDir)
 }
 
+function ctxOpenToSide() {
+  const rel = ctxMenu.contextMenu.value?.rel || selectedRel.value
+  if (!rel) return
+  ctxMenu.closeContextMenu()
+  editorSplit.openFileInNewPane(rel, ctxMenu.contextMenu.value?.isDir ?? false, 'horizontal')
+  recentFiles.recordFile(ops.absolutePath(rel), rel.split('/').pop() || rel)
+}
+
+function onEditorFileDrop(leafId: string, rel: string, position: DropPosition) {
+  if (position === 'center') {
+    editorSplit.focusEditorPane(leafId)
+    onSelectFile(rel)
+  } else {
+    const direction = position === 'left' || position === 'right' ? 'horizontal' : 'vertical'
+    editorSplit.openFileInNewPane(rel, false, direction)
+    onSelectFile(rel)
+  }
+}
+
+function isInternalTreeMove(ev: DragEvent): boolean {
+  const t = ev.dataTransfer?.types
+  if (!t) return false
+  return t.includes ? t.includes('application/x-tree-move') : (t as any).contains('application/x-tree-move')
+}
+
+function onWorkspaceDragEnter(ev: DragEvent) {
+  if (isInternalTreeMove(ev)) return
+  ops.onWorkspaceDragEnter()
+}
+
+function onWorkspaceDrop(ev: DragEvent) {
+  if (isInternalTreeMove(ev)) return
+  ops.onWorkspaceDrop(ev)
+}
+
 // --- Navigation ---
 function ensureParentsExpanded(rel: string) {
   const parts = rel.split('/')
@@ -648,17 +620,17 @@ function bumpTreePointerTs() {
 }
 
 function shouldBlockNavigate(): boolean {
-  if (
-    !editor.editorDirty.value ||
-    !meta.value ||
-    (meta.value.kind !== 'text' && meta.value.kind !== 'markdown')
-  )
-    return false
-  return !confirm(t('filePreview.discardChanges'))
+  return false
 }
 
-async function trySelectFile(rel: string) {
+async function trySelectFile(rel: string, ev?: MouseEvent) {
   if (shouldBlockNavigate()) return
+  // Cmd (macOS) / Ctrl (Windows/Linux) + Click → open in new split pane
+  if (ev?.metaKey || ev?.ctrlKey) {
+    editorSplit.openFileInNewPane(rel, false, 'horizontal')
+    await loadMetaForActivePane(rel)
+    return
+  }
   await onSelectFile(rel)
 }
 
@@ -670,46 +642,24 @@ function trySelectDir(rel: string) {
 const { selectedPath: globalSelectedPath } = useSelectedPath()
 
 function onSelectDir(rel: string) {
-  selectedRel.value = rel
-  selectedIsDir.value = true
+  editorSplit.openFileInActivePane(rel, true)
   meta.value = null
-  previewErr.value = ''
   nav.pushNav(rel, true)
   globalSelectedPath.value = ops.absolutePath(rel)
   emit('navigate', ops.absolutePath(rel))
 }
 
+async function loadMetaForActivePane(rel: string) {
+  recentFiles.recordFile(ops.absolutePath(rel), rel.split('/').pop() || rel)
+}
+
 async function onSelectFile(rel: string) {
-  selectedRel.value = rel
-  selectedIsDir.value = false
-  previewErr.value = ''
-  previewLoading.value = true
+  editorSplit.openFileInActivePane(rel, false)
   meta.value = null
-  office.officeLoading.value = false
-  office.officeErr.value = ''
-  office.officeHtml.value = ''
   nav.pushNav(rel, false)
   globalSelectedPath.value = ops.absolutePath(rel)
   emit('navigate', ops.absolutePath(rel))
-  try {
-    await getApiBase()
-    const q = new URLSearchParams({ pane_id: props.paneId, path: rel })
-    const res = await authFetch(apiUrl(`/api/workspace/meta?${q}`))
-    if (!res.ok) {
-      const j = await res.json().catch(() => ({}))
-      previewErr.value = j.error || 'error'
-      return
-    }
-    meta.value = await res.json()
-    if (meta.value) {
-      recentFiles.recordFile(ops.absolutePath(rel), rel.split('/').pop() || rel)
-    }
-    if (meta.value?.kind === 'office') void office.loadOfficePreview(rel)
-  } catch {
-    previewErr.value = 'network'
-  } finally {
-    previewLoading.value = false
-  }
+  recentFiles.recordFile(ops.absolutePath(rel), rel.split('/').pop() || rel)
 }
 
 // --- Tree data ---
@@ -1004,13 +954,6 @@ function onEditorSaveKeydown(e: KeyboardEvent) {
     ctxMenu.closeContextMenu()
     return
   }
-  if (!props.visible) return
-  const saveChord =
-    (e.metaKey || e.ctrlKey) && (e.code === 'KeyS' || e.key === 's' || e.key === 'S')
-  if (!saveChord) return
-  if (!editor.canSaveEditorContext.value) return
-  e.preventDefault()
-  if (editor.canSaveEditor.value) void editor.saveEditor()
 }
 
 function onCloseContextScroll() {
@@ -1020,46 +963,6 @@ function onCloseContextScroll() {
 // --- Watchers ---
 watch(layout.narrow, (isNarrow) => {
   if (isNarrow) treeCollapsed.value = false
-})
-
-watch(
-  () => [
-    selectedRel.value,
-    selectedIsDir.value,
-    meta.value?.kind,
-    meta.value?.content,
-    meta.value?.truncated,
-  ],
-  () => {
-    if (selectedIsDir.value || !selectedRel.value) {
-      editor.editorText.value = ''
-      editor.editorBaseline.value = ''
-      return
-    }
-    const m = meta.value
-    if (m?.kind === 'text' || m?.kind === 'markdown') {
-      const c = m.content ?? ''
-      editor.editorText.value = c
-      editor.editorBaseline.value = c
-    } else {
-      editor.editorText.value = ''
-      editor.editorBaseline.value = ''
-    }
-  }
-)
-
-watch(
-  () => [ops.rawUrl.value, meta.value?.kind],
-  () => {
-    if (meta.value?.kind !== 'audio') return
-    audio.resetAudio(audioRef.value)
-  }
-)
-
-watch(selectedRel, () => {
-  editor.mdShowPreview.value = false
-  editor.htmlShowPreview.value = false
-  editor.editorSelection.value = null
 })
 
 watch(
@@ -1096,7 +999,6 @@ defineExpose({
   deleteSelected: ops.deleteSelected,
   startNewFile,
   startNewFolder,
-  saveEditor: editor.saveEditor,
   openDrawer: layout.openDrawer,
   toggleDrawer: layout.toggleDrawer,
   drawerOpen: layout.drawerOpen,

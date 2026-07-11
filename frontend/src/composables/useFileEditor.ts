@@ -150,3 +150,6 @@ export function useFileEditor(opts: {
     onSelectionDismiss,
   }
 }
+
+/** Factory alias — use this when creating independent editor instances per pane */
+export const createFileEditor = useFileEditor
