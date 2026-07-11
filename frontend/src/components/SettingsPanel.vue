@@ -213,7 +213,8 @@ const tabs = computed(() => [
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 16px;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
 }
 .settings-group-title {
   font-size: 11px;
@@ -224,26 +225,6 @@ const tabs = computed(() => [
   margin: 0 0 14px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
-}
-.section-title--collapsible {
-  cursor: pointer;
-  user-select: none;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.section-title--collapsible:hover {
-  color: var(--fg);
-}
-.chevron {
-  font-size: 8px;
-  transition: transform 0.15s ease;
-  display: inline-block;
-  color: var(--fg-muted, #888);
-  margin-right: 2px;
-}
-.chevron.open {
-  transform: rotate(90deg);
 }
 .settings-group .settings-section:last-child {
   margin-bottom: 0;
@@ -690,8 +671,8 @@ const tabs = computed(() => [
   gap: 4px;
   padding: 8px 6px 10px;
   margin-bottom: 10px;
-  background: #1c1c1e;
-  border: 1px solid #38383a;
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: 6px;
 }
 

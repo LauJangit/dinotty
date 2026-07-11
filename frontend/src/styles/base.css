@@ -21,6 +21,10 @@
   --accent: #8a8a8a;
   --accent-hover: #9e9e9e;
 
+  /* Semantic */
+  --success: #49cc90;
+  --danger: #f44747;
+
   /* Aliases for plugin compatibility */
   --text-color: var(--fg);
   --text-primary: var(--fg-bright);

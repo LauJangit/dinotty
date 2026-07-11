@@ -38,15 +38,7 @@
       </div>
     </div>
 
-    <div class="settings-group">
-      <h3
-        class="settings-group-title section-title--collapsible"
-        @click="customColorsOpen = !customColorsOpen"
-      >
-        <span class="chevron" :class="{ open: customColorsOpen }">▶</span>
-        {{ t('settings.customColors') }}
-      </h3>
-      <template v-if="customColorsOpen">
+    <CollapsibleSection :title="t('settings.customColors')" level="group">
       <p class="settings-hint">{{ t('settings.customColorsHint') }}</p>
       <div class="custom-colors-grid">
         <label class="color-field">
@@ -80,8 +72,7 @@
           </label>
         </div>
       </details>
-      </template>
-    </div>
+    </CollapsibleSection>
 
     <div class="settings-group">
       <h3 class="settings-group-title">{{ t('settings.text') }}</h3>
@@ -295,6 +286,7 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, onBeforeUnmount } from 'vue'
 import { useSettings, notifyTextChange } from '../../composables/useSettings'
+import CollapsibleSection from './CollapsibleSection.vue'
 import { useI18n } from '../../composables/useI18n'
 import { themes, getThemeByName } from '../../themes'
 
@@ -426,8 +418,6 @@ const fontFamilies = [
   { label: 'Ubuntu Mono', value: '"Ubuntu Mono", monospace' },
 ]
 
-const customColorsOpen = ref(false)
-const advancedTextOpen = ref(false)
 const fontDropdownOpen = ref(false)
 const customFontEditing = ref(false)
 const customFontName = ref('')

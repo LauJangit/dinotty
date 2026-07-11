@@ -349,7 +349,7 @@ function fmtRate(bytesPerSec: number): string {
   position: fixed;
   z-index: 9999;
   background: var(--bg-surface, #1e1e2e);
-  border: 1px solid var(--border));
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 12px;
   width: 260px;
@@ -387,7 +387,7 @@ function fmtRate(bytesPerSec: number): string {
 }
 .popover-divider {
   height: 1px;
-  background: var(--border));
+  background: var(--border);
   margin: 6px 0;
 }
 </style>

@@ -125,16 +125,7 @@
         <p v-if="tokenError" class="token-error">{{ tokenError }}</p>
       </section>
 
-      <section class="settings-section">
-        <h3
-          class="section-title--collapsible"
-          @click="advancedSecurityOpen = !advancedSecurityOpen"
-        >
-          <span class="chevron" :class="{ open: advancedSecurityOpen }">▶</span>
-          {{ t('settings.group.advancedSecurity') }}
-        </h3>
-      </section>
-      <template v-if="advancedSecurityOpen">
+      <CollapsibleSection :title="t('settings.group.advancedSecurity')" level="section">
       <section class="settings-section">
         <h3>{{ t('settings.ipWhitelist') }}</h3>
         <div v-for="(ip, idx) in settings.ip_whitelist" :key="idx" class="ip-row">
@@ -249,18 +240,10 @@
         </div>
         <p class="settings-hint">{{ t('security.previewAllowExternalHint') }}</p>
       </section>
-      </template>
+      </CollapsibleSection>
     </div>
 
-    <div class="settings-group">
-      <h3
-        class="settings-group-title section-title--collapsible"
-        @click="uploadsOpen = !uploadsOpen"
-      >
-        <span class="chevron" :class="{ open: uploadsOpen }">▶</span>
-        {{ t('settings.group.uploads') }}
-      </h3>
-      <template v-if="uploadsOpen">
+    <CollapsibleSection :title="t('settings.group.uploads')" level="group">
       <section class="settings-section">
         <div class="settings-row">
           <label>{{ t('settings.uploads.dir') }}</label>
@@ -348,8 +331,7 @@
         <p class="settings-hint">{{ t('settings.uploads.hint') }}</p>
         <p v-if="!uploadDirError" class="settings-hint">{{ uploadStatusLabel }}</p>
       </section>
-      </template>
-    </div>
+    </CollapsibleSection>
 
     <div class="settings-group">
       <h3 class="settings-group-title">{{ t('settings.group.behavior') }}</h3>
@@ -400,15 +382,7 @@
       </section>
     </div>
 
-    <div class="settings-group">
-      <h3
-        class="settings-group-title section-title--collapsible"
-        @click="loggingOpen = !loggingOpen"
-      >
-        <span class="chevron" :class="{ open: loggingOpen }">▶</span>
-        {{ t('settings.log') }}
-      </h3>
-      <template v-if="loggingOpen">
+    <CollapsibleSection :title="t('settings.log')" level="group">
       <section class="settings-section">
         <div class="settings-row">
           <label>{{ t('settings.log.enabled') }}</label>
@@ -445,8 +419,7 @@
           </div>
         </template>
       </section>
-      </template>
-    </div>
+    </CollapsibleSection>
 
     <!-- Log Viewer Modal -->
     <div v-if="logModalVisible" class="log-modal-overlay" @click.self="logModalVisible = false">
@@ -475,6 +448,7 @@ import { Eye, EyeOff, Copy, Check, Pencil, RefreshCw, Save, X, FolderOpen } from
 import { invoke } from '@tauri-apps/api/core'
 import { useSettings } from '../../composables/useSettings'
 import { useI18n } from '../../composables/useI18n'
+import CollapsibleSection from './CollapsibleSection.vue'
 import { copyToClipboard } from '../../utils/clipboard'
 import { useToast } from 'vue-toastification'
 import { isTauri } from '../../composables/useTransport'
@@ -494,9 +468,6 @@ const { t } = useI18n()
 const toast = useToast()
 
 const accessUrl = ref('')
-const advancedSecurityOpen = ref(false)
-const uploadsOpen = ref(false)
-const loggingOpen = ref(false)
 const logModalVisible = ref(false)
 const logContent = ref('')
 const logLoading = ref(false)
