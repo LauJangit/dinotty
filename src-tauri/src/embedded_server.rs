@@ -20,7 +20,6 @@ use dinotty_server::history;
 use dinotty_server::history::HistoryState;
 use dinotty_server::monitor::{self, MonitorState};
 use dinotty_server::notification::{self, NotificationBroadcast};
-use dinotty_server::platform::process::CommandNoWindowExt;
 use dinotty_server::plugin::{self, PluginManager, PluginManagerState};
 use dinotty_server::proxy;
 use dinotty_server::session::SessionManager;
@@ -232,9 +231,7 @@ fn generate_random_token() -> String {
 fn read_git_info() -> GitInfo {
     let version = option_env!("DINOTTY_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")).to_string();
 
-    let mut command = std::process::Command::new("git");
-    let repo_url = command
-        .no_window()
+    let repo_url = std::process::Command::new("git")
         .args(["remote", "get-url", "origin"])
         .output()
         .ok()
@@ -250,7 +247,7 @@ fn read_git_info() -> GitInfo {
                 url.trim_end_matches(".git").to_string()
             }
         })
-        .unwrap_or_default();
+        .unwrap_or_else(|| env!("CARGO_PKG_REPOSITORY").to_string());
 
     GitInfo { version, repo_url }
 }
@@ -557,8 +554,8 @@ pub async fn run_server(port: u16, manager: Arc<SessionManager>) {
         .route("/api/auth", post(check_auth))
         .route("/api/auth/check", get(check_auth_session))
         .route("/api/auth/logout", post(logout))
-        .route("/api/auth/sessions", get(list_sessions_handler).delete(revoke_other_sessions))
-        .route("/api/auth/sessions/:id", delete(revoke_session_handler))
+        .route("/api/sessions", get(list_sessions_handler).delete(revoke_other_sessions))
+        .route("/api/sessions/:id", delete(revoke_session_handler))
         .route("/api/token-configured", get(token_configured))
         .route("/api/auto-token", get(auto_token))
         .route("/api/token", get(get_token).put(update_token))
