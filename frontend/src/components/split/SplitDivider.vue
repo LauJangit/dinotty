@@ -116,8 +116,8 @@ function onDoubleClick() {
 .split-divider.horizontal::before {
   top: -10px;
   bottom: -10px;
-  left: 0;
-  right: 0;
+  left: -10px;
+  right: -10px;
 }
 
 .split-divider.vertical::before {
