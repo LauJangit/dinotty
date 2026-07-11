@@ -5,7 +5,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::broadcast;
 
-use crate::{platform::shell, settings::SettingsState};
+use crate::{
+    platform::{process::CommandNoWindowExt, shell},
+    settings::SettingsState,
+};
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -115,7 +118,7 @@ impl NotificationBroadcast {
             tokio::spawn(async move {
                 let hook_shell = shell::notification_hook_shell(&cmd);
                 let mut command = tokio::process::Command::new(hook_shell.program);
-                command.args(hook_shell.args);
+                command.no_window().args(hook_shell.args);
                 command
                     .env("DINOTTY_NOTIFICATION_TYPE", &env_type)
                     .env("DINOTTY_PANE_ID", &env_pane)

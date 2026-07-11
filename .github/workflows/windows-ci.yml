@@ -1,0 +1,113 @@
+name: Windows CI (self-hosted)
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  GIT_CONFIG_COUNT: 1
+  GIT_CONFIG_KEY_0: http.version
+  GIT_CONFIG_VALUE_0: HTTP/1.1
+
+jobs:
+  test:
+    name: Windows tests (self-hosted)
+    runs-on: [self-hosted, Windows]
+    defaults:
+      run:
+        shell: powershell
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Configure Rust toolchain
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          function Add-CargoPathIfExists([string]$Path) {
+            if (-not $Path -or -not (Test-Path -LiteralPath $Path)) {
+              return
+            }
+
+            $resolved = (Resolve-Path -LiteralPath $Path).Path
+            if (($env:PATH -split ";") -notcontains $resolved) {
+              $env:PATH = "$resolved;$env:PATH"
+              Add-Content -Path $env:GITHUB_PATH -Value $resolved
+            }
+          }
+
+          $candidateCargoBins = @()
+          if ($env:CARGO_HOME) {
+            $candidateCargoBins += Join-Path $env:CARGO_HOME "bin"
+          }
+          if ($env:USERPROFILE) {
+            $candidateCargoBins += Join-Path $env:USERPROFILE ".cargo\bin"
+          }
+
+          $usersRoot = Join-Path $env:SystemDrive "Users"
+          if (Test-Path -LiteralPath $usersRoot) {
+            $candidateCargoBins += Get-ChildItem -LiteralPath $usersRoot -Directory -ErrorAction SilentlyContinue |
+              ForEach-Object { Join-Path $_.FullName ".cargo\bin" }
+          }
+
+          $candidateCargoBins | Select-Object -Unique | ForEach-Object { Add-CargoPathIfExists $_ }
+
+          if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
+            $rustupInit = Join-Path $env:RUNNER_TEMP "rustup-init.exe"
+            Invoke-WebRequest -UseBasicParsing -Uri "https://win.rustup.rs" -OutFile $rustupInit
+            & $rustupInit -y --profile minimal --default-toolchain stable
+            if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+            }
+            Add-CargoPathIfExists (Join-Path $env:USERPROFILE ".cargo\bin")
+          }
+
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup component add clippy rustfmt
+
+          cargo --version
+          rustc --version
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Type-check frontend
+        working-directory: frontend
+        run: pnpm exec vue-tsc --noEmit
+
+      - name: Test frontend
+        working-directory: frontend
+        run: pnpm test
+
+      - name: Build frontend assets for Rust tests
+        working-directory: frontend
+        run: pnpm run build
+
+      - name: Check Rust formatting
+        run: cargo fmt --check
+
+      - name: Lint Rust
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test Rust workspace
+        run: cargo test --workspace --all-targets

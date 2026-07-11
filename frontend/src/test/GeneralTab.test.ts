@@ -83,17 +83,16 @@ describe('GeneralTab - confirm-before-close-tab toggle', () => {
 
   it('renders the behavior section header with a settings.behavior i18n key', () => {
     const wrapper = mount(GeneralTab)
-    // The new section is appended after the virtualKeyboard section.
-    // We assert the section is present in the DOM regardless of locale.
-    const sections = wrapper.findAll('section.settings-section')
-    const lastSection = sections[sections.length - 1]
-    expect(lastSection.exists()).toBe(true)
-    // The header h3 inside the new section should be a non-empty text.
-    const header = lastSection.find('h3')
-    expect(header.exists()).toBe(true)
+    const input = wrapper.find<HTMLInputElement>(
+      'input[type="checkbox"][data-setting="confirm-before-close-tab"]'
+    )
+    const section = input.element.closest('section.settings-section')
+    expect(section).not.toBeNull()
+    const header = section!.querySelector('h3')
+    expect(header).not.toBeNull()
     // The text should be one of the known translations (either zh or en),
     // not the raw key.
-    const headerText = header.text().trim()
+    const headerText = header!.textContent?.trim() ?? ''
     expect(headerText).not.toBe('settings.behavior')
     expect(headerText.length).toBeGreaterThan(0)
   })
