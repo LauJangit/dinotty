@@ -203,7 +203,7 @@ fn sniff_cwd_buffers_chunked_powershell_title_with_windows_path() {
 
 #[cfg(windows)]
 #[test]
-fn sniff_cwd_keeps_old_cwd_when_windows_path_is_missing() {
+fn sniff_cwd_falls_back_to_raw_windows_path_when_missing() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().to_path_buf();
     let old_cwd = tmp.path().join("old");
@@ -215,7 +215,7 @@ fn sniff_cwd_keeps_old_cwd_when_windows_path_is_missing() {
 
     sniff_cwd_from_title_osc(&mut buf, data.as_bytes(), &home, &mut cwd);
 
-    assert_eq!(cwd, old_cwd.canonicalize().unwrap());
+    assert_eq!(cwd, missing);
 }
 
 // ── collect_leaf_pane_ids ────────────────────────────────────────

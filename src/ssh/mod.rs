@@ -179,7 +179,7 @@ fn normalize_windows_path_for_compare(path: &Path) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+mod key_path_tests {
     use super::{is_allowed_key_path, validate_key_path};
     use std::path::Path;
 
