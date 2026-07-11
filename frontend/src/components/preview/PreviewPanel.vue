@@ -123,7 +123,7 @@ import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import FileWorkspacePreview from './FileWorkspacePreview.vue'
 import DevToolsPanel from './DevToolsPanel.vue'
 import { isWebPreviewInput, normalizeWebUrl, urlToPreviewSrc } from '../../utils/previewRouting'
-import { getApiBase } from '../../composables/apiBase'
+import { getApiBase, getAuthToken } from '../../composables/apiBase'
 import { useI18n } from '../../composables/useI18n'
 import {
   ChevronLeft,
@@ -302,8 +302,10 @@ const resolvedIframeSrc = computed(() => {
   const base = urlToPreviewSrc(props.webUrl, previewHttpBase.value || undefined)
   const sep = base.includes('?') ? '&' : '?'
   let src = `${base}${sep}_t=${navCounter.value}`
-  // Browser: same-origin iframe sends cookies automatically.
-  // Tauri: proxy routes bypass auth via loopback, no token needed.
+  if (base.startsWith('/api/proxy')) {
+    const token = getAuthToken()
+    if (token) src += `&token=${encodeURIComponent(token)}`
+  }
   return src
 })
 

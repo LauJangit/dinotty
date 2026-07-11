@@ -1,6 +1,5 @@
 import { apiUrl, authFetch, authHeaders } from './apiBase'
 import { isTauri } from './useTransport'
-
 import type { UploadResponse } from '../types/uploads'
 
 export interface UploadProgress {
@@ -72,11 +71,7 @@ function uploadWithProgress(
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     xhr.open('POST', apiUrl('/api/uploads'))
-    if (isTauri()) {
-      Object.entries(authHeaders()).forEach(([key, value]) => xhr.setRequestHeader(key, value))
-    } else {
-      xhr.withCredentials = true
-    }
+    Object.entries(authHeaders()).forEach(([key, value]) => xhr.setRequestHeader(key, value))
     xhr.upload.onprogress = (ev) => {
       if (!ev.lengthComputable || ev.total <= 0) return
       onProgress({ loaded: ev.loaded, total: ev.total })
