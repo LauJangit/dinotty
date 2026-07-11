@@ -20,8 +20,6 @@ use tokio::sync::{broadcast, Mutex};
 use tokio::time::{interval, Duration};
 use tracing::{debug, warn};
 
-use crate::platform::process::CommandNoWindowExt;
-
 const MAX_HISTORY: usize = 60;
 
 #[derive(Serialize, Clone)]
@@ -306,9 +304,7 @@ fn parse_memory(s: &str) -> u64 {
 }
 
 async fn collect_gpu() -> Option<Vec<GpuData>> {
-    let mut command = Command::new("nvidia-smi");
-    let output = match command
-        .no_window()
+    let output = match Command::new("nvidia-smi")
         .args([
             "--query-gpu=name,uuid,utilization.gpu,utilization.memory,temperature.gpu,power.draw,power.limit,fan.speed,memory.used,memory.total",
             "--format=csv,noheader",
