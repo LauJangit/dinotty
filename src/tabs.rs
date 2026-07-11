@@ -535,7 +535,6 @@ pub async fn create_ssh_tab(
                 auth_method: profile.auth_method.clone(),
                 default_command: profile.default_command.clone(),
                 profile_id: Some(profile.id.clone()),
-                initial_cwd: req.initial_cwd.clone(),
             },
             None => {
                 return (
