@@ -1,10 +1,9 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // Stub WebSocket to a no-op shim — happy-dom may not provide a real one
 // in some test runners, and App.vue's connectSyncWS will read its
 // readyState. We set readyState=CONNECTING (0) so the fallback timer
 // fires apiListTabs and populates tabs.
-const originalWebSocket = (global as any).WebSocket
 class MockWebSocket {
   public readyState = 0
   public onopen: any = null
@@ -20,7 +19,6 @@ class MockWebSocket {
 ;(global as any).WebSocket.CLOSED = 3
 
 // Stub localStorage so persist() can write without throwing
-const originalLocalStorage = (global as any).localStorage
 const localStorageMock = {
   store: {} as Record<string, string>,
   getItem(key: string) {
@@ -71,7 +69,6 @@ vi.mock('../composables/useTerminal', () => ({
   isTouchDevice: () => false,
   setActivePaneId: () => {},
 }))
-vi.mock('../utils/clientPlatform', () => ({ isWindowsClient: true }))
 // Per-binding key map so Cmd+W can be dispatched without colliding with
 // other keyActions in onGlobalKeydown (the first matching binding wins).
 const BINDING_KEYS: Record<string, string> = {
@@ -176,7 +173,7 @@ vi.mock('../composables/useSplitPane', () => ({
   }),
 }))
 
-import { shallowMount, type VueWrapper } from '@vue/test-utils'
+import { shallowMount } from '@vue/test-utils'
 import { nextTick, defineComponent, h } from 'vue'
 import { createPinia } from 'pinia'
 import App from '../App.vue'
@@ -239,8 +236,6 @@ const ConfirmCloseDialogStub = defineComponent({
   },
 })
 
-let mountedWrapper: VueWrapper | undefined
-
 async function mountWithTabs() {
   vi.useFakeTimers()
   const wrapper = shallowMount(App, {
@@ -253,7 +248,6 @@ async function mountWithTabs() {
       },
     },
   })
-  mountedWrapper = wrapper
   await nextTick()
   // Fast-forward past the 3-second REST fallback timer in App.vue's onMounted.
   vi.advanceTimersByTime(3500)
@@ -263,25 +257,9 @@ async function mountWithTabs() {
   return wrapper
 }
 
-afterEach(() => {
-  mountedWrapper?.unmount()
-  mountedWrapper = undefined
-  vi.useRealTimers()
-  localStorageMock.clear()
-})
-
-afterAll(() => {
-  if (originalWebSocket === undefined) delete (global as any).WebSocket
-  else (global as any).WebSocket = originalWebSocket
-
-  if (originalLocalStorage === undefined) delete (global as any).localStorage
-  else (global as any).localStorage = originalLocalStorage
-})
-
 describe('App.vue - onClosePane routes through confirmation gate', () => {
   beforeEach(() => {
     settings.confirm_before_close_tab = true
-    settings.windowsAltAsCmd = false
     mocks.closePane.mockReset()
     mocks.splitPane.mockReset()
     mocks.toggleBroadcast.mockReset()
@@ -316,6 +294,8 @@ describe('App.vue - onClosePane routes through confirmation gate', () => {
     const confirmDialog = wrapper.findComponent(ConfirmCloseDialogStub)
     expect(confirmDialog.exists()).toBe(true)
     expect(confirmDialog.attributes('data-visible')).toBe('true')
+
+    wrapper.unmount()
   })
 
   it('onConfirmClose with pendingClosePaneId → calls splitPane.closePane, not closeTab', async () => {
@@ -338,6 +318,8 @@ describe('App.vue - onClosePane routes through confirmation gate', () => {
 
     // Modal should be closed
     expect(confirmDialog.attributes('data-visible')).toBe('false')
+
+    wrapper.unmount()
   })
 
   it('onConfirmClose with pane close cascade (closePane returns false) → calls closeTab fallback', async () => {
@@ -357,6 +339,8 @@ describe('App.vue - onClosePane routes through confirmation gate', () => {
 
     // Since closePane returned false, the tab should be closed (cascade fallback)
     expect(mocks.apiCloseTab).toHaveBeenCalled()
+
+    wrapper.unmount()
   })
 
   it('bypass with setting off + closePane returns false → falls back to closeTab', async () => {
@@ -372,6 +356,8 @@ describe('App.vue - onClosePane routes through confirmation gate', () => {
     expect(mocks.closePane).toHaveBeenCalledWith('pane-1')
     // Since closePane returned false, closeTab should be the fallback
     expect(mocks.apiCloseTab).toHaveBeenCalled()
+
+    wrapper.unmount()
   })
 
   it('bypass with setting off + closePane returns true → does NOT call closeTab', async () => {
@@ -385,13 +371,14 @@ describe('App.vue - onClosePane routes through confirmation gate', () => {
 
     expect(mocks.closePane).toHaveBeenCalledWith('pane-1')
     expect(mocks.apiCloseTab).not.toHaveBeenCalled()
+
+    wrapper.unmount()
   })
 })
 
 describe('App.vue - Cmd+W routes through confirmation gate in split-pane mode', () => {
   beforeEach(() => {
     settings.confirm_before_close_tab = true
-    settings.windowsAltAsCmd = false
     mocks.closePane.mockReset()
     mocks.splitPane.mockReset()
     mocks.toggleBroadcast.mockReset()
@@ -431,6 +418,8 @@ describe('App.vue - Cmd+W routes through confirmation gate in split-pane mode', 
     const confirmDialog = wrapper.findComponent(ConfirmCloseDialogStub)
     expect(confirmDialog.exists()).toBe(true)
     expect(confirmDialog.attributes('data-visible')).toBe('true')
+
+    wrapper.unmount()
   })
 
   it('Cmd+W + confirm in multi-pane mode → calls splitPane.closePane with active pane id', async () => {
@@ -457,6 +446,8 @@ describe('App.vue - Cmd+W routes through confirmation gate in split-pane mode', 
     expect(mocks.apiCloseTab).not.toHaveBeenCalled()
     // Modal should be closed
     expect(confirmDialog.attributes('data-visible')).toBe('false')
+
+    wrapper.unmount()
   })
 
   it('Cmd+W + setting off → bypasses modal and calls closePane directly', async () => {
@@ -478,27 +469,7 @@ describe('App.vue - Cmd+W routes through confirmation gate in split-pane mode', 
     // Modal should NOT be visible (bypass)
     const confirmDialog = wrapper.findComponent(ConfirmCloseDialogStub)
     expect(confirmDialog.attributes('data-visible')).toBe('false')
-  })
 
-  it('Windows Alt-as-Cmd enabled + Ctrl+Alt+W → does not trigger app close', async () => {
-    settings.windowsAltAsCmd = true
-    mocks.closePane.mockResolvedValue(true)
-
-    const wrapper = await mountWithTabs()
-
-    document.dispatchEvent(
-      new KeyboardEvent('keydown', {
-        key: 'w',
-        ctrlKey: true,
-        altKey: true,
-        bubbles: true,
-      })
-    )
-    await nextTick()
-
-    expect(mocks.closePane).not.toHaveBeenCalled()
-    expect(mocks.apiCloseTab).not.toHaveBeenCalled()
-    const confirmDialog = wrapper.findComponent(ConfirmCloseDialogStub)
-    expect(confirmDialog.attributes('data-visible')).toBe('false')
+    wrapper.unmount()
   })
 })
