@@ -250,9 +250,7 @@ describe('useScrollPosition', () => {
     const handle = useScrollPosition(fake.xterm)
 
     handle.kick()
-    while (stepFrame()) {
-      // Drain queued animation frames until polling becomes idle.
-    }
+    while (stepFrame()) {}
 
     expect(frameQueue).toHaveLength(0)
 
@@ -260,9 +258,7 @@ describe('useScrollPosition', () => {
 
     expect(frameQueue).toHaveLength(1)
 
-    while (stepFrame()) {
-      // Drain the polling frames re-armed by the wheel event.
-    }
+    while (stepFrame()) {}
 
     element.dispatchEvent(new Event('scroll'))
 
