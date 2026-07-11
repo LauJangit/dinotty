@@ -18,6 +18,7 @@ use std::{
 
 use crate::session::SessionManager;
 use crate::settings::{default_upload_dir, Settings, SettingsState};
+use crate::workspace_mgmt::is_sensitive;
 
 mod git;
 mod remote;
@@ -54,6 +55,8 @@ pub struct WorkspaceListQuery {
     #[serde(default)]
     pub path: String,
     pub root: Option<String>,
+    #[serde(default)]
+    pub free: bool,
 }
 
 #[derive(Deserialize, Clone)]
@@ -580,31 +583,72 @@ pub async fn workspace_list(
     if let Some(session) = ssh_session(&manager, &q.pane_id) {
         return remote::remote_list(session, q.clone()).await;
     }
-    let root = match q.root.as_deref() {
-        Some("/") => PathBuf::from("/"),
-        Some("~") => dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")),
-        _ => try_res!(get_root(&manager, &q.pane_id)),
+    let outside_pane_jail = q.free || q.root.as_deref() == Some("/");
+    let (raw_target, target, cwd_display) = if q.free {
+        let requested = Path::new(q.path.trim());
+        if !requested.is_absolute() {
+            return json_err(StatusCode::BAD_REQUEST, "path must be absolute");
+        }
+        let raw = requested.to_path_buf();
+        let Ok(target) = requested.canonicalize() else {
+            return json_err(StatusCode::NOT_FOUND, "not found");
+        };
+        let cwd = target.to_string_lossy().into_owned();
+        (raw, target, cwd)
+    } else {
+        let root = match q.root.as_deref() {
+            Some("/") => PathBuf::from("/"),
+            Some("~") => dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")),
+            _ => try_res!(get_root(&manager, &q.pane_id)),
+        };
+        let raw_target = try_res!(normalize_join(&root, &q.path));
+        if !raw_target.exists() {
+            return json_err(StatusCode::NOT_FOUND, "not found");
+        }
+        try_res!(path_must_be_under(&root, &raw_target));
+        let target = if outside_pane_jail {
+            match raw_target.canonicalize() {
+                Ok(p) => p,
+                Err(_) => return json_err(StatusCode::NOT_FOUND, "not found"),
+            }
+        } else {
+            raw_target.clone()
+        };
+        let cwd = root.to_string_lossy().into_owned();
+        (raw_target, target, cwd)
     };
-    let target = try_res!(normalize_join(&root, &q.path));
-    if !target.exists() {
-        return json_err(StatusCode::NOT_FOUND, "not found");
+    // Sensitivity: check the raw (pre-canonicalize) path AND the canonical path.
+    // macOS canonicalize rewrites /etc -> /private/etc, so the raw form is the
+    // only reliable catch for a directly-named system dir; the canonical form
+    // catches a symlink resolving into a sensitive dir (mirrors
+    // validate_workspace_path dual check).
+    if outside_pane_jail && (is_sensitive(&raw_target) || is_sensitive(&target)) {
+        return json_err(StatusCode::FORBIDDEN, "sensitive system directory");
     }
-    try_res!(path_must_be_under(&root, &target));
     if !target.is_dir() {
         return json_err(StatusCode::BAD_REQUEST, "not a directory");
     }
-    let mut entries = match std::fs::read_dir(&target) {
+    let entries = match std::fs::read_dir(&target) {
         Ok(rd) => rd.filter_map(std::result::Result::ok).collect::<Vec<_>>(),
         Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     };
-    entries.sort_by_key(|e| {
-        let is_dir = e.path().is_dir();
-        (!is_dir, e.file_name().to_string_lossy().to_lowercase())
-    });
-    let list = entries
+    let mut list = entries
         .into_iter()
         .filter_map(|e| {
-            let meta = e.metadata().ok()?;
+            let entry_path = if outside_pane_jail {
+                let raw = e.path();
+                if is_sensitive(&raw) {
+                    return None;
+                }
+                let canonical = raw.canonicalize().ok()?;
+                if is_sensitive(&canonical) {
+                    return None;
+                }
+                canonical
+            } else {
+                e.path()
+            };
+            let meta = std::fs::metadata(entry_path).ok()?;
             Some(DirEntry {
                 name: e.file_name().to_string_lossy().into_owned(),
                 is_dir: meta.is_dir(),
@@ -612,7 +656,7 @@ pub async fn workspace_list(
             })
         })
         .collect::<Vec<_>>();
-    let cwd_display = root.to_string_lossy().into_owned();
+    list.sort_by_key(|e| (!e.is_dir, e.name.to_lowercase()));
     let path_display = q.path.trim().trim_start_matches('/').to_string();
     Json(ListResponse { cwd: cwd_display, path: path_display, entries: list }).into_response()
 }

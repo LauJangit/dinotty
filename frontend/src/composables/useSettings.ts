@@ -30,6 +30,7 @@ export interface SettingsData {
   recent_urls: RecentEntry[]
   action_keyboard: ActionKeyboardConfig | null
   upload_dir: string
+  default_base_dir?: string | null
   upload_cap_mb: number
   upload_file_cap_mb: number
   upload_cap_count: number
