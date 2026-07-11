@@ -27,12 +27,18 @@ export interface ReconnectedMsg {
   rows: number
 }
 
+export interface ResizeServerMsg {
+  type: 'resize'
+  cols: number
+  rows: number
+}
+
 export interface SessionExitMsg {
   type: 'session_exit'
   pane_id: string
 }
 
-export type ServerMsg = OutputMsg | ShellInfoMsg | ReconnectedMsg | SessionExitMsg
+export type ServerMsg = OutputMsg | ShellInfoMsg | ReconnectedMsg | ResizeServerMsg | SessionExitMsg
 
 // Sync WS messages
 export interface SyncTabList {

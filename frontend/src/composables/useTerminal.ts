@@ -229,7 +229,18 @@ export class TerminalInstance {
   selStartCol = 0
   private _visibilityHandler: (() => void) | null = null
   private _dragDropCleanup: (() => void) | null = null
-  private _initialResizeTimer: ReturnType<typeof setInterval> | null = null
+  private _settleTimeouts: ReturnType<typeof setTimeout>[] = []
+  private _settleRaf: number = 0
+  private _settleGeneration: number = 0
+  private _transportConnected = false
+  private _lastSentCols = 0
+  private _lastSentRows = 0
+  private _followingPeer = false
+  private _peerFollowGen = 0
+  private _peerFollowTimer: ReturnType<typeof setTimeout> | null = null
+  private _pendingLocalRefit = false
+  private _authWrapperW = 0
+  private _authWrapperH = 0
   onFileUpload?: (files: File[]) => void
 
   onTitleChange: ((title: string) => void) | null = null
@@ -504,10 +515,8 @@ export class TerminalInstance {
       },
     })
 
-    // Retry the initial resize until it actually reaches the server.
-    // On new tabs the WebGL renderer and WebSocket may not be ready when the
-    // first RAF fires, so we loop until _doFitAndResize successfully sends.
-    this._scheduleInitialResize()
+    // Sample a short settle series while the renderer and DOM layout converge.
+    this._scheduleSettleResize()
 
     this.xterm.onTitleChange((title) => {
       if (this._suppressTitleChange) return
@@ -659,7 +668,16 @@ export class TerminalInstance {
     if (this._destroyed) return
     this._destroyed = true
     if (this._reconnectTimer) clearTimeout(this._reconnectTimer)
-    if (this._initialResizeTimer) clearInterval(this._initialResizeTimer)
+    for (const h of this._settleTimeouts) clearTimeout(h)
+    this._settleTimeouts = []
+    if (this._settleRaf) cancelAnimationFrame(this._settleRaf)
+    if (this._peerFollowTimer) {
+      clearTimeout(this._peerFollowTimer)
+      this._peerFollowTimer = null
+    }
+    this._settleGeneration++
+    this._peerFollowGen++
+    this._followingPeer = false
     if (this._refitRaf) cancelAnimationFrame(this._refitRaf)
     if (this._resizeDebounce) clearTimeout(this._resizeDebounce)
     this._resizeObserver?.disconnect()
@@ -695,11 +713,14 @@ export class TerminalInstance {
   }
 
   private _connectViaTransport() {
+    this._transportConnected = false
     this._transport = createTransport(this.paneId)
 
     this._transport.onConnect(() => {
+      this._transportConnected = true
       this.onConnect?.()
       this._doFitAndResize(true)
+      this._scheduleSettleResize()
     })
 
     this._transport.onMessage((msg) => {
@@ -717,12 +738,16 @@ export class TerminalInstance {
         this._writeQueue = []
         this._writing = false
         this._doFitAndResize(true)
+        this._scheduleSettleResize()
+      } else if (msg.type === 'resize') {
+        this._followPeerResize(msg.cols, msg.rows)
       } else if (msg.type === 'session_exit') {
         this._handleSessionExit()
       }
     })
 
     this._transport.onDisconnect(() => {
+      this._transportConnected = false
       this.onDisconnect?.()
     })
 
@@ -746,6 +771,7 @@ export class TerminalInstance {
       this._hideOverlay()
       this.onConnect?.()
       this._doFitAndResize(true)
+      this._scheduleSettleResize()
     }
 
     this.ws.onmessage = (e) => {
@@ -764,12 +790,15 @@ export class TerminalInstance {
         this._reconnectAttempts = 0
         this._hideOverlay()
         this._doFitAndResize(true)
+        this._scheduleSettleResize()
       } else if (msg.type === 'output') {
         this._enqueueWrite(msg.data)
         this.onRawOutput?.(msg.data)
       } else if (msg.type === 'shell_info') {
         this._shellType = msg.shell_type
         this.onShellInfo?.(msg.shell_type)
+      } else if (msg.type === 'resize') {
+        this._followPeerResize(msg.cols, msg.rows)
       } else if (msg.type === 'session_exit') {
         this._handleSessionExit()
       }
@@ -950,6 +979,10 @@ export class TerminalInstance {
   }
 
   _refit() {
+    if (this._followingPeer) {
+      if (this._wrapperChanged()) this._pendingLocalRefit = true
+      return
+    }
     if (!this.fitAddon || !this._wrapper) return
     if (this._refitRaf) return
     this._refitRaf = requestAnimationFrame(() => {
@@ -958,35 +991,131 @@ export class TerminalInstance {
     })
   }
 
-  /**
-   * Retry the initial resize in a loop until it succeeds.
-   * Handles the race where the WebGL renderer, DOM layout, or WebSocket
-   * aren't ready when the first attempt fires.
-   */
-  private _scheduleInitialResize() {
-    if (this._initialResizeTimer) return
-    let attempts = 0
-    const MAX_ATTEMPTS = 40 // 40 × 50ms = 2s max
-    this._initialResizeTimer = setInterval(() => {
-      attempts++
-      if (this._destroyed || attempts > MAX_ATTEMPTS) {
-        if (this._initialResizeTimer) {
-          clearInterval(this._initialResizeTimer)
-          this._initialResizeTimer = null
-        }
-        return
+  private _sendResize(cols: number, rows: number): boolean {
+    const resizeMsg: ClientMsg = { type: 'resize', cols, rows }
+    if (this._transport) {
+      if (!this._transportConnected) return false
+      this._transport.send(resizeMsg)
+    } else if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(resizeMsg))
+    } else {
+      return false
+    }
+    this._lastSentCols = cols
+    this._lastSentRows = rows
+    return true
+  }
+
+  private _wrapperChanged(): boolean {
+    if (!this._wrapper) return false
+    const r = this._wrapper.getBoundingClientRect()
+    return Math.round(r.width) !== this._authWrapperW || Math.round(r.height) !== this._authWrapperH
+  }
+
+  private _followPeerResize(cols: number, rows: number) {
+    if (this._destroyed || !this.xterm || !this.fitAddon) return
+    if (cols < 2 || rows < 2) return
+    if (this._refitRaf) {
+      cancelAnimationFrame(this._refitRaf)
+      this._refitRaf = 0
+    }
+    if (this._resizeDebounce) {
+      clearTimeout(this._resizeDebounce)
+      this._resizeDebounce = 0
+    }
+    for (const h of this._settleTimeouts) clearTimeout(h)
+    this._settleTimeouts = []
+    if (this._settleRaf) {
+      cancelAnimationFrame(this._settleRaf)
+      this._settleRaf = 0
+    }
+    this._settleGeneration++
+    try {
+      this.xterm.resize(cols, rows)
+    } catch {
+      return
+    }
+    const heightChanged = rows !== this._lastRows
+    this._lastCols = cols
+    this._lastRows = rows
+    if (heightChanged && !this.isMouseModeEnabled()) this.xterm.scrollToBottom()
+    const gen = ++this._peerFollowGen
+    this._followingPeer = true
+    this._pendingLocalRefit = false
+    const rect = this._wrapper?.getBoundingClientRect()
+    this._authWrapperW = rect ? Math.round(rect.width) : 0
+    this._authWrapperH = rect ? Math.round(rect.height) : 0
+    if (this._peerFollowTimer) {
+      clearTimeout(this._peerFollowTimer)
+      this._peerFollowTimer = null
+    }
+    this._peerFollowTimer = window.setTimeout(() => {
+      this._peerFollowTimer = null
+      if (this._destroyed || gen !== this._peerFollowGen) return
+      this._followingPeer = false
+      if (this._pendingLocalRefit) {
+        this._pendingLocalRefit = false
+        this._doFitAndResize(true)
       }
-      // If we've already sent a resize (lastCols/lastRows are non-zero), stop.
-      if (this._lastCols > 0 && this._lastRows > 0) {
-        clearInterval(this._initialResizeTimer!)
-        this._initialResizeTimer = null
-        return
+    }, 500) as unknown as ReturnType<typeof setTimeout>
+  }
+
+  private _settleRefit(): { cols: number; rows: number } | null {
+    if (this._followingPeer) {
+      if (this._wrapperChanged()) this._pendingLocalRefit = true
+      return null
+    }
+    if (this._destroyed || !this.fitAddon || !this.xterm || !this._wrapper) return null
+    const rect = this._wrapper.getBoundingClientRect()
+    if (rect.width === 0 || rect.height === 0) return null
+    try {
+      this.fitAddon.fit()
+    } catch {
+      return null
+    }
+    const cols = this.xterm.cols
+    const rows = this.xterm.rows
+    if (cols < 2 || rows < 2) return null
+    const heightChanged = rows !== this._lastRows
+    this._lastCols = cols
+    this._lastRows = rows
+    if (heightChanged && !this.isMouseModeEnabled()) {
+      this.xterm.scrollToBottom()
+    }
+    if (cols !== this._lastSentCols || rows !== this._lastSentRows) {
+      if (this._resizeDebounce) {
+        clearTimeout(this._resizeDebounce)
+        this._resizeDebounce = 0
       }
-      this._doFitAndResize(true)
-    }, 50)
+      this._sendResize(cols, rows)
+    }
+    return { cols, rows }
+  }
+
+  private _scheduleSettleResize() {
+    for (const h of this._settleTimeouts) clearTimeout(h)
+    this._settleTimeouts = []
+    if (this._settleRaf) cancelAnimationFrame(this._settleRaf)
+    this._settleRaf = 0
+    const generation = ++this._settleGeneration
+    const sample = () => {
+      if (this._destroyed || generation !== this._settleGeneration) return
+      this._settleRefit()
+    }
+    this._settleRaf = requestAnimationFrame(() => {
+      this._settleRaf = 0
+      sample()
+    })
+    for (const delay of [50, 120, 250, 450, 700]) {
+      this._settleTimeouts.push(setTimeout(sample, delay))
+    }
   }
 
   private _doFitAndResize(force = false) {
+    if (this._followingPeer) {
+      if (this._wrapperChanged()) this._pendingLocalRefit = true
+      return
+    }
     if (!this.fitAddon || !this.xterm || !this._wrapper) return
     const rect = this._wrapper.getBoundingClientRect()
     if (rect.width === 0 || rect.height === 0) return
@@ -1006,23 +1135,13 @@ export class TerminalInstance {
     if (heightChanged && !this.isMouseModeEnabled()) {
       this.xterm.scrollToBottom()
     }
-    const sendResize = () => {
-      const resizeMsg: ClientMsg = { type: 'resize', cols, rows }
-      if (this._transport) {
-        this._transport.send(resizeMsg)
-      } else if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify(resizeMsg))
-      }
-    }
     if (force) {
-      // Initial resize: send immediately
-      sendResize()
+      this._sendResize(cols, rows)
     } else {
-      // Debounce: coalesce rapid resize events during window drag
       if (this._resizeDebounce) clearTimeout(this._resizeDebounce)
       this._resizeDebounce = window.setTimeout(() => {
         this._resizeDebounce = 0
-        sendResize()
+        this._sendResize(cols, rows)
       }, 25)
     }
   }

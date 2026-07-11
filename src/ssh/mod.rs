@@ -315,6 +315,8 @@ pub async fn create_ssh_session(
         ssh_params: Some(params.clone()),
         screen: std::sync::Mutex::new(VirtualScreen::new(80, 24)),
         clients: std::sync::Mutex::new(Vec::new()),
+        next_client_id: std::sync::atomic::AtomicU64::new(1),
+        tauri_client_id: std::sync::Mutex::new(None),
         input_tx: std::sync::Mutex::new(None),
         status: std::sync::Mutex::new(SessionStatus::Connected),
         size: std::sync::Mutex::new((80, 24)),
@@ -541,7 +543,7 @@ async fn ssh_reader_task(
 /// the drag stops (no new values for 300ms) do we apply the final size.
 async fn resize_debounce_task(
     session: Arc<Session>,
-    mut resize_rx: watch::Receiver<Option<(u16, u16)>>,
+    mut resize_rx: watch::Receiver<Option<(u64, u16, u16)>>,
     pane_id: String,
 ) {
     loop {
@@ -549,14 +551,16 @@ async fn resize_debounce_task(
             break;
         }
         let size = *resize_rx.borrow();
-        if let Some((cols, rows)) = size {
+        if let Some((origin, cols, rows)) = size {
             tokio::time::sleep(Duration::from_millis(300)).await;
             let latest = *resize_rx.borrow();
-            if latest == Some((cols, rows)) {
+            if latest == Some((origin, cols, rows)) {
                 debug!("SSH resize debounce: applying {cols}x{rows}, pane={pane_id}");
-                if let Err(e) = session.resize_async(cols, rows).await {
-                    error!("SSH resize failed: {}, pane={}", e, pane_id);
-                }
+                let session = Arc::clone(&session);
+                let _ = tokio::task::spawn_blocking(move || {
+                    session.apply_and_broadcast_resize(origin, cols, rows);
+                })
+                .await;
             }
         }
     }
@@ -621,7 +625,7 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// Test: borrow() + conditional apply with 300ms debounce.
+    /// Test: `borrow()` + conditional apply with 300ms debounce.
     /// Simulates rapid frontend resize messages during a divider drag,
     /// then verifies only one resize is applied after the drag stops.
     #[tokio::test]
@@ -700,7 +704,7 @@ mod tests {
         });
 
         // Simulate a3-second drag: resize every 25ms, cols from80 to200
-        let total_steps = (3000 / 25) as u16; //120 steps
+        let total_steps = 3000_u16 / 25; //120 steps
         for i in 0..total_steps {
             let cols = 80 + i;
             let _ = tx.send(Some((cols, 24)));
@@ -764,7 +768,7 @@ mod tests {
         println!("Return to original - apply count: {count}, final size: {final_size:?}");
 
         // tmux also applies twice for the "return to original" edge case
-        assert!(count >= 1 && count <= 2, "Expected 1-2 applies, got {count}");
+        assert!((1..=2).contains(&count), "Expected 1-2 applies, got {count}");
         assert_eq!(final_size, Some((100, 24)));
     }
 }

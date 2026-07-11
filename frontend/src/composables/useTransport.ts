@@ -141,6 +141,14 @@ export class TauriIpcTransport implements Transport {
       })
     )
     this._unlistenFns.push(
+      await listen('pty-resize', (e: any) => {
+        const p = e.payload
+        if (p.pane_id === this.paneId) {
+          this._messageHandler?.({ type: 'resize', cols: p.cols, rows: p.rows })
+        }
+      })
+    )
+    this._unlistenFns.push(
       await listen('pty-exit', (e: any) => {
         if (e.payload.pane_id === this.paneId) {
           this._disconnectHandler?.()

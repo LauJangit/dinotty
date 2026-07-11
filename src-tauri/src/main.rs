@@ -1,6 +1,6 @@
 use base64::Engine;
 use dinotty_server::pty;
-use dinotty_server::session::{SessionManager, SessionStatus, SyncMsg};
+use dinotty_server::session::{SessionClientEvent, SessionManager, SessionStatus, SyncMsg};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, OnceLock};
@@ -20,6 +20,13 @@ struct PtyOutput {
 }
 
 #[derive(Clone, Serialize)]
+struct PtyResize {
+    pane_id: String,
+    cols: u16,
+    rows: u16,
+}
+
+#[derive(Clone, Serialize)]
 struct PtyExit {
     pane_id: String,
 }
@@ -29,28 +36,57 @@ fn spawn_tauri_output_forwarder(
     pane_id: String,
     session: Arc<dinotty_server::session::Session>,
 ) {
-    let mut rx = session.add_client();
+    let (client_id, mut rx) = session.add_client();
+    *session.tauri_client_id.lock().unwrap_or_else(|e| e.into_inner()) = Some(client_id);
+    let fwd_session = Arc::clone(&session);
     // Use a dedicated OS thread instead of tokio async task.
     // app.emit() may block when the WKWebView IPC queue is full — if this
     // happened on a tokio worker thread it would freeze the entire runtime,
     // killing all terminals and the embedded Axum server.
-    std::thread::Builder::new()
+    match std::thread::Builder::new()
         .name(format!("fwd-{}", pane_id))
         .spawn(move || {
-            while let Some(first) = rx.blocking_recv() {
-                let mut batch = first;
-                while let Ok(data) = rx.try_recv() {
-                    batch.push_str(&data);
-                }
-                if app
-                    .emit("pty-output", PtyOutput { pane_id: pane_id.clone(), data: batch })
-                    .is_err()
-                {
-                    break;
+            let mut pending = None;
+            while let Some(event) = pending.take().or_else(|| rx.blocking_recv()) {
+                match event {
+                    SessionClientEvent::Output(mut batch) => {
+                        loop {
+                            match rx.try_recv() {
+                                Ok(SessionClientEvent::Output(data)) => batch.push_str(&data),
+                                Ok(event @ SessionClientEvent::Resize { .. }) => {
+                                    pending = Some(event);
+                                    break;
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                        if app
+                            .emit("pty-output", PtyOutput { pane_id: pane_id.clone(), data: batch })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    SessionClientEvent::Resize { cols, rows } => {
+                        if app
+                            .emit("pty-resize", PtyResize { pane_id: pane_id.clone(), cols, rows })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
                 }
             }
+            fwd_session.remove_client(client_id);
+            fwd_session.clear_tauri_client_if(client_id);
         })
-        .ok();
+    {
+        Ok(_) => {}
+        Err(_) => {
+            session.remove_client(client_id);
+            session.clear_tauri_client_if(client_id);
+        }
+    }
 }
 
 /// Spawn a dedicated write task for the session that reads from the input channel
@@ -127,8 +163,12 @@ fn pty_spawn(
                 *g = Some(Arc::clone(&exit_cb));
             }
         }
-        // Clear old output forwarders to prevent duplicate output on reconnection
-        session.clear_clients();
+        // Remove only the prior Tauri forwarder; WebSocket clients remain attached.
+        if let Some(client_id) =
+            session.tauri_client_id.lock().unwrap_or_else(|e| e.into_inner()).take()
+        {
+            session.remove_client(client_id);
+        }
         emit_join_sync(&app, &pane_id, &session);
         spawn_tauri_output_forwarder(app.clone(), pane_id.clone(), Arc::clone(&session));
         // Set up channel-based write task (replaces old input channel, if any)
@@ -178,7 +218,12 @@ fn pty_resize(
     let session = sessions.get(&pane_id).ok_or("session not found")?;
     // Use debounced resize to coalesce rapid resize events (e.g. window drag)
     // and avoid blocking the Tauri command thread on the screen mutex.
-    session.resize_debounced(cols, rows);
+    let origin_id = session
+        .tauri_client_id
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .ok_or("tauri client not connected")?;
+    session.resize_debounced(origin_id, cols, rows);
     Ok(())
 }
 
