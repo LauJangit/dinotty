@@ -27,9 +27,6 @@ pub struct SshSessionParams {
     pub default_command: Option<String>,
     /// The `SshProfile.id` when created from a saved profile. `None` for quick-connect.
     pub profile_id: Option<String>,
-    /// Initial remote directory to `cd` into after the shell starts.
-    /// When `None` or empty, the shell starts in the remote `$HOME`.
-    pub initial_cwd: Option<String>,
 }
 
 /// Session 的传输后端
@@ -452,10 +449,9 @@ fn sniff_cwd_from_title_osc(buf: &mut Vec<u8>, chunk: &[u8], home: &Path, cwd: &
         let title_end = payload_start + rel;
         let title = String::from_utf8_lossy(&buf[payload_start..title_end]);
         if let Some(p) = parse_title_cwd(&title, home) {
-            // canonicalize resolves symlinks on the local filesystem. For SSH
-            // sessions the path is remote and canonicalize fails - fall back
-            // to the raw path so cwd tracking still works.
-            *cwd = p.canonicalize().unwrap_or(p);
+            if let Ok(c) = p.canonicalize() {
+                *cwd = c;
+            }
         }
         buf.drain(..title_end + terminator_len);
     }

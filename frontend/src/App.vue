@@ -399,10 +399,10 @@ async function onOverviewNewTab(cwd?: string) {
   await newTab(cwd)
 }
 
-async function onOverviewNewTabSsh(connectionId: string, initialCwd?: string) {
+async function onOverviewNewTabSsh(connectionId: string) {
   overviewOpen.value = false
   try {
-    const result = await apiCreateSshTab(connectionId, initialCwd)
+    const result = await apiCreateSshTab(connectionId)
     const existing = tabs.value.find((t) => t.type === 'terminal' && t.paneId === result.tab_id)
     if (existing) {
       activePaneId.value = result.tab_id
@@ -645,13 +645,6 @@ const DEFAULT_PREVIEW_URL = ''
 
 async function newTab(cwd?: string) {
   try {
-    // Remote workspace: open an SSH terminal and cd into the workspace's remote path.
-    const activeWs = workspaces.value.find((w) => w.id === activeWorkspaceId.value)
-    if (activeWs?.connection_id) {
-      const result = await apiCreateSshTab(activeWs.connection_id, activeWs.path)
-      await onSshConnect(result)
-      return
-    }
     const effectiveCwd = cwd ?? activeWorkspacePath.value
     const result = await apiCreateTab(effectiveCwd)
     // Dedup: broadcast_sync echoes back to sender — tab_created handler may
