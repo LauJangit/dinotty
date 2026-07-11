@@ -6,8 +6,7 @@
 )]
 use axum::{
     extract::ws::{Message, WebSocket},
-    extract::{ConnectInfo, State, WebSocketUpgrade},
-    http::StatusCode,
+    extract::{State, WebSocketUpgrade},
     response::IntoResponse,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -361,16 +360,9 @@ async fn collect_gpu() -> Option<Vec<GpuData>> {
 #[allow(clippy::unused_async)]
 pub async fn ws_monitor_handler(
     State(state): State<MonitorState>,
-    State(settings): State<crate::settings::SettingsState>,
     ws: WebSocketUpgrade,
-    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
-    headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    let allowed_origins = settings.read().await.auth.allowed_origins.clone();
-    if !crate::auth::check_ws_origin(&headers, &allowed_origins, addr.ip()) {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-    ws.on_upgrade(move |socket| handle_monitor_socket(socket, state)).into_response()
+    ws.on_upgrade(move |socket| handle_monitor_socket(socket, state))
 }
 
 async fn handle_monitor_socket(socket: WebSocket, state: MonitorState) {
