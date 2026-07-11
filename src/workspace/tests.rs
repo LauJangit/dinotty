@@ -323,6 +323,7 @@ async fn upload_io_err_keeps_non_disk_full_as_500() {
     assert!(json["error"].as_str().is_some_and(|message| !message.is_empty()));
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn free_browse_rejects_sensitive_dir() {
     // Regression: browsing a directly-named system dir must be rejected even on
