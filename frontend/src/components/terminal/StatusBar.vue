@@ -135,7 +135,7 @@ function togglePopover(key: MetricKey, event: MouseEvent) {
   height: 24px;
   box-sizing: border-box;
   background: var(--bg, #1a1a2e);
-  border-top: 1px solid var(--border, #3c3c3c);
+  border-top: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -155,7 +155,7 @@ function togglePopover(key: MetricKey, event: MouseEvent) {
   gap: 4px;
   background: none;
   border: none;
-  color: var(--fg-muted, rgba(255, 255, 255, 0.7));
+  color: var(--fg-muted);
   cursor: pointer;
   padding: 2px 4px;
   border-radius: 3px;
@@ -165,7 +165,7 @@ function togglePopover(key: MetricKey, event: MouseEvent) {
   transition: color 0.15s;
 }
 .metric-btn:hover {
-  color: var(--fg-bright, rgba(255, 255, 255, 0.9));
+  color: var(--fg-bright);
 }
 .metric-value {
   font-variant-numeric: tabular-nums;
@@ -173,7 +173,7 @@ function togglePopover(key: MetricKey, event: MouseEvent) {
 .pane-warning {
   margin-left: auto;
   font-size: 11px;
-  color: var(--fg-muted, rgba(255, 255, 255, 0.6));
+  color: var(--fg-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

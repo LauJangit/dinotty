@@ -1076,10 +1076,10 @@ defineExpose({ getTerminal, focus, blur, fit, sendData, setOutputListener, toggl
   gap: 8px;
   width: 180px;
   padding: 7px 9px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  border: 1px solid var(--border);
   border-radius: 6px;
-  background: rgba(22, 22, 24, 0.92);
-  color: #d8d8d8;
+  background: var(--bg-surface);
+  color: var(--fg);
   font-size: 12px;
   pointer-events: none;
 }
@@ -1089,7 +1089,7 @@ defineExpose({ getTerminal, focus, blur, fit, sendData, setOutputListener, toggl
   height: 4px;
   overflow: hidden;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--bg-hover);
 }
 
 .terminal-upload-progress-fill {
@@ -1112,15 +1112,15 @@ defineExpose({ getTerminal, focus, blur, fit, sendData, setOutputListener, toggl
   cursor: pointer;
   z-index: 5;
   pointer-events: auto;
-  background: rgba(22, 22, 24, 0.92);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  color: #d8d8d8;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  color: var(--fg);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   transition: opacity 0.15s ease, transform 0.15s ease;
 }
 
 .back-to-bottom-pill:hover {
-  background: rgba(38, 38, 42, 0.95);
+  background: var(--bg-hover);
 }
 
 .terminal-scrollbar {
@@ -1147,8 +1147,8 @@ defineExpose({ getTerminal, focus, blur, fit, sendData, setOutputListener, toggl
   right: 1px;
   min-height: 24px;
   border-radius: 999px;
-  background: rgba(180, 180, 190, 0.55);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--scrollbar-thumb);
+  border: 1px solid var(--border);
   pointer-events: none;
 }
 

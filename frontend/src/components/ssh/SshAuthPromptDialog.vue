@@ -83,7 +83,7 @@ function onCancel() {
 }
 .ssh-auth-host {
   font-size: 12px;
-  color: var(--fg-muted, #999);
+  color: var(--fg-muted);
   margin: 0 0 16px;
   font-family: var(--font-mono);
 }
@@ -128,10 +128,10 @@ function onCancel() {
 }
 .ssh-auth-cancel {
   background: transparent;
-  color: var(--fg, #ccc);
+  color: var(--fg);
 }
 .ssh-auth-cancel:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--bg-hover);
 }
 .ssh-auth-submit {
   background: var(--accent, #4d7fff);

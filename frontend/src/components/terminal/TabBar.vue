@@ -512,8 +512,8 @@ onBeforeUnmount(() => {
   top: 100%;
   right: 0;
   min-width: 160px;
-  background: var(--bg-surface, #1e1e1e);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 4px 0;
   z-index: 500;
@@ -550,8 +550,8 @@ onBeforeUnmount(() => {
   top: 100%;
   left: 0;
   min-width: 220px;
-  background: var(--bg-surface, #1e1e1e);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 4px 0;
   z-index: 500;
@@ -591,7 +591,7 @@ onBeforeUnmount(() => {
 }
 .new-menu-sep {
   height: 1px;
-  background: var(--border, #333);
+  background: var(--border);
   margin: 4px 0;
 }
 .new-menu-status {

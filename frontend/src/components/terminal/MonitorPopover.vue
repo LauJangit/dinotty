@@ -177,7 +177,7 @@ const baseOptions = {
     x: { display: false },
     y: {
       min: 0,
-      grid: { color: 'rgba(255,255,255,0.06)' },
+      grid: { color: 'rgba(128, 128, 128, 0.15)' },
       ticks: { display: false },
     },
   },
@@ -349,13 +349,13 @@ function fmtRate(bytesPerSec: number): string {
   position: fixed;
   z-index: 9999;
   background: var(--bg-surface, #1e1e2e);
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.15));
+  border: 1px solid var(--border));
   border-radius: 8px;
   padding: 12px;
   width: 260px;
   overflow-y: auto;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-  color: var(--fg, rgba(255, 255, 255, 0.85));
+  color: var(--fg);
   font-size: 12px;
 }
 .popover-chart {
@@ -367,12 +367,12 @@ function fmtRate(bytesPerSec: number): string {
   font-size: 13px;
   font-weight: 600;
   margin-bottom: 8px;
-  color: var(--fg-bright, rgba(255, 255, 255, 0.95));
+  color: var(--fg-bright);
 }
 .popover-subtitle {
   font-size: 11px;
   font-weight: 500;
-  color: var(--fg-muted, rgba(255, 255, 255, 0.6));
+  color: var(--fg-muted);
   margin: 4px 0 2px;
 }
 .popover-row {
@@ -383,11 +383,11 @@ function fmtRate(bytesPerSec: number): string {
 }
 .popover-row span:last-child {
   font-variant-numeric: tabular-nums;
-  color: var(--fg-muted, rgba(255, 255, 255, 0.7));
+  color: var(--fg-muted);
 }
 .popover-divider {
   height: 1px;
-  background: var(--border, rgba(255, 255, 255, 0.1));
+  background: var(--border));
   margin: 6px 0;
 }
 </style>

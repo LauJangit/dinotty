@@ -926,48 +926,48 @@ function unescapeFromDisplay(s: string): string {
 
 <style scoped>
 .api-test {
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 10px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  background: var(--bg-secondary, rgba(255, 255, 255, 0.03));
+  background: var(--bg-secondary, var(--bg-surface)));
 }
 .api-method-row {
   display: flex;
   align-items: center;
   gap: 8px;
   padding-bottom: 6px;
-  border-bottom: 1px solid var(--border, #333);
+  border-bottom: 1px solid var(--border);
 }
 .mode-tabs {
   margin-left: auto;
   display: flex;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 4px;
   overflow: hidden;
 }
 .mode-tabs button {
   background: none;
   border: none;
-  color: var(--fg-muted, #999);
+  color: var(--fg-muted);
   font-size: 11px;
   padding: 2px 10px;
   cursor: pointer;
 }
 .mode-tabs button.active {
   background: var(--fg-muted, #555);
-  color: var(--bg, #111);
+  color: var(--bg);
 }
 .raw-editor {
   width: 100%;
   box-sizing: border-box;
   padding: 8px;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: var(--bg, #111);
-  color: var(--fg, #ccc);
+  background: var(--bg);
+  color: var(--fg);
   font-family: monospace;
   font-size: 12px;
   resize: vertical;
@@ -985,7 +985,7 @@ function unescapeFromDisplay(s: string): string {
 .api-url {
   font-family: monospace;
   font-size: 12px;
-  color: var(--fg, #ccc);
+  color: var(--fg);
 }
 .api-field {
   display: flex;
@@ -997,7 +997,7 @@ function unescapeFromDisplay(s: string): string {
   flex-shrink: 0;
   font-size: 12px;
   font-family: monospace;
-  color: var(--fg-muted, #999);
+  color: var(--fg-muted);
 }
 .api-field .required {
   color: #ef4444;
@@ -1006,10 +1006,10 @@ function unescapeFromDisplay(s: string): string {
 .api-field select {
   flex: 1;
   padding: 4px 8px;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: var(--bg, #111);
-  color: var(--fg, #ccc);
+  background: var(--bg);
+  color: var(--fg);
   font-size: 12px;
   font-family: monospace;
 }
@@ -1051,7 +1051,7 @@ function unescapeFromDisplay(s: string): string {
 }
 .open-api-curl {
   font-size: 11px;
-  color: var(--fg-muted, #999);
+  color: var(--fg-muted);
   margin-top: 4px;
 }
 .open-api-curl summary {
@@ -1061,8 +1061,8 @@ function unescapeFromDisplay(s: string): string {
   display: block;
   margin-top: 6px;
   padding: 8px;
-  background: var(--bg, #111);
-  border: 1px solid var(--border, #333);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: 4px;
   font-family: monospace;
   font-size: 11px;
@@ -1077,7 +1077,7 @@ function unescapeFromDisplay(s: string): string {
 }
 .kb-group h4 {
   margin: 10px 0 6px;
-  color: var(--fg-muted, #999);
+  color: var(--fg-muted);
   font-size: 12px;
   font-weight: 600;
 }
@@ -1092,7 +1092,7 @@ function unescapeFromDisplay(s: string): string {
   color: var(--fg-muted, #777);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.06));
+  border-bottom: 1px solid var(--border));
 }
 .kb-category:last-child {
   margin-bottom: 0;
@@ -1115,14 +1115,14 @@ function unescapeFromDisplay(s: string): string {
   font-family: inherit;
   line-height: 1.4;
   color: var(--fg, #e0e0e0);
-  background: var(--bg-secondary, rgba(255, 255, 255, 0.06));
+  background: var(--bg-secondary, var(--bg-surface)));
   border: 1px solid var(--border, #444);
   border-radius: 4px;
   min-width: 18px;
   text-align: center;
 }
 .kb-keys.recording {
-  color: var(--fg-muted, #999);
+  color: var(--fg-muted);
   font-size: 12px;
   font-style: italic;
 }

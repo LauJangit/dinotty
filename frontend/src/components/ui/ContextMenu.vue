@@ -67,8 +67,8 @@ function onSelect(item: ContextMenuItem) {
 .ctx-menu {
   position: fixed;
   min-width: 160px;
-  background: var(--bg-surface, #1e1e1e);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 4px 0;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
@@ -90,7 +90,7 @@ function onSelect(item: ContextMenuItem) {
   -webkit-tap-highlight-color: transparent;
 }
 .ctx-item:hover {
-  background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+  background: var(--bg-hover);
 }
 .ctx-item.danger {
   color: var(--color-red, #ef4444);

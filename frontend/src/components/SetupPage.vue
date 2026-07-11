@@ -91,7 +91,7 @@ async function onSubmit() {
   justify-content: center;
   width: 100%;
   height: 100dvh;
-  background: #1e1e1e;
+  background: var(--bg);
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
     env(safe-area-inset-left);
 }
@@ -115,7 +115,7 @@ async function onSubmit() {
 .login-title {
   font-size: 24px;
   font-weight: 700;
-  color: #e8e8e8;
+  color: var(--fg-bright);
   margin: 0;
   font-family:
     'Inter',
@@ -126,14 +126,14 @@ async function onSubmit() {
 
 .login-subtitle {
   font-size: 13px;
-  color: #858585;
+  color: var(--fg-muted);
   margin: 0;
   text-align: center;
 }
 
 .setup-desc {
   font-size: 12px;
-  color: #666;
+  color: var(--fg-muted);
   margin: 0;
   text-align: center;
   line-height: 1.5;
@@ -142,10 +142,10 @@ async function onSubmit() {
 .login-input {
   width: 100%;
   padding: 10px 14px;
-  border: 1px solid #3c3c3c;
+  border: 1px solid var(--border);
   border-radius: 6px;
-  background: #2a2a2c;
-  color: #e8e8e8;
+  background: var(--bg-input);
+  color: var(--fg-bright);
   font-size: 14px;
   font-family: 'Inter', system-ui, sans-serif;
   outline: none;
@@ -153,10 +153,10 @@ async function onSubmit() {
   margin-top: 8px;
 }
 .login-input:focus {
-  border-color: #007aff;
+  border-color: var(--accent);
 }
 .login-input::placeholder {
-  color: #666;
+  color: var(--fg-muted);
 }
 
 .setup-input-row {
@@ -174,10 +174,10 @@ async function onSubmit() {
   width: 38px;
   height: 38px;
   margin-top: 8px;
-  border: 1px solid #3c3c3c;
+  border: 1px solid var(--border);
   border-radius: 6px;
-  background: #2a2a2c;
-  color: #858585;
+  background: var(--bg-input);
+  color: var(--fg-muted);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -187,8 +187,8 @@ async function onSubmit() {
     border-color 0.15s;
 }
 .setup-gen-btn:hover {
-  color: #e8e8e8;
-  border-color: #007aff;
+  color: var(--fg-bright);
+  border-color: var(--accent);
 }
 
 .login-btn {
@@ -196,7 +196,7 @@ async function onSubmit() {
   padding: 10px 14px;
   border: none;
   border-radius: 6px;
-  background: #007aff;
+  background: var(--accent);
   color: #fff;
   font-size: 14px;
   font-weight: 600;
@@ -206,7 +206,7 @@ async function onSubmit() {
   transition: background 0.15s;
 }
 .login-btn:hover {
-  background: #3395ff;
+  background: var(--accent-hover);
 }
 .login-btn:disabled {
   opacity: 0.5;

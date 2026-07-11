@@ -68,7 +68,7 @@
   font-weight: 400;
   color: var(--fg-bright);
   background: var(--mkb-key-bg);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
   border-radius: 6px;
   height: 36px;
   padding: 0 2px;
@@ -80,7 +80,7 @@
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.45);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.15);
   box-sizing: border-box;
 }
 
@@ -94,7 +94,7 @@
   background: var(--mkb-mod-bg);
   font-size: 12px;
   color: var(--fg);
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.15);
 }
 
 .mkb-active {
@@ -106,7 +106,7 @@
 .mkb-btn.active {
   background: var(--accent);
   color: #fff;
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.15);
 }
 
 .mkb-return {
@@ -115,7 +115,7 @@
 
 #mkb-space {
   background: var(--mkb-key-bg);
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.45);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.15);
 }
 
 .mkb-blank {
@@ -393,7 +393,7 @@
   background: var(--border);
 }
 .mkb-text-input-glow.mkb-glow-active {
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--accent);
 }
 .mkb-text-input-focused {
   overflow-y: auto;

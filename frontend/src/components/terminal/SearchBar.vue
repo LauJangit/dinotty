@@ -110,8 +110,8 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 2px;
-  background: var(--bg-surface, #252526);
-  border: 1px solid var(--border, #3c3c3c);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 4px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
@@ -122,7 +122,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  background: var(--bg-input, #2a2a2c);
+  background: var(--bg-input);
   border: 1px solid transparent;
   border-radius: 4px;
   padding: 4px 8px;
@@ -142,7 +142,7 @@ onMounted(() => {
   background: none;
   border: none;
   outline: none;
-  color: var(--fg, #ccc);
+  color: var(--fg);
   font-size: 13px;
   font-family: inherit;
   width: 160px;
@@ -177,7 +177,7 @@ onMounted(() => {
 }
 
 .search-bar-btn:hover {
-  background: var(--bg-hover, #2a2a2c);
-  color: var(--fg, #ccc);
+  background: var(--bg-hover);
+  color: var(--fg);
 }
 </style>

@@ -149,7 +149,7 @@ input {
   margin-top: 6px;
   align-self: flex-start;
   padding: 3px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  border: 1px solid var(--border);
   border-radius: 4px;
   background: transparent;
   color: inherit;
@@ -157,7 +157,7 @@ input {
   cursor: pointer;
 }
 .notif-toast-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--bg-hover);
 }
 
 @media (max-width: 480px) and (orientation: portrait) {

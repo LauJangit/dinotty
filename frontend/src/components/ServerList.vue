@@ -146,8 +146,8 @@ defineExpose({ open, close, getActiveServer })
 .serverlist-panel {
   width: 90vw;
   max-width: 400px;
-  background: var(--bg-surface, #1a1a1a);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -157,7 +157,7 @@ defineExpose({ open, close, getActiveServer })
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  border-bottom: 1px solid var(--border, #333);
+  border-bottom: 1px solid var(--border);
 }
 .serverlist-header h2 {
   font-size: 15px;
@@ -191,7 +191,7 @@ defineExpose({ open, close, getActiveServer })
   margin-bottom: 4px;
 }
 .server-item:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--bg-hover);
 }
 .server-item.active {
   background: rgba(77, 127, 255, 0.1);
@@ -201,7 +201,7 @@ defineExpose({ open, close, getActiveServer })
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--fg-muted, #666);
+  background: var(--fg-muted);
   flex-shrink: 0;
 }
 .server-status.online {
@@ -244,7 +244,7 @@ defineExpose({ open, close, getActiveServer })
   gap: 6px;
   margin-top: 12px;
   padding-top: 12px;
-  border-top: 1px solid var(--border, #333);
+  border-top: 1px solid var(--border);
 }
 .server-input {
   flex: 1;

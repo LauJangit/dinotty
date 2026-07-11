@@ -127,10 +127,10 @@ function onTrustedProxiesInput(e: Event) {
 .config-textarea {
   width: 100%;
   box-sizing: border-box;
-  background: var(--bg-input, #1a1a1a);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
   border-radius: 6px;
-  color: var(--fg, #c7c7c7);
+  color: var(--fg);
   padding: 8px 10px;
   font-size: 12px;
   font-family: var(--font-mono);
@@ -138,10 +138,10 @@ function onTrustedProxiesInput(e: Event) {
 }
 .settings-input-number {
   width: 80px;
-  background: var(--bg-input, #1a1a1a);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
   border-radius: 6px;
-  color: var(--fg, #c7c7c7);
+  color: var(--fg);
   padding: 6px 8px;
   font-size: 12px;
   text-align: center;

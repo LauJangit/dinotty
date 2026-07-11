@@ -493,7 +493,7 @@ onBeforeUnmount(() => {
 
 .preview-panel-divider {
   flex-shrink: 0;
-  background: var(--border, #333);
+  background: var(--border);
   transition: background 0.15s;
   z-index: 2;
 }
@@ -533,7 +533,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   background: var(--bg, #1a1a1a);
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 4px;
   overflow: hidden;
   flex-shrink: 0;
@@ -550,7 +550,7 @@ onBeforeUnmount(() => {
 }
 
 .preview-mode-switch button:hover:not(.active) {
-  color: var(--fg, #ccc);
+  color: var(--fg);
   background: var(--tab-hover-bg, #333);
 }
 
@@ -562,7 +562,7 @@ onBeforeUnmount(() => {
 .preview-toolbar-sep {
   width: 1px;
   height: 16px;
-  background: var(--border, #333);
+  background: var(--border);
   flex-shrink: 0;
   margin: 0 2px;
 }
@@ -572,8 +572,8 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 4px;
   padding: 4px 8px;
-  background: var(--tab-bg, #252525);
-  border-bottom: 1px solid var(--border, #333);
+  background: var(--tab-bg);
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 
@@ -588,7 +588,7 @@ onBeforeUnmount(() => {
 }
 
 .preview-toolbar button:hover:not(:disabled) {
-  color: var(--fg, #ccc);
+  color: var(--fg);
   background: var(--tab-hover-bg, #333);
 }
 
@@ -603,7 +603,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   background: var(--bg, #1a1a1a);
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 3px;
 }
 
@@ -616,7 +616,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   background: none;
   border: none;
-  color: var(--fg, #ccc);
+  color: var(--fg);
   font-family: var(--font-mono);
   font-size: 12px;
   padding: 2px 8px;
@@ -633,7 +633,7 @@ onBeforeUnmount(() => {
 }
 
 .go-btn:hover {
-  color: var(--fg, #ccc);
+  color: var(--fg);
 }
 
 .preview-body {

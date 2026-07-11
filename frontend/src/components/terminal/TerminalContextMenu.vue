@@ -279,8 +279,8 @@ function onNewLocalTerminal() {
 .tcm-menu {
   position: fixed;
   width: 200px;
-  background: var(--bg-surface, #252526);
-  border: 1px solid var(--border, #3c3c3c);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 4px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
@@ -301,7 +301,7 @@ function onNewLocalTerminal() {
   gap: 6px;
 }
 .tcm-item:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--bg-hover);
 }
 .tcm-item:disabled {
   opacity: 0.4;
@@ -330,7 +330,7 @@ function onNewLocalTerminal() {
 
 .tcm-sep {
   height: 1px;
-  background: var(--border, #3c3c3c);
+  background: var(--border);
   margin: 3px 4px;
 }
 
@@ -342,8 +342,8 @@ function onNewLocalTerminal() {
   transform: translate(-50%, -50%);
   width: 380px;
   max-width: 90vw;
-  background: var(--bg-surface, #252526);
-  border: 1px solid var(--border, #3c3c3c);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
   z-index: 100001;
@@ -354,7 +354,7 @@ function onNewLocalTerminal() {
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  border-bottom: 1px solid var(--border, #3c3c3c);
+  border-bottom: 1px solid var(--border);
 }
 .tcm-dialog-title {
   font-size: 14px;
@@ -372,8 +372,8 @@ function onNewLocalTerminal() {
   font-size: 12px;
 }
 .tcm-dialog-close:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--fg, #ccc);
+  background: var(--bg-hover);
+  color: var(--fg);
 }
 
 .tcm-dialog-body {
@@ -395,8 +395,8 @@ function onNewLocalTerminal() {
 
 .tcm-input,
 .tcm-textarea {
-  background: var(--bg-input, #1a1a1a);
-  border: 1px solid var(--border, #3c3c3c);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
   border-radius: 4px;
   color: var(--fg-bright, #e0e0e0);
   padding: 6px 8px;
@@ -418,7 +418,7 @@ function onNewLocalTerminal() {
   justify-content: flex-end;
   gap: 8px;
   padding: 12px 16px;
-  border-top: 1px solid var(--border, #3c3c3c);
+  border-top: 1px solid var(--border);
 }
 
 .tcm-btn {
@@ -433,8 +433,8 @@ function onNewLocalTerminal() {
   color: var(--fg-muted, #888);
 }
 .tcm-btn-ghost:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--fg, #ccc);
+  background: var(--bg-hover);
+  color: var(--fg);
 }
 .tcm-btn-primary {
   background: var(--accent, #007acc);

@@ -257,7 +257,7 @@ async function onSubmit() {
   cursor: pointer;
 }
 .cw-close:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--bg-hover);
 }
 .cw-body {
   padding: 12px 16px;
@@ -279,8 +279,8 @@ async function onSubmit() {
   gap: 6px;
 }
 .cw-input {
-  background: var(--bg-input, #2a2a2a);
-  border: 1px solid var(--border, #444);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
   border-radius: 4px;
   color: inherit;
   font: inherit;
@@ -301,9 +301,9 @@ async function onSubmit() {
 .cw-browse-btn {
   flex-shrink: 0;
   padding: 8px 10px;
-  border: 1px solid var(--border, #444);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: var(--bg-input, #2a2a2a);
+  background: var(--bg-input);
   color: var(--fg-muted);
   cursor: pointer;
   display: flex;
@@ -321,7 +321,7 @@ async function onSubmit() {
 .cw-mode-toggle {
   display: flex;
   gap: 0;
-  border: 1px solid var(--border, #444);
+  border: 1px solid var(--border);
   border-radius: 4px;
   overflow: hidden;
   margin-bottom: 4px;
@@ -330,7 +330,7 @@ async function onSubmit() {
   flex: 1;
   padding: 6px 12px;
   border: none;
-  background: var(--bg-input, #2a2a2a);
+  background: var(--bg-input);
   color: var(--fg-muted);
   font-size: 12px;
   cursor: pointer;
@@ -341,7 +341,7 @@ async function onSubmit() {
   color: #fff;
 }
 .cw-mode-btn:not(.active):hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--bg-hover);
 }
 .cw-select {
   appearance: auto;
@@ -363,7 +363,7 @@ async function onSubmit() {
   background: none;
 }
 .cw-btn.cancel:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--bg-hover);
   color: var(--fg);
 }
 .cw-btn.primary {

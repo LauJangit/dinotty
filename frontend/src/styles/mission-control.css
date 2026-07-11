@@ -35,8 +35,8 @@
 .mc-grid::-webkit-scrollbar { display: none; }
 
 .mc-card {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
   cursor: pointer;
@@ -45,14 +45,14 @@
   touch-action: manipulation;
 }
 .mc-card:active {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--bg-surface-hover);
 }
 .mc-card.active {
   border-color: var(--accent);
 }
 .mc-card.focused {
-  border-color: var(--fg-bright, #fff);
-  box-shadow: 0 0 0 2px var(--fg-bright, #fff);
+  border-color: var(--fg-bright);
+  box-shadow: 0 0 0 2px var(--fg-bright);
 }
 
 .mc-card-header {
@@ -198,10 +198,10 @@
   gap: 0;
   overflow: hidden;
   border-radius: 16px;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--bg-surface);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
   position: relative;
 }
 
@@ -223,8 +223,8 @@
   transition: background 0.12s, color 0.12s;
 }
 .mc-close-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--fg-bright, #fff);
+  background: var(--bg-hover);
+  color: var(--fg-bright);
 }
 
 /* ── Workspace List Selector ─────────────────────────────── */
@@ -233,7 +233,7 @@
   min-width: 200px;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  border-right: 1px solid var(--border);
   overflow: hidden;
 }
 
@@ -265,10 +265,10 @@
   transition: background 0.12s, border-color 0.12s;
 }
 .mc-ws-list-item:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--bg-hover);
 }
 .mc-ws-list-item.selected {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--bg-surface-hover);
   border-left-color: var(--accent);
 }
 
@@ -294,7 +294,7 @@
   flex-shrink: 0;
   font-size: 11px;
   color: var(--text-muted, #888);
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--bg-hover);
   padding: 1px 6px;
   border-radius: 8px;
   min-width: 18px;
@@ -303,7 +303,7 @@
 
 .mc-ws-footer {
   padding: 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--border);
   flex-shrink: 0;
 }
 
@@ -327,7 +327,7 @@
 .mc-ws-add-btn:hover {
   border-color: var(--accent);
   color: var(--accent);
-  background: var(--bg-hover, rgba(255, 255, 255, 0.04));
+  background: var(--bg-hover);
 }
 
 .mc-ws-empty {
@@ -360,11 +360,11 @@
 
 /* Card styling inside semi-transparent panel */
 .mc-ws-dual .mc-card {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.08);
+  background: var(--bg-hover);
+  border-color: var(--border);
 }
 .mc-ws-dual .mc-card:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--bg-surface-hover);
 }
 
 /* ── Right panel path display ────────────────────────────── */
@@ -380,7 +380,7 @@
   font-size: 12px;
   font-family: var(--font-mono, monospace);
   color: var(--text-muted, #888);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--border);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -423,7 +423,7 @@
   -webkit-tap-highlight-color: transparent;
 }
 .mc-ws-mobile-close:active {
-  background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+  background: var(--bg-hover);
 }
 
 .mc-ws-mobile-title {
@@ -471,7 +471,7 @@
   -webkit-tap-highlight-color: transparent;
 }
 .mc-ws-mobile-item:active {
-  background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+  background: var(--bg-hover);
 }
 .mc-ws-mobile-item.active {
   border-left: 3px solid var(--accent);
@@ -511,7 +511,7 @@
   flex-shrink: 0;
   font-size: 13px;
   color: var(--text-muted, #888);
-  background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+  background: var(--bg-hover);
   padding: 2px 8px;
   border-radius: 10px;
   min-width: 22px;
@@ -595,7 +595,7 @@
     height: auto;
     max-height: 40%;
     border-right: none;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    border-bottom: 1px solid var(--border);
   }
   .mc-ws-list-scroll {
     display: flex;

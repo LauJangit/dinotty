@@ -72,11 +72,11 @@ onMounted(loadInfo)
 .about-name {
   font-size: 18px;
   font-weight: 600;
-  color: var(--fg-bright, #f0f6fc);
+  color: var(--fg-bright);
 }
 .about-val {
   font-size: 13px;
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
 }
 .about-link {
   font-size: 13px;

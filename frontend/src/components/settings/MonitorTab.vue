@@ -161,8 +161,8 @@ const baseOptions = {
     x: { display: false },
     y: {
       min: 0,
-      grid: { color: 'rgba(255,255,255,0.06)' },
-      ticks: { color: 'rgba(255,255,255,0.4)', font: { size: 10 } },
+      grid: { color: 'var(--border)' },
+      ticks: { color: 'var(--fg-muted)', font: { size: 10 } },
     },
   },
 }
@@ -292,7 +292,7 @@ const gpuMemChartData = computed(() => ({
 .chart-header h3 {
   font-size: 13px;
   font-weight: 600;
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin: 0;
@@ -306,7 +306,7 @@ const gpuMemChartData = computed(() => ({
 }
 .disk-val {
   font-variant-numeric: tabular-nums;
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
   font-size: 12px;
 }
 </style>

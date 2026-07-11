@@ -324,10 +324,10 @@ async function sendTest() {
 .num-input {
   width: 60px;
   padding: 2px 6px;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: var(--bg, #111);
-  color: var(--fg, #ccc);
+  background: var(--bg);
+  color: var(--fg);
   font-size: 12px;
 }
 .sound-row {
@@ -343,10 +343,10 @@ async function sendTest() {
 .sound-select {
   flex: 1;
   padding: 2px 4px;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: var(--bg, #111);
-  color: var(--fg, #ccc);
+  background: var(--bg);
+  color: var(--fg);
   font-size: 12px;
 }
 .vol-slider {
@@ -354,59 +354,59 @@ async function sendTest() {
 }
 .preview-btn {
   background: none;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  color: var(--fg, #ccc);
+  color: var(--fg);
   cursor: pointer;
   padding: 3px 8px;
   font-size: 12px;
 }
 .preview-btn:hover {
-  border-color: var(--fg-muted, #666);
+  border-color: var(--fg-muted);
 }
 .api-test {
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 10px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  background: var(--bg-secondary, rgba(255, 255, 255, 0.03));
+  background: var(--bg-secondary, var(--bg-surface)));
 }
 .api-method-row {
   display: flex;
   align-items: center;
   gap: 8px;
   padding-bottom: 6px;
-  border-bottom: 1px solid var(--border, #333);
+  border-bottom: 1px solid var(--border);
 }
 .mode-tabs {
   margin-left: auto;
   display: flex;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 4px;
   overflow: hidden;
 }
 .mode-tabs button {
   background: none;
   border: none;
-  color: var(--fg-muted, #999);
+  color: var(--fg-muted);
   font-size: 11px;
   padding: 2px 10px;
   cursor: pointer;
 }
 .mode-tabs button.active {
   background: var(--fg-muted, #555);
-  color: var(--bg, #111);
+  color: var(--bg);
 }
 .raw-editor {
   width: 100%;
   box-sizing: border-box;
   padding: 8px;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: var(--bg, #111);
-  color: var(--fg, #ccc);
+  background: var(--bg);
+  color: var(--fg);
   font-family: monospace;
   font-size: 12px;
   resize: vertical;
@@ -424,7 +424,7 @@ async function sendTest() {
 .api-url {
   font-family: monospace;
   font-size: 12px;
-  color: var(--fg, #ccc);
+  color: var(--fg);
 }
 .api-field {
   display: flex;
@@ -436,7 +436,7 @@ async function sendTest() {
   flex-shrink: 0;
   font-size: 12px;
   font-family: monospace;
-  color: var(--fg-muted, #999);
+  color: var(--fg-muted);
 }
 .api-field .required {
   color: #ef4444;
@@ -445,10 +445,10 @@ async function sendTest() {
 .api-field select {
   flex: 1;
   padding: 4px 8px;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: var(--bg, #111);
-  color: var(--fg, #ccc);
+  background: var(--bg);
+  color: var(--fg);
   font-size: 12px;
   font-family: monospace;
 }
@@ -490,7 +490,7 @@ async function sendTest() {
 }
 .hook-hint {
   font-size: 11px;
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
   margin: 0 0 8px;
   font-family: monospace;
   word-break: break-all;
@@ -518,26 +518,26 @@ async function sendTest() {
 .hook-type-select {
   width: 80px;
   padding: 3px 4px;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: var(--bg, #111);
-  color: var(--fg, #ccc);
+  background: var(--bg);
+  color: var(--fg);
   font-size: 11px;
 }
 .hook-cmd-input {
   flex: 1;
   padding: 4px 8px;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: var(--bg, #111);
-  color: var(--fg, #ccc);
+  background: var(--bg);
+  color: var(--fg);
   font-size: 12px;
   font-family: monospace;
 }
 .hook-del-btn {
   background: none;
   border: none;
-  color: var(--fg-muted, #666);
+  color: var(--fg-muted);
   font-size: 16px;
   cursor: pointer;
   padding: 0 4px;
@@ -547,16 +547,16 @@ async function sendTest() {
 }
 .hook-add-btn {
   background: none;
-  border: 1px dashed var(--border, #333);
+  border: 1px dashed var(--border);
   border-radius: 4px;
-  color: var(--fg-muted, #999);
+  color: var(--fg-muted);
   font-size: 12px;
   padding: 4px 12px;
   cursor: pointer;
   width: 100%;
 }
 .hook-add-btn:hover {
-  border-color: var(--fg-muted, #666);
-  color: var(--fg, #ccc);
+  border-color: var(--fg-muted);
+  color: var(--fg);
 }
 </style>
