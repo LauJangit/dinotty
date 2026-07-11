@@ -279,11 +279,21 @@ async fn handle_sync_socket(
                 if let Ok(sync_msg) = serde_json::from_str::<SyncClientMsg>(&text) {
                     match sync_msg {
                         SyncClientMsg::ActivateTab { pane_id } => {
+                            // Resolve leaf pane ID: pane_id may be a tab ID;
+                            // look up the tab's stored active_pane_id for the actual leaf.
+                            let leaf_id = manager
+                                .tab_layouts
+                                .get(&pane_id)
+                                .and_then(|v| {
+                                    v.get("active_pane_id")
+                                        .and_then(|a| a.as_str())
+                                        .map(String::from)
+                                })
+                                .unwrap_or(pane_id.clone());
                             *manager
                                 .active_pane_id
                                 .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                                Some(pane_id.clone());
+                                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(leaf_id);
                             manager.broadcast_sync_others(
                                 &SyncMsg::TabActivated { pane_id },
                                 &client_id,
@@ -398,6 +408,12 @@ async fn handle_sync_socket(
                                     "active_pane_id": active_pane_id,
                                 }),
                             );
+                            // Sync global active pane (same rationale as REST update_layout)
+                            *manager
+                                .active_pane_id
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                                Some(active_pane_id.clone());
                             manager.broadcast_sync_others(
                                 &SyncMsg::LayoutUpdated { pane_id, layout, active_pane_id },
                                 &client_id,
