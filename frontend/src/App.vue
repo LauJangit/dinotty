@@ -252,8 +252,7 @@ import {
   getApiBase,
   checkTokenConfigured,
   fetchAutoToken,
-  validateToken,
-  apiUrl,
+  setAuthToken,
 } from './composables/apiBase'
 import { isTauri, tauriInvoke } from './composables/useTransport'
 import { isTouchDevice, setActivePaneId } from './composables/useTerminal'
@@ -1395,7 +1394,6 @@ onMounted(async () => {
   }
   if (authenticated.value) {
     await getApiBase()
-    await settingsStore.load()
     void syncWs.connectSyncWS()
     initMonitorHistory()
     void loadAll()
@@ -1453,32 +1451,18 @@ onMounted(async () => {
       }
     }, 3000)
   } else {
-    // Not yet authenticated
+    // No local token — check if server has one configured
     await getApiBase()
     const { configured, serverMode } = await checkTokenConfigured()
     if (!configured) {
       // First-time setup: show setup page (server mode only)
       needsSetup.value = true
     } else if (!serverMode) {
-      // Desktop mode with auto-generated token — authenticate to get a session cookie
-      // so non-loopback access (e.g. LAN IP) works.
+      // Desktop mode with auto-generated token — fetch and authenticate
       const autoToken = await fetchAutoToken()
       if (autoToken) {
-        const ok = await validateToken(autoToken)
-        if (ok) {
-          await onLoginSuccess()
-        }
-      }
-    } else {
-      // Server mode: check if session cookie is still valid
-      try {
-        const res = await fetch(apiUrl('/api/settings'), { credentials: 'include' })
-        if (res.ok) {
-          await onLoginSuccess()
-        }
-        // else: show LoginPage (default state)
-      } catch {
-        // Network error — show LoginPage
+        setAuthToken(autoToken)
+        await onLoginSuccess()
       }
     }
   }

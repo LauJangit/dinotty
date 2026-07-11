@@ -2,57 +2,49 @@ import { isTauri, tauriInvoke } from './useTransport'
 
 const STORAGE_KEY = 'dinotty_auth_token'
 
-// Browser mode: cookie-based session (no token in localStorage).
-// Tauri mode: Bearer token in localStorage (tauri_fetch has no cookie jar).
-let loggedIn = false
-
 let cached = ''
 let inflight: Promise<string> | null = null
 
 export function getAuthToken(): string {
-  if (!isTauri()) return loggedIn ? 'cookie' : ''
+  // localStorage takes priority (persists across "Add to Home Screen" opens)
   const stored = localStorage.getItem(STORAGE_KEY)
-  return stored || ''
+  if (stored) return stored
+
+  // Fallback to meta tag (set when accessing via ?token=xxx)
+  return document.querySelector('meta[name="auth-token"]')?.getAttribute('content') || ''
 }
 
 export function setAuthToken(token: string): void {
-  if (!isTauri()) {
-    loggedIn = true
-    return
-  }
   localStorage.setItem(STORAGE_KEY, token)
+  // Also update the meta tag so other code paths pick it up immediately
+  let meta = document.querySelector('meta[name="auth-token"]')
+  if (!meta) {
+    meta = document.createElement('meta')
+    meta.setAttribute('name', 'auth-token')
+    document.head.appendChild(meta)
+  }
+  meta.setAttribute('content', token)
 }
 
 export function clearAuthToken(): void {
-  if (!isTauri()) {
-    loggedIn = false
-    return
-  }
   localStorage.removeItem(STORAGE_KEY)
 }
 
 export function hasAuthToken(): boolean {
-  if (!isTauri()) return loggedIn
-  return !!localStorage.getItem(STORAGE_KEY)
+  return !!(
+    localStorage.getItem(STORAGE_KEY) ||
+    document.querySelector('meta[name="auth-token"]')?.getAttribute('content')
+  )
 }
 
 export async function validateToken(token: string): Promise<boolean> {
   try {
     await getApiBase()
-    const init: RequestInit = {
+    const res = await fetch(apiUrl('/api/auth'), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token }),
-    }
-    if (!isTauri()) {
-      ;(init as RequestInit).credentials = 'include'
-    }
-    const res = await fetch(apiUrl('/api/auth'), init)
-    if (res.ok) {
-      if (!isTauri()) loggedIn = true
-      return true
-    }
-    return false
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    return res.ok
   } catch {
     return false
   }
@@ -123,7 +115,6 @@ export function apiUrl(path: string): string {
 }
 
 export function authHeaders(): Record<string, string> {
-  if (!isTauri()) return {}
   const token = getAuthToken()
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
@@ -149,11 +140,14 @@ export async function authFetch(url: string, init?: RequestInit): Promise<Respon
       headers: resp.headers,
     })
   }
-  return fetch(url, { ...init, credentials: 'include' })
+  const headers = new Headers(init?.headers)
+  Object.entries(authHeaders()).forEach(([key, value]) => headers.set(key, value))
+  return fetch(url, { ...init, headers })
 }
 
 export function wsUrlWithToken(url: string): string {
-  // Browser: same-origin WS sends cookies automatically.
-  // Tauri: loopback bypass or Bearer in WS URL is not needed.
-  return url
+  const token = getAuthToken()
+  if (!token) return url
+  const sep = url.includes('?') ? '&' : '?'
+  return `${url}${sep}token=${encodeURIComponent(token)}`
 }
