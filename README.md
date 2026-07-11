@@ -85,6 +85,7 @@
 - **服务端虚拟终端** — 完整 VTE 解析，服务端掌握精确屏幕状态，支持会话恢复与屏幕快照
 - **会话持久化** — PTY 进程在断网后存活，自动重连 + 指数退避，刷新页面即可恢复
 - **分屏与多 Tab** — 可拖拽分屏、多 Tab 管理，服务端主导的 Pane 生命周期
+- **工作区管理** — 多工作区隔离，Mission Control 概览，工作区级插件 Tab
 - **广播模式** — 一个 pane 输入，多个 pane 同步执行，免费
 - **命令收藏** — 右键终端文本直接收藏，分组管理，一键执行
 - **SSH 远程连接** — 内建 SSH 客户端，支持密码/密钥认证，远程会话与本地体验一致
@@ -116,6 +117,7 @@
 | 广播模式 | ✅ | ❌ | ❌ | ❌ |
 | 命令收藏 | ✅ | ❌ | ❌ | ❌ |
 | 插件系统 | ✅ | ❌ | ❌ | ❌ |
+| 工作区管理 | ✅ | ❌ | ❌ | ❌ |
 | SSH 远程连接 + SFTP | ✅ | ❌ | ❌ | ❌ |
 | Cookie Session + Token 认证 | ✅ | ✅ | ❌ | ✅ |
 
@@ -128,13 +130,14 @@
 | 定位 | Web 终端服务器 | 内建多端同步 | 云端 Agent | AI Agent 远程客户端 | AI Agent 远程客户端 | SSH 客户端 | 终端复用器 |
 | 技术方案 | 服务端 VTE + Web UI | Anthropic 云 + 本地 | OpenAI 云 | CLI 代理包装 | CLI 代理包装 | 原生 App | 服务端进程 |
 | Web 访问 | ✅ | ✅ claude.ai/code | ✅ chatgpt.com/codex | ✅ | ✅ PWA | ❌ | ❌ |
-| 原生 App | Tauri（可选） | iOS + Android | ❌ | iOS + Android | ❌（PWA） | 全平台 | ❌ |
+| 原生 App | Tauri（macOS/Linux/Windows） | iOS + Android | ❌ | iOS + Android | ❌（PWA） | 全平台 | ❌ |
 | 通用终端 | ✅ 本地 + SSH | ❌ 仅 AI Agent | ❌ 仅 AI Agent | ❌ 仅 AI Agent | ❌ 仅 AI Agent | ✅ SSH | ✅ |
 | Coding Agent 适配 | ✅ 文件浏览/预览/通知 | ✅ 内建 | ✅ 内建 | ✅ 语音/审批 | ✅ 语音/工作区 | ❌ | ❌ |
 | 分屏 | ✅ 原生拖拽 | ❌ | ❌ | ❌ | ❌ | ❌ | ⚠️ tmux 命令 |
 | 广播模式 | ✅ 免费 | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | 命令收藏 | ✅ 免费 | ❌ | ❌ | ❌ | ❌ | 💰 付费 | ❌ |
 | 插件系统 | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| 工作区管理 | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | 多端同步 | ✅ 浏览器即同步 | ✅ 跨设备会话同步 | ✅ 云端会话 | ✅ | ✅ | ✅ Vault | ❌ 需 SSH |
 | 中继服务 | 计划中 | ✅ Anthropic 托管 | ✅ OpenAI 托管 | ✅ | ✅ | SaaS | ❌ |
 | 部署方式 | 自托管 | SaaS | SaaS | 中继服务 | 自托管/中继 | SaaS | 自托管 |
@@ -164,7 +167,7 @@ xattr -cr /Applications/Dinotty.app
 **Linux 一键下载安装**：
 
 ```bash
-curl -LO https://github.com/xichan96/dinotty/releases/download/v0.14.1/dinotty-server_0.14.1-1_amd64.deb && sudo dpkg -i dinotty-server_0.14.1-1_amd64.deb
+curl -LO https://github.com/xichan96/dinotty/releases/download/v0.16.2/dinotty-server_0.16.2-1_amd64.deb && sudo dpkg -i dinotty-server_0.16.2-1_amd64.deb
 ```
 
 **Linux 启动方式**：
@@ -272,7 +275,7 @@ cargo run
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=xichan96/dinotty&type=Date)](https://star-history.com/#xichan96/dinotty&Date)
+[👉 查看 Star History](https://star-history.com/#xichan96/dinotty&Date)
 
 ## 许可证
 

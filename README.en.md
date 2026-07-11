@@ -85,6 +85,7 @@ Terminal-based coding agents (Claude Code, opencode, Codex, OpenClaw, etc.) are 
 - **Server-side virtual terminal** — full VTE parser, server knows exact screen state, enables session recovery & screen snapshots
 - **Session persistence** — PTY processes survive disconnection, auto-reconnect with exponential backoff, refresh page to restore
 - **Split pane & multi-tab** — draggable split, multi-tab management with server-led pane lifecycle
+- **Workspace management** — multi-workspace isolation, Mission Control overview, workspace-scoped plugin tabs
 - **Broadcast mode** — input in one pane, execute in all panes simultaneously, free
 - **Command bookmarks** — right-click terminal text to bookmark, group management, one-click execution
 - **SSH remote connection** — built-in SSH client with password/key auth, remote sessions feel just like local
@@ -116,6 +117,7 @@ Terminal-based coding agents (Claude Code, opencode, Codex, OpenClaw, etc.) are 
 | Broadcast mode | ✅ | ❌ | ❌ | ❌ |
 | Command bookmarks | ✅ | ❌ | ❌ | ❌ |
 | Plugin system | ✅ | ❌ | ❌ | ❌ |
+| Workspace management | ✅ | ❌ | ❌ | ❌ |
 | SSH remote + SFTP | ✅ | ❌ | ❌ | ❌ |
 | Cookie Session + Token auth | ✅ | ✅ | ❌ | ✅ |
 
@@ -128,13 +130,14 @@ Other web terminals are thin WebSocket-to-PTY pipes. Dinotty runs a **full virtu
 | Positioning | Web terminal server | Built-in multi-device | Cloud agent | AI Agent remote client | AI Agent remote client | SSH client | Terminal multiplexer |
 | Approach | Server-side VTE + Web UI | Anthropic cloud + local | OpenAI cloud | CLI proxy wrapper | CLI proxy wrapper | Native app | Server-side process |
 | Web access | ✅ | ✅ claude.ai/code | ✅ chatgpt.com/codex | ✅ | ✅ PWA | ❌ | ❌ |
-| Native app | Tauri (optional) | iOS + Android | ❌ | iOS + Android | ❌ (PWA) | All platforms | ❌ |
+| Native app | Tauri (macOS/Linux/Windows) | iOS + Android | ❌ | iOS + Android | ❌ (PWA) | All platforms | ❌ |
 | General terminal | ✅ Local + SSH | ❌ AI agents only | ❌ AI agents only | ❌ AI agents only | ❌ AI agents only | ✅ SSH | ✅ |
 | Coding agent support | ✅ File browser/preview/notify | ✅ Built-in | ✅ Built-in | ✅ Voice/approve | ✅ Voice/workspace | ❌ | ❌ |
 | Split screen | ✅ Native drag | ❌ | ❌ | ❌ | ❌ | ❌ | ⚠️ tmux commands |
 | Broadcast mode | ✅ Free | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Command bookmarks | ✅ Free | ❌ | ❌ | ❌ | ❌ | 💰 Paid | ❌ |
 | Plugin system | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Workspace management | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Multi-device sync | ✅ Browser-based | ✅ Cross-device session sync | ✅ Cloud sessions | ✅ | ✅ | ✅ Vault | ❌ Requires SSH |
 | Relay service | Planned | ✅ Anthropic hosted | ✅ OpenAI hosted | ✅ | ✅ | SaaS | ❌ |
 | Deployment | Self-hosted | SaaS | SaaS | Relay service | Self-hosted/relay | SaaS | Self-hosted |
@@ -164,7 +167,7 @@ xattr -cr /Applications/Dinotty.app
 **Linux one-liner install**:
 
 ```bash
-curl -LO https://github.com/xichan96/dinotty/releases/download/v0.14.1/dinotty-server_0.14.1-1_amd64.deb && sudo dpkg -i dinotty-server_0.14.1-1_amd64.deb
+curl -LO https://github.com/xichan96/dinotty/releases/download/v0.16.2/dinotty-server_0.16.2-1_amd64.deb && sudo dpkg -i dinotty-server_0.16.2-1_amd64.deb
 ```
 
 **Linux startup**:
@@ -272,7 +275,7 @@ Thanks to all the people who have contributed to Dinotty!
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=xichan96/dinotty&type=Date)](https://star-history.com/#xichan96/dinotty&Date)
+[👉 View Star History](https://star-history.com/#xichan96/dinotty&Date)
 
 ## License
 
