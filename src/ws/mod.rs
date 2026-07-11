@@ -2,7 +2,7 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket},
-        ConnectInfo, Query, State, WebSocketUpgrade,
+        Query, State, WebSocketUpgrade,
     },
     http::StatusCode,
     response::IntoResponse,
@@ -10,7 +10,6 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
 use std::sync::{
     atomic::{AtomicU32, Ordering},
     Arc,
@@ -95,16 +94,9 @@ pub async fn ws_handler(
     Query(q): Query<WsQuery>,
     State(manager): State<Arc<SessionManager>>,
     State(history): State<HistoryState>,
-    State(settings): State<SettingsState>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    let allowed_origins = settings.read().await.auth.allowed_origins.clone();
-    if !crate::auth::check_ws_origin(&headers, &allowed_origins, addr.ip()) {
-        return StatusCode::FORBIDDEN.into_response();
-    }
     let pane_id = q.pane_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    ws.on_upgrade(move |socket| handle_socket(socket, pane_id, manager, history)).into_response()
+    ws.on_upgrade(move |socket| handle_socket(socket, pane_id, manager, history))
 }
 
 #[allow(clippy::unused_async)]
@@ -115,15 +107,8 @@ pub async fn sync_handler(
         WorkspacesState,
         SettingsState,
     )>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    let allowed_origins = settings.read().await.auth.allowed_origins.clone();
-    if !crate::auth::check_ws_origin(&headers, &allowed_origins, addr.ip()) {
-        return StatusCode::FORBIDDEN.into_response();
-    }
     ws.on_upgrade(move |socket| handle_sync_socket(socket, manager, workspaces, settings))
-        .into_response()
 }
 
 async fn handle_sync_socket(
@@ -762,15 +747,8 @@ async fn handle_socket(
 pub async fn notification_ws_handler(
     ws: WebSocketUpgrade,
     State(notifier): State<Arc<NotificationBroadcast>>,
-    State(settings): State<SettingsState>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    let allowed_origins = settings.read().await.auth.allowed_origins.clone();
-    if !crate::auth::check_ws_origin(&headers, &allowed_origins, addr.ip()) {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-    ws.on_upgrade(move |socket| handle_notification_socket(socket, notifier)).into_response()
+    ws.on_upgrade(move |socket| handle_notification_socket(socket, notifier))
 }
 
 async fn handle_notification_socket(socket: WebSocket, notifier: Arc<NotificationBroadcast>) {
