@@ -99,8 +99,8 @@ onBeforeUnmount(() => {
   gap: 2px;
   padding: 3px;
   border-radius: 6px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
+  background: var(--bg-surface, #1e1e1e);
+  border: 1px solid var(--border, #3c3c3c);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
   font-size: 12px;
   animation: selection-toolbar-in 0.12s ease-out;
@@ -129,7 +129,7 @@ onBeforeUnmount(() => {
 }
 
 .selection-toolbar-btn:hover {
-  background: var(--bg-hover);
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .selection-toolbar-btn-accent {

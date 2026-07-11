@@ -43,7 +43,7 @@ onErrorCaptured((err: any) => {
   width: 100%;
   height: 100%;
   overflow: auto;
-  background: var(--bg-main);
+  background: var(--bg-main, #1e1e1e);
   color: var(--text-color, #cccccc);
 }
 .plugin-error {

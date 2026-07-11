@@ -172,7 +172,7 @@ onUnmounted(() => {
 }
 
 .confirm-close:hover {
-  background: var(--bg-hover);
+  background: rgba(255, 255, 255, 0.08);
   color: var(--fg);
 }
 
@@ -213,7 +213,7 @@ onUnmounted(() => {
 
 .confirm-btn.cancel:hover,
 .confirm-btn.cancel.focused {
-  background: var(--bg-hover);
+  background: rgba(255, 255, 255, 0.06);
   color: var(--fg);
 }
 

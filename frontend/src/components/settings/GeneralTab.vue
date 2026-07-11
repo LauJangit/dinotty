@@ -819,10 +819,10 @@ async function refreshLog() {
 .token-input {
   flex: 1;
   padding: 6px 10px;
-  border: 1px solid var(--border);
+  border: 1px solid #3c3c3c;
   border-radius: 5px;
-  background: var(--bg-input);
-  color: var(--fg-bright);
+  background: #2a2a2c;
+  color: #e8e8e8;
   font-size: 13px;
   font-family: monospace;
   outline: none;
@@ -830,15 +830,15 @@ async function refreshLog() {
 }
 
 .token-input:focus {
-  border-color: var(--accent);
+  border-color: #007aff;
 }
 
 .icon-btn {
   padding: 6px 10px;
-  border: 1px solid var(--border);
+  border: 1px solid #3c3c3c;
   border-radius: 5px;
-  background: var(--bg-input);
-  color: var(--fg);
+  background: #2a2a2c;
+  color: #c8c8c8;
   font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
@@ -921,14 +921,14 @@ async function refreshLog() {
 
 .qr-code-wrap canvas {
   border-radius: 8px;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
+  background: var(--bg-input, #1a1a1a);
+  border: 1px solid var(--border, #333);
   padding: 8px;
 }
 
 .qr-refresh-btn {
   background: none;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border, #333);
   border-radius: 6px;
   color: var(--text-secondary, #888);
   cursor: pointer;
@@ -961,7 +961,7 @@ async function refreshLog() {
 
 .log-modal {
   background: var(--bg, #1a1a1a);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border, #333);
   border-radius: 12px;
   width: 90vw;
   max-width: 900px;
@@ -976,7 +976,7 @@ async function refreshLog() {
   justify-content: space-between;
   align-items: center;
   padding: 16px 20px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border, #333);
 }
 
 .log-modal-header h3 {
@@ -1006,10 +1006,10 @@ async function refreshLog() {
 .config-textarea {
   width: 100%;
   box-sizing: border-box;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
+  background: var(--bg-input, #1a1a1a);
+  border: 1px solid var(--border, #333);
   border-radius: 6px;
-  color: var(--fg);
+  color: var(--fg, #c7c7c7);
   padding: 8px 10px;
   font-size: 12px;
   font-family: var(--font-mono);
@@ -1018,10 +1018,10 @@ async function refreshLog() {
 
 .settings-input-number {
   width: 80px;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
+  background: var(--bg-input, #1a1a1a);
+  border: 1px solid var(--border, #333);
   border-radius: 6px;
-  color: var(--fg);
+  color: var(--fg, #c7c7c7);
   padding: 6px 8px;
   font-size: 12px;
   text-align: center;

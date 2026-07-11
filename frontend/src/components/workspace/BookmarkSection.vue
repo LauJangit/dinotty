@@ -205,7 +205,7 @@ function fileName(path: string): string {
 
 <style scoped>
 .bookmark-section {
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border, #3c3c3c);
   padding-bottom: 2px;
   margin-bottom: 2px;
 }
@@ -225,7 +225,7 @@ function fileName(path: string): string {
   user-select: none;
 }
 .bookmark-section-header:hover {
-  background: var(--tree-row-hover));
+  background: var(--tree-row-hover, rgba(255, 255, 255, 0.06));
 }
 
 .bookmark-twistie {
@@ -267,7 +267,7 @@ function fileName(path: string): string {
   border-bottom: 1px solid transparent;
 }
 .bookmark-item:hover {
-  background: var(--tree-row-hover));
+  background: var(--tree-row-hover, rgba(255, 255, 255, 0.06));
 }
 .bookmark-item.drag-over-top {
   border-top-color: var(--accent, #89b4fa);
@@ -319,7 +319,7 @@ function fileName(path: string): string {
   border: 1px solid var(--accent, #89b4fa);
   border-radius: 2px;
   background: var(--bg-surface, #141414);
-  color: var(--fg);
+  color: var(--fg, #ccc);
   outline: none;
   font-family: var(--font-mono, monospace);
 }
@@ -333,8 +333,8 @@ function fileName(path: string): string {
 .bookmark-ctx-menu {
   position: fixed;
   min-width: 180px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
+  background: #252526;
+  border: 1px solid #3c3c3c;
   border-radius: 6px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   padding: 4px 0;
@@ -362,7 +362,7 @@ function fileName(path: string): string {
 }
 .bookmark-ctx-menu .tree-ctx-sep {
   height: 1px;
-  background: var(--border);
+  background: #3c3c3c;
   margin: 4px 0;
 }
 </style>
