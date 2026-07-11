@@ -243,28 +243,8 @@
       </CollapsibleSection>
     </div>
 
-    <CollapsibleSection :title="t('settings.group.filesFolders')" level="group" :default-open="true">
+    <CollapsibleSection :title="t('settings.group.uploads')" level="group">
       <section class="settings-section">
-        <div class="settings-row">
-          <label>{{ t('settings.uploads.defaultDir') }}</label>
-          <div class="upload-dir-control">
-            <input
-              v-model="settings.default_base_dir"
-              class="shortcut-input upload-dir-input"
-              placeholder="/Users/me/projects"
-              @change="saveSettings()"
-            />
-            <button
-              v-if="isTauri()"
-              class="icon-btn"
-              type="button"
-              @click="pickDefaultBaseDir"
-            >
-              <FolderOpen :size="14" />
-              {{ t('settings.uploads.pickDir') }}
-            </button>
-          </div>
-        </div>
         <div class="settings-row">
           <label>{{ t('settings.uploads.dir') }}</label>
           <div class="upload-dir-control">
@@ -564,13 +544,6 @@ async function pickUploadDir() {
   } catch {
     uploadDirError.value = t('settings.uploads.dirInvalid')
   }
-}
-
-async function pickDefaultBaseDir() {
-  const dir = await invoke<string | null>('pick_workspace_dir', { base: settings.default_base_dir || undefined })
-  if (!dir) return
-  settings.default_base_dir = dir
-  await saveSettings()
 }
 
 async function restoreDefaultUploadDir() {
