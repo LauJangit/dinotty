@@ -15,6 +15,7 @@ function input(overrides: Partial<WheelPlanInput> = {}): WheelPlanInput {
     altKey: false,
     metaKey: false,
     velocity: 0,
+    isAltScreen: false,
     isMouseTracking: false,
     ...overrides,
   }
@@ -37,7 +38,7 @@ describe('computeWheelPlan', () => {
   })
 
   it('keeps TUI wheels native at identity settings', () => {
-    expect(computeWheelPlan(input({ isMouseTracking: true }), 1, 0)).toEqual({
+    expect(computeWheelPlan(input({ isAltScreen: true, isMouseTracking: true }), 1, 0)).toEqual({
       action: 'native',
       deltaMode: 1,
       deltaY: 3,
@@ -133,7 +134,7 @@ describe('computeWheelPlan', () => {
   })
 
   it('amplifies non-tracking alt-screen wheels through the scaled-delta path', () => {
-    expect(computeWheelPlan(input(), 2, 1)).toEqual({
+    expect(computeWheelPlan(input({ isAltScreen: true }), 2, 1)).toEqual({
       action: 'amplify',
       deltaMode: 1,
       deltaY: 6,
@@ -142,7 +143,7 @@ describe('computeWheelPlan', () => {
   })
 
   it('uses count-based amplification for mouse-tracking wheels', () => {
-    expect(computeWheelPlan(input({ isMouseTracking: true }), 2, 1)).toEqual({
+    expect(computeWheelPlan(input({ isAltScreen: true, isMouseTracking: true }), 2, 1)).toEqual({
       action: 'amplify',
       deltaMode: 1,
       deltaY: 3,

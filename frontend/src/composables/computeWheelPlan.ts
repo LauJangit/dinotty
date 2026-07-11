@@ -7,6 +7,7 @@ export interface WheelPlanInput {
   altKey: boolean
   metaKey: boolean
   velocity: number
+  isAltScreen: boolean
   isMouseTracking: boolean
 }
 
