@@ -1,4 +1,6 @@
 #!/bin/bash
+# 使用方法（macOS，在仓库根目录运行）：
+#   ./scripts/build-linux-deb.sh
 
 # 在远程服务器构建 dpkg 包
 set -e
