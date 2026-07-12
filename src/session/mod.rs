@@ -9,7 +9,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex,
     },
     time::Instant,
@@ -77,13 +77,25 @@ pub struct PendingCommandResult {
     pub method: String,
 }
 
+pub enum SessionClientEvent {
+    Output(String),
+    Resize { cols: u16, rows: u16 },
+}
+
+pub struct ClientEndpoint {
+    pub id: u64,
+    pub tx: mpsc::Sender<SessionClientEvent>,
+}
+
 pub struct Session {
     /// 传输后端（本地 PTY 或 SSH）
     pub backend: tokio::sync::Mutex<SessionBackend>,
     /// SSH 会话参数（分屏时复用），None 表示本地会话
     pub ssh_params: Option<SshSessionParams>,
     pub screen: Mutex<VirtualScreen>,
-    pub clients: Mutex<Vec<mpsc::Sender<String>>>,
+    pub clients: Mutex<Vec<ClientEndpoint>>,
+    pub next_client_id: AtomicU64,
+    pub tauri_client_id: Mutex<Option<u64>>,
     pub input_tx: Mutex<Option<mpsc::UnboundedSender<String>>>,
     pub status: Mutex<SessionStatus>,
     pub size: Mutex<(u16, u16)>,
@@ -100,7 +112,7 @@ pub struct Session {
     /// Running byte count of `sync_buffer` to avoid O(n) sum on every broadcast
     pub sync_buffer_bytes: AtomicUsize,
     /// Sender for debounced resize requests (None = no pending resize)
-    pub(crate) resize_tx: watch::Sender<Option<(u16, u16)>>,
+    pub(crate) resize_tx: watch::Sender<Option<(u64, u16, u16)>>,
     /// Channel to send commands (input/resize/close) to the SSH reader task.
     /// None for local sessions.
     pub ssh_cmd_tx: Mutex<Option<mpsc::UnboundedSender<SshCmd>>>,
@@ -111,6 +123,15 @@ pub struct Session {
     /// Cached SFTP session for workspace operations. Created lazily.
     /// Actual type: `Arc<russh_sftp::client::SftpSession>`
     pub sftp_session: Mutex<Option<Box<dyn std::any::Any + Send + Sync>>>,
+    /// Remote home directory for SSH sessions. Used for `~` expansion in
+    /// CWD sniffing and workspace path resolution.
+    /// `None` for local sessions.
+    pub remote_home: Mutex<Option<PathBuf>>,
+    /// Current PTY user for SSH sessions. Detects user switches (e.g. `su root`).
+    /// When the PTY user differs from the SSH auth user, SFTP operations may
+    /// fail due to permission issues, and SSH exec fallback with sudo is needed.
+    /// `None` means not yet detected (lazy initialization on first workspace op).
+    pub remote_user: Mutex<Option<String>>,
     /// Raw PTY output channel: reader sends raw bytes here for xterm.js rendering.
     /// Unbounded so the PTY reader never blocks on send.
     pub output_tx: mpsc::UnboundedSender<Vec<u8>>,
@@ -300,16 +321,48 @@ impl Session {
     /// Debounced resize: coalesces rapid calls (e.g. window drag) and applies
     /// the latest size after a 25ms quiet period. Ensures the final resize is
     /// always applied even if no further calls arrive.
-    pub fn resize_debounced(&self, cols: u16, rows: u16) {
+    pub fn resize_debounced(&self, origin_id: u64, cols: u16, rows: u16) {
         tracing::debug!("resize_debounced: {cols}x{rows}");
-        let _ = self.resize_tx.send(Some((cols, rows)));
+        let _ = self.resize_tx.send(Some((origin_id, cols, rows)));
+    }
+
+    pub fn apply_and_broadcast_resize(&self, origin_id: u64, cols: u16, rows: u16) {
+        {
+            let mut clients =
+                self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            clients.retain(|client| !client.tx.is_closed());
+            if !clients.iter().any(|client| client.id == origin_id) {
+                return;
+            }
+        }
+        if self.resize(cols, rows).is_err() {
+            return;
+        }
+        let mut clients = self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        clients.retain(|client| !client.tx.is_closed());
+        for client in clients.iter().filter(|client| client.id != origin_id) {
+            if client.tx.try_send(SessionClientEvent::Resize { cols, rows }).is_err() {
+                tracing::debug!("broadcast: client channel full, dropping resize {cols}x{rows}");
+            }
+        }
+    }
+
+    pub fn clear_tauri_client_if(&self, id: u64) {
+        let mut tauri_client_id =
+            self.tauri_client_id.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *tauri_client_id == Some(id) {
+            *tauri_client_id = None;
+        }
     }
 
     pub fn on_pty_output(&self, data: &[u8]) {
-        let home = crate::platform::shell::home_dir();
+        let default_home = crate::platform::shell::home_dir();
+        let remote_home_guard =
+            self.remote_home.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let home = remote_home_guard.as_ref().unwrap_or(&default_home);
         let mut state = self.cwd_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let CwdState { ref mut cwd, ref mut sniff_buf } = *state;
-        sniff_cwd_from_title_osc(sniff_buf, data, &home, cwd);
+        sniff_cwd_from_title_osc(sniff_buf, data, home, cwd);
     }
 
     /// Replace the input channel, closing the old one (if any) so the previous
@@ -323,28 +376,32 @@ impl Session {
         rx
     }
 
-    pub fn add_client(&self) -> mpsc::Receiver<String> {
+    pub fn add_client(&self) -> (u64, mpsc::Receiver<SessionClientEvent>) {
         // Bounded channel with non-blocking try_send: messages are dropped when
         // full rather than blocking the PTY reader. Keeps the shell responsive.
         let (tx, rx) = mpsc::channel(10240);
-        self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(tx);
-        rx
+        let id = self.next_client_id.fetch_add(1, Ordering::Relaxed);
+        self.clients
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(ClientEndpoint { id, tx });
+        (id, rx)
     }
 
-    /// Remove all existing clients so old forwarder tasks exit cleanly.
-    /// Must be called before `add_client` on reconnection to prevent
-    /// duplicate output delivery.
-    pub fn clear_clients(&self) {
-        self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
+    pub fn remove_client(&self, id: u64) {
+        self.clients
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|client| client.id != id);
     }
 
     /// Send a chunk to all clients via non-blocking `try_send`.
     /// Channel-full messages are dropped (not the client) to keep the PTY reader
     /// non-blocking. Closed channels are pruned.
-    fn send_chunk_to_clients(clients: &mut Vec<mpsc::Sender<String>>, chunk: &str) {
-        clients.retain(|tx| !tx.is_closed());
-        for tx in clients.iter() {
-            if tx.try_send(chunk.to_string()).is_err() {
+    fn send_chunk_to_clients(clients: &mut Vec<ClientEndpoint>, chunk: &str) {
+        clients.retain(|client| !client.tx.is_closed());
+        for client in clients.iter() {
+            if client.tx.try_send(SessionClientEvent::Output(chunk.to_string())).is_err() {
                 tracing::debug!(
                     "broadcast: client channel full, dropping chunk ({}B)",
                     chunk.len()
@@ -419,7 +476,7 @@ impl Session {
 
     pub fn has_clients(&self) -> bool {
         let mut clients = self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        clients.retain(|tx| !tx.is_closed());
+        clients.retain(|client| !client.tx.is_closed());
         !clients.is_empty()
     }
 }

@@ -20,7 +20,7 @@ use tracing::{error, info};
 
 use crate::history::HistoryState;
 use crate::notification::NotificationBroadcast;
-use crate::session::{SessionManager, SessionStatus, SyncMsg};
+use crate::session::{SessionClientEvent, SessionManager, SessionStatus, SyncMsg};
 use crate::settings::SettingsState;
 use crate::workspace_mgmt::WorkspacesState;
 
@@ -73,6 +73,10 @@ pub enum SyncClientMsg {
 pub enum ServerMsg<'a> {
     Output {
         data: &'a str,
+    },
+    Resize {
+        cols: u16,
+        rows: u16,
     },
     ShellInfo {
         shell_type: &'a str,
@@ -497,13 +501,13 @@ async fn handle_socket(
         // Snapshot screen state and register for broadcast atomically
         // (holding the screen lock prevents PTY output from being both in the
         // snapshot AND queued to the broadcast channel)
-        let (cols, rows, scrollback_chunks, snapshot, mut rx) = {
+        let (cols, rows, scrollback_chunks, snapshot, client_id, mut rx) = {
             let screen = session.screen.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let (cols, rows) =
                 *session.size.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let chunks = screen.snapshot_scrollback_chunks(200);
             let snap = screen.snapshot();
-            let rx = session.add_client();
+            let (client_id, rx) = session.add_client();
             info!(
                 "Snapshot for pane={}: cols={}, rows={}, scrollback_chunks={}, snapshot_len={}",
                 pane_id,
@@ -512,7 +516,7 @@ async fn handle_socket(
                 chunks.len(),
                 snap.len()
             );
-            (cols, rows, chunks, snap, rx)
+            (cols, rows, chunks, snap, client_id, rx)
         };
 
         // Send reconnected message
@@ -543,9 +547,16 @@ async fn handle_socket(
         let fwd_ws_out_tx = ws_out_tx.clone();
         let fwd_pane = pane_id.clone();
         let fwd = tokio::spawn(async move {
-            while let Some(data) = rx.recv().await {
-                let msg = serde_json::to_string(&ServerMsg::Output { data: &data })
-                    .expect("serialization is infallible");
+            while let Some(event) = rx.recv().await {
+                let msg = match event {
+                    SessionClientEvent::Output(data) => {
+                        serde_json::to_string(&ServerMsg::Output { data: &data })
+                    }
+                    SessionClientEvent::Resize { cols, rows } => {
+                        serde_json::to_string(&ServerMsg::Resize { cols, rows })
+                    }
+                }
+                .expect("serialization is infallible");
                 if fwd_ws_out_tx.send(Message::Text(msg)).is_err() {
                     info!("WS forwarder (reconnect): send failed, exiting pane={}", fwd_pane);
                     break;
@@ -621,7 +632,7 @@ async fn handle_socket(
                         }
                     }
                     Ok(ClientMsg::Resize { cols, rows }) => {
-                        session.resize_debounced(cols, rows);
+                        session.resize_debounced(client_id, cols, rows);
                     }
                     Err(e) => error!("parse msg: {}", e),
                 },
@@ -639,6 +650,7 @@ async fn handle_socket(
         fwd.abort();
         writer_task.abort();
         ping_task.abort();
+        session.remove_client(client_id);
 
         if !session.has_clients() {
             *session.status.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
@@ -670,7 +682,7 @@ async fn handle_socket(
         }
     };
 
-    let mut rx = session.add_client();
+    let (client_id, mut rx) = session.add_client();
 
     // Send shell info
     let shell_info = serde_json::to_string(&ServerMsg::ShellInfo { shell_type: &shell_type })
@@ -681,9 +693,16 @@ async fn handle_socket(
     let fwd_ws_out_tx = ws_out_tx.clone();
     let fwd_pane = pane_id.clone();
     let fwd = tokio::spawn(async move {
-        while let Some(data) = rx.recv().await {
-            let msg = serde_json::to_string(&ServerMsg::Output { data: &data })
-                .expect("serialization is infallible");
+        while let Some(event) = rx.recv().await {
+            let msg = match event {
+                SessionClientEvent::Output(data) => {
+                    serde_json::to_string(&ServerMsg::Output { data: &data })
+                }
+                SessionClientEvent::Resize { cols, rows } => {
+                    serde_json::to_string(&ServerMsg::Resize { cols, rows })
+                }
+            }
+            .expect("serialization is infallible");
             if fwd_ws_out_tx.send(Message::Text(msg)).is_err() {
                 info!("WS forwarder: send failed, exiting pane={}", fwd_pane);
                 break;
@@ -757,7 +776,7 @@ async fn handle_socket(
                     }
                 }
                 Ok(ClientMsg::Resize { cols, rows }) => {
-                    session.resize_debounced(cols, rows);
+                    session.resize_debounced(client_id, cols, rows);
                 }
                 Err(e) => error!("parse msg: {}", e),
             },
@@ -775,6 +794,7 @@ async fn handle_socket(
     fwd.abort();
     writer_task.abort();
     ping_task.abort();
+    session.remove_client(client_id);
 
     if !session.has_clients() {
         *session.status.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
@@ -942,15 +962,22 @@ pub async fn handle_open_api_ws(socket: WebSocket, manager: Arc<SessionManager>,
     });
 
     // Register as broadcast client
-    let mut rx = session.add_client();
+    let (client_id, mut rx) = session.add_client();
 
     // Forward broadcast output to WS
     let fwd_ws_out_tx = ws_out_tx.clone();
     let fwd_pane = pane_id.clone();
     let fwd = tokio::spawn(async move {
-        while let Some(data) = rx.recv().await {
-            let msg = serde_json::to_string(&ServerMsg::Output { data: &data })
-                .expect("serialization is infallible");
+        while let Some(event) = rx.recv().await {
+            let msg = match event {
+                SessionClientEvent::Output(data) => {
+                    serde_json::to_string(&ServerMsg::Output { data: &data })
+                }
+                SessionClientEvent::Resize { cols, rows } => {
+                    serde_json::to_string(&ServerMsg::Resize { cols, rows })
+                }
+            }
+            .expect("serialization is infallible");
             if fwd_ws_out_tx.send(Message::Text(msg)).is_err() {
                 info!("WS forwarder (open_api): send failed, exiting pane={}", fwd_pane);
                 break;
@@ -1003,7 +1030,7 @@ pub async fn handle_open_api_ws(socket: WebSocket, manager: Arc<SessionManager>,
                             let _ = pty_in_tx.send(data);
                         }
                         ClientMsg::Resize { cols, rows } => {
-                            session.resize_debounced(cols, rows);
+                            session.resize_debounced(client_id, cols, rows);
                         }
                     }
                 }
@@ -1019,6 +1046,7 @@ pub async fn handle_open_api_ws(socket: WebSocket, manager: Arc<SessionManager>,
     fwd.abort();
     writer_task.abort();
     ping_task.abort();
+    session.remove_client(client_id);
 }
 
 #[cfg(test)]

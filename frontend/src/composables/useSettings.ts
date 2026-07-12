@@ -30,6 +30,7 @@ export interface SettingsData {
   recent_urls: RecentEntry[]
   action_keyboard: ActionKeyboardConfig | null
   upload_dir: string
+  default_base_dir?: string | null
   upload_cap_mb: number
   upload_file_cap_mb: number
   upload_cap_count: number
@@ -117,6 +118,7 @@ export interface TextConfig {
   scroll_sensitivity: number
   scroll_acceleration: number
   scrollbar_width: number
+  custom_fonts?: string[] | null
 }
 
 export interface SshProfile {
@@ -216,6 +218,7 @@ export const settings = reactive<SettingsData>({
     scroll_sensitivity: 1,
     scroll_acceleration: 0,
     scrollbar_width: 8,
+    custom_fonts: null,
   },
   bookmarks: [],
   workspace_bookmarks: [],

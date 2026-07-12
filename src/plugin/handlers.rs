@@ -14,7 +14,10 @@ use std::time::{Duration, Instant};
 use tokio::process::Command;
 use tokio::sync::{Mutex as TokioMutex, RwLock};
 
-use crate::{platform::fs as platform_fs, session::SessionManager};
+use crate::{
+    platform::{fs as platform_fs, process::CommandNoWindowExt},
+    session::SessionManager,
+};
 
 use super::helpers::{
     copy_dir_all, extract_zip, find_plugin_root, is_safe_segment, plugin_err, set_executable,
@@ -146,6 +149,7 @@ pub async fn plugin_exec(
 
     let bin_path = pm.plugin_dir.join(&id).join(&bin.entry);
     let mut cmd = Command::new(&bin_path);
+    cmd.no_window();
     cmd.args(&body.args);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
@@ -214,12 +218,9 @@ pub async fn plugin_spawn_ws(
         use tokio::io::{AsyncBufReadExt, BufReader};
 
         let bin_path = plugin_dir.join(&bin.entry);
-        let mut child = match Command::new(&bin_path)
-            .args(&args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-        {
+        let mut cmd = Command::new(&bin_path);
+        cmd.no_window().args(&args).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
                 let _ = socket
@@ -747,6 +748,7 @@ pub async fn plugin_process_start(
 
     let bin_path = pm.plugin_dir.join(&id).join(&bin.entry);
     let mut cmd = Command::new(&bin_path);
+    cmd.no_window();
     cmd.args(&body.args);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
@@ -856,4 +858,57 @@ pub async fn plugin_process_stop_all(
 ) -> Response {
     pm.kill_plugin_processes(&id).await;
     StatusCode::NO_CONTENT.into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dev_link_plugin;
+    use crate::plugin::manager::PluginManager;
+    use crate::plugin::types::DevLinkRequest;
+    use axum::{extract::State, http::StatusCode, Json};
+    use dashmap::DashMap;
+    use std::path::Path;
+    use std::sync::Arc;
+
+    fn test_manager(root: &Path) -> Arc<PluginManager> {
+        Arc::new(PluginManager {
+            plugin_dir: root.join("plugins"),
+            data_dir: root.join("plugin-data"),
+            registry: DashMap::new(),
+            processes: DashMap::new(),
+        })
+    }
+
+    fn write_plugin_source(root: &Path, id: &str) -> std::path::PathBuf {
+        let src = root.join("src").join(id);
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(
+            src.join("plugin.json"),
+            format!(r#"{{"id":"{id}","name":"Test Plugin","version":"1.0.0"}}"#),
+        )
+        .unwrap();
+        src
+    }
+
+    // 验证 dev-link API 遇到真实目录冲突时不会删除原目录。
+    #[tokio::test]
+    async fn dev_link_plugin_conflicts_with_existing_real_directory_without_deleting_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = test_manager(tmp.path());
+        let src = write_plugin_source(tmp.path(), "real-dir-plugin");
+        let existing = manager.plugin_dir.join("real-dir-plugin");
+        std::fs::create_dir_all(&existing).unwrap();
+        std::fs::write(existing.join("sentinel.txt"), "do not delete").unwrap();
+
+        let response = dev_link_plugin(
+            State(Arc::clone(&manager)),
+            Json(DevLinkRequest { path: src.to_string_lossy().into_owned() }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert!(existing.join("sentinel.txt").is_file());
+        assert!(!existing.is_symlink());
+        assert!(!manager.registry.contains_key("real-dir-plugin"));
+    }
 }

@@ -1,0 +1,289 @@
+name: Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: Branch to package; manual runs only upload Actions artifacts.
+        type: choice
+        required: true
+        default: dev
+        options:
+          - dev
+          - main
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CI: true
+  TAURI_CLI_VERSION: 2.11.4
+
+jobs:
+  prepare:
+    name: Prepare package metadata
+    runs-on: ubuntu-latest
+    outputs:
+      checkout_ref: ${{ steps.meta.outputs.checkout_ref }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      should_build: ${{ steps.meta.outputs.should_build }}
+      should_release: ${{ steps.meta.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release mode
+        id: meta
+        shell: bash
+        env:
+          MANUAL_TARGET_BRANCH: ${{ inputs.target_branch || '' }}
+        run: |
+          set -euo pipefail
+
+          should_build=true
+          should_release=false
+          release_tag="${GITHUB_REF_NAME}"
+          checkout_ref="${GITHUB_REF}"
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            case "${MANUAL_TARGET_BRANCH}" in
+              dev|main)
+                release_tag="${MANUAL_TARGET_BRANCH}"
+                checkout_ref="${MANUAL_TARGET_BRANCH}"
+                ;;
+              *)
+                should_build=false
+                echo "::error::Unsupported manual package branch: ${MANUAL_TARGET_BRANCH}"
+                ;;
+            esac
+          elif [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == refs/tags/* ]]; then
+            release_tag="${GITHUB_REF_NAME}"
+            checkout_ref="refs/tags/${GITHUB_REF_NAME}"
+            git fetch --no-tags origin main:refs/remotes/origin/main
+            tag_commit="$(git rev-list -n 1 "refs/tags/${GITHUB_REF_NAME}")"
+
+            if git merge-base --is-ancestor "${tag_commit}" origin/main; then
+              should_release=true
+            else
+              should_build=false
+              echo "::notice::Tag ${GITHUB_REF_NAME} does not point to a commit on origin/main; skipping package and release."
+            fi
+          fi
+
+          {
+            echo "checkout_ref=${checkout_ref}"
+            echo "release_tag=${release_tag}"
+            echo "should_build=${should_build}"
+            echo "should_release=${should_release}"
+          } >> "${GITHUB_OUTPUT}"
+
+  package:
+    name: Package ${{ matrix.platform }}
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos
+            os: macos-latest
+            bundles: dmg
+          - platform: linux
+            os: ubuntu-22.04
+            bundles: deb,appimage
+          - platform: windows
+            os: windows-latest
+            bundles: nsis
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.checkout_ref }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux bundle dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            libfuse2 \
+            libgtk-3-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libssl-dev \
+            libsoup-3.0-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            librsvg2-dev \
+            patchelf \
+            wget
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Clean old bundle outputs
+        shell: pwsh
+        run: |
+          Remove-Item -LiteralPath target/release/bundle -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -LiteralPath target/debian -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -LiteralPath src-tauri/target/release/bundle -Recurse -Force -ErrorAction SilentlyContinue
+
+      - name: Build desktop packages
+        working-directory: src-tauri
+        run: pnpm dlx "@tauri-apps/cli@${{ env.TAURI_CLI_VERSION }}" build --bundles ${{ matrix.bundles }} --ci
+
+      - name: Install cargo-deb
+        if: matrix.platform == 'linux'
+        run: |
+          if ! command -v cargo-deb >/dev/null 2>&1; then
+            cargo install cargo-deb --locked
+          fi
+
+      - name: Build server deb package
+        if: matrix.platform == 'linux'
+        run: cargo deb --profile release --package dinotty-server
+
+      - name: Stage Windows portable executable
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $exe = @(
+            'target/release/dinotty-desktop.exe',
+            'src-tauri/target/release/dinotty-desktop.exe'
+          ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+
+          if (-not $exe) {
+            throw 'dinotty-desktop.exe not found'
+          }
+
+          $version = (Get-Content -Raw 'src-tauri/tauri.conf.json' | ConvertFrom-Json).version
+          $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
+            'AMD64' { 'x64' }
+            'ARM64' { 'arm64' }
+            'x86' { 'x86' }
+            default { $env:PROCESSOR_ARCHITECTURE.ToLowerInvariant() }
+          }
+          $portableName = 'Dinotty_{0}_{1}-portable.exe' -f $version, $arch
+
+          $portableDir = 'target/release/bundle/portable'
+          New-Item -ItemType Directory -Path $portableDir -Force | Out-Null
+          Copy-Item -LiteralPath $exe -Destination (Join-Path $portableDir $portableName) -Force
+
+      - name: Stage package artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $stage = 'dist/package-artifacts'
+          Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+
+          $roots = @(
+            'target/release/bundle',
+            'src-tauri/target/release/bundle'
+          ) | Where-Object { Test-Path -LiteralPath $_ }
+
+          $bundleDirs = @(
+            @{ Dir = 'appimage'; Filters = @('*.AppImage') },
+            @{ Dir = 'deb'; Filters = @('*.deb') },
+            @{ Dir = 'dmg'; Filters = @('*.dmg') },
+            @{ Dir = 'nsis'; Filters = @('*.exe') },
+            @{ Dir = 'msi'; Filters = @('*.msi') },
+            @{ Dir = 'portable'; Filters = @('*.exe') }
+          )
+
+          $copied = 0
+          foreach ($root in $roots) {
+            foreach ($bundleDir in $bundleDirs) {
+              $dir = Join-Path $root $bundleDir.Dir
+              if (-not (Test-Path -LiteralPath $dir)) {
+                continue
+              }
+              foreach ($filter in $bundleDir.Filters) {
+                Get-ChildItem -LiteralPath $dir -Filter $filter -File -ErrorAction SilentlyContinue |
+                  ForEach-Object {
+                    Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $stage $_.Name) -Force
+                    $copied++
+                  }
+              }
+            }
+          }
+
+          $serverDebDir = 'target/debian'
+          if (Test-Path -LiteralPath $serverDebDir) {
+            Get-ChildItem -LiteralPath $serverDebDir -Filter '*.deb' -File -ErrorAction SilentlyContinue |
+              ForEach-Object {
+                Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $stage $_.Name) -Force
+                $copied++
+              }
+          }
+
+          if ($copied -eq 0) {
+            throw 'No package artifacts were found to upload.'
+          }
+
+          Get-ChildItem -LiteralPath $stage -File | ForEach-Object {
+            Write-Host "Staged $($_.Name)"
+          }
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dinotty-${{ matrix.platform }}
+          path: dist/package-artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-release:
+    name: Publish GitHub release
+    needs:
+      - prepare
+      - package
+    if: needs.prepare.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dinotty-*
+          path: release-assets
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.release_tag }}
+          name: Dinotty ${{ needs.prepare.outputs.release_tag }}
+          generate_release_notes: true
+          files: release-assets/**/*
+          fail_on_unmatched_files: true

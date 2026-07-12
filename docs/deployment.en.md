@@ -23,6 +23,25 @@ systemctl restart dinotty
 sudo bash deploy/systemd/uninstall.sh
 ```
 
+## Linux deb Package (dinotty-server)
+
+The repository already includes `cargo-deb` metadata, so the server deb package can be built from the repository root:
+
+```bash
+cd frontend
+pnpm install --frozen-lockfile
+pnpm run build
+cd ..
+
+cargo install cargo-deb --locked
+cargo deb --profile release --package dinotty-server
+
+mkdir -p dist
+cp target/debian/dinotty-server_*.deb dist/
+```
+
+The package is written to `target/debian/`, and the copy command also places it in `dist/`. Installing the deb deploys `dinotty-server`, the systemd unit, and `/etc/dinotty/env.example`, then enables and starts `dinotty.service`.
+
 ## Windows Native Run
 
 Windows can run the native server directly. Build the frontend first, then build the release binary with Cargo:

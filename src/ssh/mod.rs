@@ -10,7 +10,7 @@ use crate::settings::SshAuthMethod;
 use crate::vt_screen::VirtualScreen;
 use russh::client;
 use russh::keys::{decode_secret_key, load_secret_key, PrivateKeyWithHashAlg, PublicKey};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, watch};
@@ -85,7 +85,7 @@ impl client::Handler for SshClientHandler {
 ///
 /// - 必须是绝对路径
 /// - 解析符号链接，防止路径穿越
-/// - 必须在 ~/.ssh/ 或 /etc/ssh/ 下
+/// - Unix 必须在 ~/.ssh/ 或 /etc/ssh/ 下，Windows 必须在 %USERPROFILE%\.ssh 下
 /// - 文件权限不能过于宽松（Unix: 0600/0400）
 fn validate_key_path(key_path: &str) -> Result<PathBuf, String> {
     let p = PathBuf::from(key_path);
@@ -96,16 +96,211 @@ fn validate_key_path(key_path: &str) -> Result<PathBuf, String> {
 
     let canonical = p.canonicalize().map_err(|e| format!("Cannot resolve key path: {e}"))?;
 
-    let home_ssh =
-        dirs::home_dir().map(|h| h.join(".ssh")).ok_or("Cannot determine home directory")?;
+    let home_ssh = ssh_home_dir()
+        .map(|h| h.join(".ssh"))
+        .ok_or("Cannot determine home directory")?
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve ~/.ssh: {e}"))?;
 
-    if !canonical.starts_with(&home_ssh) && !canonical.starts_with("/etc/ssh") {
-        return Err("Key file must be in ~/.ssh/ or /etc/ssh/".into());
+    if !is_allowed_key_path(&canonical, &home_ssh) {
+        return Err(allowed_key_path_error());
     }
 
     crate::platform::fs::validate_private_key_permissions(&canonical)?;
 
     Ok(canonical)
+}
+
+fn ssh_home_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        std::env::var_os("USERPROFILE")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .or_else(dirs::home_dir)
+    }
+    #[cfg(not(windows))]
+    {
+        dirs::home_dir()
+    }
+}
+
+fn is_allowed_key_path(canonical: &Path, home_ssh: &Path) -> bool {
+    if path_within_or_equal(canonical, home_ssh) {
+        return true;
+    }
+
+    #[cfg(unix)]
+    {
+        path_within_or_equal(canonical, Path::new("/etc/ssh"))
+    }
+
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
+fn allowed_key_path_error() -> String {
+    #[cfg(windows)]
+    {
+        "Key file must be in %USERPROFILE%\\.ssh\\".into()
+    }
+    #[cfg(unix)]
+    {
+        "Key file must be in ~/.ssh/ or /etc/ssh/".into()
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        "Key file must be in the user's .ssh directory".into()
+    }
+}
+
+fn path_within_or_equal(path: &Path, dir: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        let path = normalize_windows_path_for_compare(path);
+        let dir = normalize_windows_path_for_compare(dir);
+        let dir_with_sep = format!("{dir}\\");
+        path == dir || path.starts_with(&dir_with_sep)
+    }
+
+    #[cfg(not(windows))]
+    {
+        path == dir || path.starts_with(dir)
+    }
+}
+
+#[cfg(windows)]
+fn normalize_windows_path_for_compare(path: &Path) -> String {
+    let raw = path.to_string_lossy().replace('/', "\\");
+    let stripped = raw.strip_prefix(r"\\?\").unwrap_or(&raw);
+    stripped.trim_end_matches('\\').to_ascii_lowercase()
+}
+
+#[cfg(test)]
+mod key_path_tests {
+    use super::{is_allowed_key_path, validate_key_path};
+    use std::path::Path;
+
+    #[cfg(windows)]
+    fn with_temp_home<T>(f: impl FnOnce(&Path) -> T) -> T {
+        let _env = crate::test_support::EnvGuard::new(&["HOME", "USERPROFILE"]);
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        std::fs::create_dir_all(home.join(".ssh")).unwrap();
+        std::env::set_var("HOME", &home);
+        std::env::set_var("USERPROFILE", &home);
+        f(&home)
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn validate_key_path_allows_windows_home_ssh_key() {
+        with_temp_home(|home| {
+            let key = home.join(".ssh").join("id_ed25519");
+            std::fs::write(&key, "key").unwrap();
+
+            let resolved = validate_key_path(&key.to_string_lossy()).unwrap();
+
+            assert_eq!(resolved, key.canonicalize().unwrap());
+        });
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn validate_key_path_allows_windows_long_path_prefix() {
+        with_temp_home(|home| {
+            let key = home.join(".ssh").join("id_ed25519");
+            std::fs::write(&key, "key").unwrap();
+            let long_path = format!(r"\\?\{}", key.display());
+
+            let resolved = validate_key_path(&long_path).unwrap();
+
+            assert_eq!(resolved, key.canonicalize().unwrap());
+        });
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn allowed_key_path_accepts_windows_long_path_prefix() {
+        assert!(is_allowed_key_path(
+            Path::new(r"\\?\C:\Users\me\.ssh\id_ed25519"),
+            Path::new(r"C:\Users\me\.ssh"),
+        ));
+    }
+
+    // 验证 .ssh_evil 这类前缀相似目录不能绕过 .ssh 边界。
+    #[cfg(windows)]
+    #[test]
+    fn allowed_key_path_rejects_windows_ssh_prefix_sibling() {
+        assert!(!is_allowed_key_path(
+            Path::new(r"C:\Users\me\.ssh_evil\id_ed25519"),
+            Path::new(r"C:\Users\me\.ssh"),
+        ));
+    }
+
+    // 验证 Windows 路径比较兼容大小写差异和 /、\ 混用。
+    #[cfg(windows)]
+    #[test]
+    fn allowed_key_path_accepts_windows_case_and_separator_variants() {
+        assert!(is_allowed_key_path(
+            Path::new(r"C:/USERS/me/.SSH/id_ed25519"),
+            Path::new(r"c:\users\ME\.ssh"),
+        ));
+    }
+
+    // 验证带 \\?\ 前缀的相似目录仍不能绕过 .ssh 边界。
+    #[cfg(windows)]
+    #[test]
+    fn allowed_key_path_rejects_windows_long_path_prefix_sibling() {
+        assert!(!is_allowed_key_path(
+            Path::new(r"\\?\C:\Users\me\.ssh_evil\id_ed25519"),
+            Path::new(r"C:\Users\me\.ssh"),
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn validate_key_path_rejects_key_outside_home_ssh() {
+        with_temp_home(|home| {
+            let outside = home.parent().unwrap().join("outside_id_ed25519");
+            std::fs::write(&outside, "key").unwrap();
+
+            let err = validate_key_path(&outside.to_string_lossy()).unwrap_err();
+
+            assert!(err.contains("%USERPROFILE%"));
+        });
+    }
+
+    // 验证 Windows 下 USERPROFILE 优先于 HOME，HOME\.ssh 中的 key 不应放行。
+    #[cfg(windows)]
+    #[test]
+    fn validate_key_path_prefers_userprofile_over_home() {
+        let _env = crate::test_support::EnvGuard::new(&["HOME", "USERPROFILE"]);
+        let tmp = tempfile::tempdir().unwrap();
+        let userprofile = tmp.path().join("userprofile");
+        let home = tmp.path().join("home");
+        std::fs::create_dir_all(userprofile.join(".ssh")).unwrap();
+        std::fs::create_dir_all(home.join(".ssh")).unwrap();
+        std::env::set_var("USERPROFILE", &userprofile);
+        std::env::set_var("HOME", &home);
+        let home_key = home.join(".ssh").join("id_ed25519");
+        std::fs::write(&home_key, "key").unwrap();
+
+        let err = validate_key_path(&home_key.to_string_lossy()).unwrap_err();
+
+        assert!(err.contains("%USERPROFILE%"), "unexpected error: {err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn allowed_key_path_allows_etc_ssh_on_unix() {
+        assert!(is_allowed_key_path(
+            Path::new("/etc/ssh/ssh_host_ed25519_key"),
+            Path::new("/home/me/.ssh"),
+        ));
+    }
 }
 
 /// 创建 SSH 会话
@@ -303,7 +498,7 @@ pub async fn create_ssh_session(
     // Initial cwd: prefer the workspace-specified path, fall back to remote $HOME.
     let initial_cwd_path =
         params.initial_cwd.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()).map(PathBuf::from);
-    let effective_cwd = initial_cwd_path.unwrap_or(remote_home);
+    let effective_cwd = initial_cwd_path.unwrap_or_else(|| remote_home.clone());
 
     // 8. 构造 Session
     let (resize_tx, resize_rx) = watch::channel(None);
@@ -315,6 +510,8 @@ pub async fn create_ssh_session(
         ssh_params: Some(params.clone()),
         screen: std::sync::Mutex::new(VirtualScreen::new(80, 24)),
         clients: std::sync::Mutex::new(Vec::new()),
+        next_client_id: std::sync::atomic::AtomicU64::new(1),
+        tauri_client_id: std::sync::Mutex::new(None),
         input_tx: std::sync::Mutex::new(None),
         status: std::sync::Mutex::new(SessionStatus::Connected),
         size: std::sync::Mutex::new((80, 24)),
@@ -329,6 +526,8 @@ pub async fn create_ssh_session(
         ssh_cmd_tx: std::sync::Mutex::new(Some(ssh_cmd_tx)),
         ssh_handle: tokio::sync::Mutex::new(None),
         sftp_session: std::sync::Mutex::new(None),
+        remote_home: std::sync::Mutex::new(Some(remote_home.clone())),
+        remote_user: std::sync::Mutex::new(None),
         output_tx,
         output_rx: std::sync::Mutex::new(Some(output_rx)),
         pending_results: std::sync::Mutex::new(Vec::new()),
@@ -470,6 +669,8 @@ async fn ssh_reader_task(
                 match msg {
                     Some(russh::ChannelMsg::Data { data }) => {
                         let bytes = data.to_vec();
+                        // CWD sniffing (same as local PTY in pty.rs)
+                        session.on_pty_output(&bytes);
                         {
                             let mut screen =
                                 session.screen.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -541,7 +742,7 @@ async fn ssh_reader_task(
 /// the drag stops (no new values for 300ms) do we apply the final size.
 async fn resize_debounce_task(
     session: Arc<Session>,
-    mut resize_rx: watch::Receiver<Option<(u16, u16)>>,
+    mut resize_rx: watch::Receiver<Option<(u64, u16, u16)>>,
     pane_id: String,
 ) {
     loop {
@@ -549,14 +750,16 @@ async fn resize_debounce_task(
             break;
         }
         let size = *resize_rx.borrow();
-        if let Some((cols, rows)) = size {
+        if let Some((origin, cols, rows)) = size {
             tokio::time::sleep(Duration::from_millis(300)).await;
             let latest = *resize_rx.borrow();
-            if latest == Some((cols, rows)) {
+            if latest == Some((origin, cols, rows)) {
                 debug!("SSH resize debounce: applying {cols}x{rows}, pane={pane_id}");
-                if let Err(e) = session.resize_async(cols, rows).await {
-                    error!("SSH resize failed: {}, pane={}", e, pane_id);
-                }
+                let session = Arc::clone(&session);
+                let _ = tokio::task::spawn_blocking(move || {
+                    session.apply_and_broadcast_resize(origin, cols, rows);
+                })
+                .await;
             }
         }
     }
@@ -621,7 +824,7 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// Test: borrow() + conditional apply with 300ms debounce.
+    /// Test: `borrow()` + conditional apply with 300ms debounce.
     /// Simulates rapid frontend resize messages during a divider drag,
     /// then verifies only one resize is applied after the drag stops.
     #[tokio::test]
@@ -633,13 +836,13 @@ mod tests {
         let ac = Arc::clone(&apply_count);
         let la = Arc::clone(&last_applied);
 
-        // Same pattern as resize_debounce_task: borrow() + conditional apply
+        // Same pattern as resize_debounce_task: borrow_and_update() + conditional apply
         tokio::spawn(async move {
             loop {
                 if rx.changed().await.is_err() {
                     break;
                 }
-                let size = *rx.borrow();
+                let size = *rx.borrow_and_update();
                 if let Some((cols, rows)) = size {
                     tokio::time::sleep(Duration::from_millis(300)).await;
                     let latest = *rx.borrow();
@@ -687,7 +890,7 @@ mod tests {
                 if rx.changed().await.is_err() {
                     break;
                 }
-                let size = *rx.borrow();
+                let size = *rx.borrow_and_update();
                 if let Some((cols, rows)) = size {
                     tokio::time::sleep(Duration::from_millis(300)).await;
                     let latest = *rx.borrow();
@@ -699,16 +902,16 @@ mod tests {
             }
         });
 
-        // Simulate a3-second drag: resize every 25ms, cols from80 to200
-        let total_steps = (3000 / 25) as u16; //120 steps
+        // Simulate a 3-second drag: resize every 25ms, cols from 80 to 200.
+        let total_steps: u16 = 3000 / 25;
         for i in 0..total_steps {
             let cols = 80 + i;
             let _ = tx.send(Some((cols, 24)));
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
 
-        // Wait for debounce to settle
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // Wait for debounce to settle (300ms task sleep + buffer)
+        tokio::time::sleep(Duration::from_millis(800)).await;
 
         let count = apply_count.load(Ordering::SeqCst);
         let applied = applied_sizes.lock().unwrap().clone();
@@ -738,7 +941,7 @@ mod tests {
                 if rx.changed().await.is_err() {
                     break;
                 }
-                let size = *rx.borrow();
+                let size = *rx.borrow_and_update();
                 if let Some((cols, rows)) = size {
                     tokio::time::sleep(Duration::from_millis(300)).await;
                     let latest = *rx.borrow();
@@ -764,7 +967,7 @@ mod tests {
         println!("Return to original - apply count: {count}, final size: {final_size:?}");
 
         // tmux also applies twice for the "return to original" edge case
-        assert!(count >= 1 && count <= 2, "Expected 1-2 applies, got {count}");
+        assert!((1..=2).contains(&count), "Expected 1-2 applies, got {count}");
         assert_eq!(final_size, Some((100, 24)));
     }
 }

@@ -99,6 +99,7 @@ fn test_validate_path_rejects_whitespace_only() {
 }
 
 #[test]
+#[cfg(unix)]
 fn test_validate_path_rejects_sensitive_dirs() {
     for dir in &["/", "/etc", "/sys", "/proc", "/dev", "/bin", "/sbin", "/usr"] {
         let result = validate_workspace_path(dir);
@@ -112,14 +113,16 @@ fn test_validate_path_rejects_sensitive_dirs() {
 
 #[test]
 fn test_validate_path_rejects_nonexistent() {
-    let result = validate_workspace_path("/nonexistent/path/that/does/not/exist");
+    let missing = std::env::temp_dir().join("dinotty_nonexistent_path_that_does_not_exist");
+    let result = validate_workspace_path(&missing.to_string_lossy());
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("invalid path"));
 }
 
 #[test]
 fn test_validate_path_accepts_real_dir() {
-    let result = validate_workspace_path("/tmp");
+    let temp_dir = std::env::temp_dir();
+    let result = validate_workspace_path(&temp_dir.to_string_lossy());
     assert!(result.is_ok());
     // Should be canonicalized
     let canonical = result.unwrap();

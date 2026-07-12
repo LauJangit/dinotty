@@ -35,7 +35,7 @@
           </div>
         </div>
 
-        <CollapsibleSection :title="t('keybinding.group.pane')" level="section">
+        <CollapsibleSection :title="t('keybinding.group.pane')" level="section" default-open>
           <div
             v-for="def in paneDefs"
             :key="def.id"
@@ -57,7 +57,7 @@
           </div>
         </CollapsibleSection>
 
-        <CollapsibleSection :title="t('keybinding.group.nav')" level="section">
+        <CollapsibleSection :title="t('keybinding.group.nav')" level="section" default-open>
           <div
             v-for="def in navDefs"
             :key="def.id"
@@ -79,7 +79,7 @@
           </div>
         </CollapsibleSection>
 
-        <CollapsibleSection :title="t('keybinding.group.font')" level="section">
+        <CollapsibleSection :title="t('keybinding.group.font')" level="section" default-open>
           <div
             v-for="def in fontDefs"
             :key="def.id"
@@ -155,7 +155,7 @@
       </div>
     </div>
 
-    <CollapsibleSection :title="t('settings.actionKeyboard')" level="group">
+    <CollapsibleSection :title="t('settings.actionKeyboard')" level="group" default-open>
       <p class="settings-hint">{{ t('settings.akHint') }}</p>
       <div class="ak-wysiwyg">
         <div v-for="(row, ri) in actionRows" :key="ri" class="ak-wyg-row-outer">
@@ -294,7 +294,7 @@
       </div>
     </div>
 
-    <CollapsibleSection :title="t('settings.keyboard.openApi')" level="group">
+    <CollapsibleSection :title="t('settings.keyboard.openApi')" level="group" default-open>
       <p class="settings-hint">{{ t('settings.keyboard.openApiHint') }}</p>
       <div class="settings-row">
         <label>{{ t('settings.keyboard.openApiEnabled') }}</label>

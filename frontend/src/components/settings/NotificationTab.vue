@@ -94,7 +94,7 @@
       </div>
     </div>
 
-    <CollapsibleSection :title="t('notification.hooks')" level="group">
+    <CollapsibleSection :title="t('notification.hooks')" level="group" default-open>
       <p class="hook-hint">{{ t('notification.hookEnvHint') }}</p>
       <div v-for="(hook, idx) in cfg.hooks" :key="idx" class="hook-row">
         <label class="toggle toggle-sm">
@@ -124,7 +124,7 @@
       </button>
     </CollapsibleSection>
 
-    <CollapsibleSection :title="t('notification.test')" level="group">
+    <CollapsibleSection :title="t('notification.test')" level="group" default-open>
       <div class="api-test">
         <div class="api-method-row">
           <span class="method-badge">POST</span>

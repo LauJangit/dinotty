@@ -177,6 +177,8 @@ pub fn create_session(
         ssh_params: None,
         screen: std::sync::Mutex::new(VirtualScreen::new(80, 24)),
         clients: std::sync::Mutex::new(Vec::new()),
+        next_client_id: std::sync::atomic::AtomicU64::new(1),
+        tauri_client_id: std::sync::Mutex::new(None),
         input_tx: std::sync::Mutex::new(None),
         status: std::sync::Mutex::new(SessionStatus::Connected),
         size: std::sync::Mutex::new((80, 24)),
@@ -194,6 +196,8 @@ pub fn create_session(
         ssh_cmd_tx: std::sync::Mutex::new(None),
         ssh_handle: tokio::sync::Mutex::new(None),
         sftp_session: std::sync::Mutex::new(None),
+        remote_home: std::sync::Mutex::new(None),
+        remote_user: std::sync::Mutex::new(None),
         output_tx,
         output_rx: std::sync::Mutex::new(Some(output_rx)),
         pending_results: std::sync::Mutex::new(Vec::new()),
@@ -211,16 +215,19 @@ pub fn create_session(
                 if rx.changed().await.is_err() {
                     break;
                 }
+                let pending = *rx.borrow_and_update();
                 tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-                let size = *rx.borrow_and_update();
-                if let Some((cols, rows)) = size {
-                    if let Some(session) = session_weak.upgrade() {
-                        let _ = tokio::task::spawn_blocking(move || {
-                            let _ = session.resize(cols, rows);
-                        })
-                        .await;
-                    } else {
-                        break;
+                let latest = *rx.borrow();
+                if latest == pending {
+                    if let Some((origin, cols, rows)) = pending {
+                        if let Some(session) = session_weak.upgrade() {
+                            let _ = tokio::task::spawn_blocking(move || {
+                                session.apply_and_broadcast_resize(origin, cols, rows);
+                            })
+                            .await;
+                        } else {
+                            break;
+                        }
                     }
                 }
             }

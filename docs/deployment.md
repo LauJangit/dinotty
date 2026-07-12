@@ -23,6 +23,25 @@ systemctl restart dinotty
 sudo bash deploy/systemd/uninstall.sh
 ```
 
+## Linux deb 包（dinotty-server）
+
+仓库根目录已配置 `cargo-deb` 元数据，可直接构建服务端 deb 包：
+
+```bash
+cd frontend
+pnpm install --frozen-lockfile
+pnpm run build
+cd ..
+
+cargo install cargo-deb --locked
+cargo deb --profile release --package dinotty-server
+
+mkdir -p dist
+cp target/debian/dinotty-server_*.deb dist/
+```
+
+产物位于 `target/debian/`，复制后也会出现在 `dist/`。deb 安装后会部署 `dinotty-server`、systemd unit 和 `/etc/dinotty/env.example`，并启用/启动 `dinotty.service`。
+
 ## Windows 原生运行
 
 Windows 可以直接运行原生服务器。先构建前端，再用 Cargo 构建 release：
