@@ -437,6 +437,26 @@ fn toggle_window(window: tauri::Window) {
     }
 }
 
+fn reveal_webview_window(window: &tauri::WebviewWindow) {
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+}
+
+fn reveal_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        reveal_webview_window(&window);
+    }
+}
+
+fn toggle_webview_window(window: &tauri::WebviewWindow) {
+    if window.is_visible().unwrap_or(false) {
+        let _ = window.hide();
+    } else {
+        reveal_webview_window(window);
+    }
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::new(
@@ -465,6 +485,12 @@ fn main() {
     manager.start_cleanup_task();
 
     tauri::Builder::default()
+        // Keep one desktop instance so a second launch focuses the hidden/tray window instead
+        // of racing the first process for the same port and global shortcut.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            tracing::info!("Second Dinotty launch detected; focusing existing window");
+            reveal_main_window(app);
+        }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_clipboard::init())
@@ -481,12 +507,7 @@ fn main() {
                 Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::Backquote),
                 move |_app, _shortcut, event| {
                     if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-                        if win_clone.is_visible().unwrap_or(false) {
-                            let _ = win_clone.hide();
-                        } else {
-                            let _ = win_clone.show();
-                            let _ = win_clone.set_focus();
-                        }
+                        toggle_webview_window(&win_clone);
                     }
                 },
             )?;
@@ -500,13 +521,8 @@ fn main() {
                 .menu(&menu)
                 .on_menu_event(move |app, event| match event.id().as_ref() {
                     "show" => {
-                        if let Some(win) = app.get_webview_window("main") {
-                            if win.is_visible().unwrap_or(false) {
-                                let _ = win.hide();
-                            } else {
-                                let _ = win.show();
-                                let _ = win.set_focus();
-                            }
+                        if let Some(window) = app.get_webview_window("main") {
+                            toggle_webview_window(&window);
                         }
                     }
                     "quit" => {
@@ -522,13 +538,8 @@ fn main() {
                     } = event
                     {
                         let app = tray.app_handle();
-                        if let Some(win) = app.get_webview_window("main") {
-                            if win.is_visible().unwrap_or(false) {
-                                let _ = win.hide();
-                            } else {
-                                let _ = win.show();
-                                let _ = win.set_focus();
-                            }
+                        if let Some(window) = app.get_webview_window("main") {
+                            toggle_webview_window(&window);
                         }
                     }
                 })
