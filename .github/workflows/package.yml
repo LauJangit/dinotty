@@ -156,7 +156,6 @@ jobs:
           Remove-Item -LiteralPath src-tauri/target/release/bundle -Recurse -Force -ErrorAction SilentlyContinue
 
       - name: Build desktop packages
-        working-directory: src-tauri
         run: pnpm dlx "@tauri-apps/cli@${{ env.TAURI_CLI_VERSION }}" build --bundles ${{ matrix.bundles }} --ci
 
       - name: Install cargo-deb
