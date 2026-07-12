@@ -234,8 +234,8 @@ fn clamp_text_config_reports_whether_it_mutated() {
         ..TextConfig::default()
     };
     assert!(clamp_text_config(&mut changed));
-    assert_eq!(changed.scroll_sensitivity, 2.0);
-    assert_eq!(changed.scroll_acceleration, default_scroll_acceleration());
+    assert!((changed.scroll_sensitivity - 2.0).abs() < f32::EPSILON);
+    assert!((changed.scroll_acceleration - default_scroll_acceleration()).abs() < f32::EPSILON);
     assert_eq!(changed.scrollbar_width, 4);
     assert_eq!(changed.custom_fonts, Some(vec!["Monaco".into()]));
     assert!(!clamp_text_config(&mut changed));

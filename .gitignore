@@ -11,3 +11,4 @@ AGENTS.md
 .pnpm-store/
 .DS_Store
 ghostty-comparison-optimization.md
+.star-cache

@@ -179,7 +179,7 @@ xattr -cr /Applications/Dinotty.app
 **Linux one-liner install**:
 
 ```bash
-curl -LO https://github.com/xichan96/dinotty/releases/download/v0.16.2/dinotty-server_0.16.2-1_amd64.deb && sudo dpkg -i dinotty-server_0.16.2-1_amd64.deb
+VERSION=$(curl -s https://api.github.com/repos/xichan96/dinotty/releases/latest | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | sed 's/^v//') && curl -LO "https://github.com/xichan96/dinotty/releases/download/v${VERSION}/dinotty-server_${VERSION}-1_amd64.deb" && sudo dpkg -i "dinotty-server_${VERSION}-1_amd64.deb"
 ```
 
 **Linux startup**:
