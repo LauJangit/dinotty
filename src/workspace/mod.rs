@@ -46,7 +46,6 @@ pub struct PanePathQuery {
     pub pane_id: String,
     #[serde(default)]
     pub path: String,
-    pub cwd: Option<String>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -558,9 +557,9 @@ pub async fn workspace_resolve(
     State(manager): State<Arc<SessionManager>>,
     Query(q): Query<ResolveQuery>,
 ) -> impl IntoResponse {
-    if let Some(session) = ssh_session(&manager, &q.pane_id) {
-        return remote::remote_resolve(session, q.path).await;
-    }
+    // if let Some(session) = ssh_session(&manager, &q.pane_id) {
+    //     return remote::remote_resolve(session, q.path).await;
+    // }
     let root = try_res!(get_root(&manager, &q.pane_id));
     let joined = if Path::new(&q.path).is_absolute() {
         resolve_user_path(dirs::home_dir(), &q.path)
@@ -947,7 +946,6 @@ pub struct UploadQuery {
     pub pane_id: String,
     #[serde(default)]
     pub dir: String,
-    pub cwd: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -955,7 +953,6 @@ pub struct CreateEntryQuery {
     pub pane_id: String,
     #[serde(default)]
     pub parent: String,
-    pub cwd: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -976,7 +973,6 @@ pub async fn workspace_create_entry(
             q.parent.clone(),
             body.kind.clone(),
             body.name.clone(),
-            q.cwd.clone(),
         )
         .await;
     }
@@ -1184,7 +1180,7 @@ pub async fn workspace_upload(
     mut multipart: Multipart,
 ) -> Response {
     if let Some(session) = ssh_session(&manager, &q.pane_id) {
-        return remote::remote_upload(session, q.dir.clone(), multipart, q.cwd.clone()).await;
+        return remote::remote_upload(session, q.dir.clone(), multipart).await;
     }
     let root = try_res!(get_root(&manager, &q.pane_id));
     let dest_dir = try_res!(normalize_join(&root, &q.dir));

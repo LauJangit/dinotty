@@ -498,7 +498,7 @@ pub async fn create_ssh_session(
     // Initial cwd: prefer the workspace-specified path, fall back to remote $HOME.
     let initial_cwd_path =
         params.initial_cwd.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()).map(PathBuf::from);
-    let effective_cwd = initial_cwd_path.unwrap_or_else(|| remote_home.clone());
+    let effective_cwd = initial_cwd_path.unwrap_or(remote_home);
 
     // 8. 构造 Session
     let (resize_tx, resize_rx) = watch::channel(None);
@@ -526,8 +526,6 @@ pub async fn create_ssh_session(
         ssh_cmd_tx: std::sync::Mutex::new(Some(ssh_cmd_tx)),
         ssh_handle: tokio::sync::Mutex::new(None),
         sftp_session: std::sync::Mutex::new(None),
-        remote_home: std::sync::Mutex::new(Some(remote_home.clone())),
-        remote_user: std::sync::Mutex::new(None),
         output_tx,
         output_rx: std::sync::Mutex::new(Some(output_rx)),
         pending_results: std::sync::Mutex::new(Vec::new()),
@@ -669,8 +667,6 @@ async fn ssh_reader_task(
                 match msg {
                     Some(russh::ChannelMsg::Data { data }) => {
                         let bytes = data.to_vec();
-                        // CWD sniffing (same as local PTY in pty.rs)
-                        session.on_pty_output(&bytes);
                         {
                             let mut screen =
                                 session.screen.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -885,7 +881,7 @@ mod tests {
         let ac = Arc::clone(&apply_count);
         let sizes = Arc::clone(&applied_sizes);
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             loop {
                 if rx.changed().await.is_err() {
                     break;

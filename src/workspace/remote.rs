@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::session::Session;
-use crate::ssh::sftp::{clear_sftp_cache, get_or_create_sftp, ssh_exec};
+use crate::ssh::sftp::{clear_sftp_cache, get_or_create_sftp};
 use crate::workspace::{
     detect_language, json_err, media_kind, office_kind, skip_text_preview, DirEntry, ListResponse,
     MetaResponse, PanePathQuery, ResolveResponse, WorkspaceListQuery, MAX_DOWNLOAD,
@@ -35,164 +35,19 @@ fn sftp_err(e: impl std::fmt::Display) -> Response {
     json_err(StatusCode::BAD_GATEWAY, &format!("SFTP: {e}"))
 }
 
-/// Detect the current PTY user by running `whoami` via SSH exec.
-/// Caches the result in `session.remote_user`.
-async fn detect_remote_user(session: &Session) -> Option<String> {
-    // Check cache first
-    {
-        let cached = session.remote_user.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(ref user) = *cached {
-            return Some(user.clone());
-        }
+/// Validate that a remote path is under the given root.
+fn validate_remote_path(root: &str, path: &str) -> Result<(), Response> {
+    let norm_root = root.trim_end_matches('/');
+    let norm_path = path.trim_end_matches('/');
+    if norm_path != norm_root && !norm_path.starts_with(&format!("{norm_root}/")) {
+        return Err(json_err(StatusCode::FORBIDDEN, "outside workspace"));
     }
-    // Detect via whoami
-    let cwd = {
-        let state = session.cwd_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        state.cwd.to_string_lossy().into_owned()
-    };
-    let (code, stdout, _) = ssh_exec(session, "whoami", &cwd).await.ok()?;
-    if code != 0 {
-        return None;
-    }
-    let user = stdout.trim().to_string();
-    if user.is_empty() {
-        return None;
-    }
-    *session.remote_user.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
-        Some(user.clone());
-    Some(user)
+    Ok(())
 }
 
-/// Check if the PTY user is likely elevated (root) compared to the SSH auth user.
-/// Returns `true` if sudo fallback should be attempted.
-async fn should_use_sudo(session: &Session) -> bool {
-    let Some(pty_user) = detect_remote_user(session).await else { return false };
-    // If PTY user is root, the SFTP session (running as original SSH user)
-    // likely can't access the same directories
-    pty_user == "root"
-}
-
-/// List directory via SSH exec with sudo as fallback.
-/// Used when SFTP fails due to permission issues after user switch (e.g. `su root`).
-async fn list_via_ssh_exec(session: &Session, target: &str) -> Result<Vec<DirEntry>, Response> {
-    let cwd = {
-        let state = session.cwd_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        state.cwd.to_string_lossy().into_owned()
-    };
-    // Use `sudo ls -la` to get file types and names
-    let cmd = format!("sudo ls -la {}", shell_escape_path(target));
-    let (code, stdout, stderr) = ssh_exec(session, &cmd, &cwd)
-        .await
-        .map_err(|e| json_err(StatusCode::BAD_GATEWAY, &format!("SSH exec error: {e}")))?;
-    if code != 0 {
-        return Err(json_err(
-            StatusCode::FORBIDDEN,
-            &format!("Permission denied (sudo exit {code}): {}", stderr.trim()),
-        ));
-    }
-    let entries = parse_ls_la_entries(&stdout, target);
-    Ok(entries)
-}
-
-/// Parse `ls -la` output into `DirEntry` list with proper type detection.
-fn parse_ls_la_entries(output: &str, _target: &str) -> Vec<DirEntry> {
-    let mut entries = Vec::new();
-    for line in output.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        if let Some((name, is_dir, size)) = parse_ls_la_full(line) {
-            if name != "." && name != ".." {
-                entries.push(DirEntry { name, is_dir, size });
-            }
-        }
-    }
-    entries.sort_by_key(|e| (!e.is_dir, e.name.to_lowercase()));
-    entries
-}
-
-/// Parse a full `ls -la` line to extract name, type, and size.
-fn parse_ls_la_full(line: &str) -> Option<(String, bool, u64)> {
-    let parts: Vec<&str> = line.split_whitespace().collect();
-    if parts.len() < 9 {
-        return None;
-    }
-    let first = parts[0];
-    if first.is_empty() {
-        return None;
-    }
-    let ft_char = first.as_bytes()[0];
-    if !b"-dlcbps".contains(&ft_char) {
-        return None;
-    }
-    let is_dir = ft_char == b'd';
-    let size: u64 = parts[4].parse().unwrap_or(0);
-    let name = parts[8..].join(" ");
-    let name = name.split(" -> ").next().unwrap_or(&name).to_string();
-    Some((name, is_dir, size))
-}
-
-/// Read file via SSH exec with sudo. Returns the file content as bytes.
-async fn read_via_ssh_exec(session: &Session, target: &str) -> Result<Vec<u8>, Response> {
-    let cwd = {
-        let state = session.cwd_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        state.cwd.to_string_lossy().into_owned()
-    };
-    let cmd = format!("sudo cat {}", shell_escape_path(target));
-    let (code, stdout, stderr) = ssh_exec(session, &cmd, &cwd)
-        .await
-        .map_err(|e| json_err(StatusCode::BAD_GATEWAY, &format!("SSH exec error: {e}")))?;
-    if code != 0 {
-        return Err(json_err(
-            StatusCode::FORBIDDEN,
-            &format!("Permission denied (sudo exit {code}): {}", stderr.trim()),
-        ));
-    }
-    Ok(stdout.into_bytes())
-}
-
-/// Shell-escape a file path for safe use in SSH exec commands.
-fn shell_escape_path(path: &str) -> String {
-    format!("'{}'", path.replace('\'', "'\\''"))
-}
-
-/// Check if an SFTP error message indicates a permission denied error.
-fn is_permission_error(msg: &str) -> bool {
-    let lower = msg.to_lowercase();
-    lower.contains("permission denied")
-        || lower.contains("access denied")
-        || lower.contains("eperm")
-        || lower.contains("eacces")
-}
-
-/// Resolve a relative path for SSH file browsing. SSH sessions have full shell
-/// access, so the default tree root is `/` (not `cwd_state.cwd`).
-///
-/// - Empty path → `/`  (tree root is the filesystem root)
-/// - Absolute path → as-is
-/// - `~` / `~/…` → remote home expansion
-/// - Relative path → joined against `cwd` (falls back to `/`)
-fn resolve_remote_rel(session: &Session, rel: &str, cwd: Option<&str>) -> String {
-    let rel = rel.trim();
-    if rel.is_empty() {
-        return "/".to_string();
-    }
-    if rel.starts_with('/') {
-        return rel.to_string();
-    }
-    if let Some(rest) = rel.strip_prefix("~/") {
-        let home = session.remote_home.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let home_str =
-            home.as_ref().map_or_else(|| "/".to_string(), |h| h.to_string_lossy().into_owned());
-        return format!("{home_str}/{rest}");
-    }
-    if rel == "~" {
-        let home = session.remote_home.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        return home.as_ref().map_or_else(|| "/".to_string(), |h| h.to_string_lossy().into_owned());
-    }
-    let base = cwd.unwrap_or("/");
-    normalize_remote_join(base, rel)
+fn path_after_root(root: &str, full: &str) -> String {
+    let norm_root = root.trim_end_matches('/');
+    full.strip_prefix(norm_root).unwrap_or(full).trim_start_matches('/').to_string()
 }
 
 // ── list ──────────────────────────────────────────────────────────────────
@@ -202,72 +57,36 @@ pub async fn remote_list(session: Arc<Session>, q: WorkspaceListQuery) -> Respon
         Ok(s) => s,
         Err(e) => return e,
     };
-    // SSH sessions have full shell access — no jail needed.
-    // The frontend tree always sends `path` relative to the initial SSH root `/`,
-    // regardless of the current browsing directory. The `root` parameter is
-    // informational only (tracks cwdLabel) and must NOT be used for path joining.
-    let target = if q.free {
-        let path = q.path.trim();
-        if path.is_empty() || !path.starts_with('/') {
-            return json_err(StatusCode::BAD_REQUEST, "path must be absolute");
-        }
-        path.to_string()
+    let root = if q.root.as_deref() == Some("/") {
+        "/".to_string()
     } else {
-        resolve_remote_rel(&session, &q.path, None)
+        let state = session.cwd_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.cwd.to_string_lossy().into_owned()
     };
-    // Try SFTP first; fall back to SSH exec with sudo on permission errors
-    // (e.g. after `su root` in the PTY, SFTP still runs as original user).
+    let target = normalize_remote_join(&root, &q.path);
     let target = match sftp.canonicalize(&target).await {
         Ok(p) => p,
-        Err(e) => {
-            let emsg = format!("{e}");
-            if is_permission_error(&emsg) && should_use_sudo(&session).await {
-                // Use raw target path since canonicalize failed
-                target
-            } else {
-                return sftp_err(e);
-            }
-        }
+        Err(e) => return sftp_err(e),
     };
-    match sftp.read_dir(&target).await {
-        Ok(rd) => {
-            let mut list: Vec<DirEntry> = rd
-                .filter(|e| e.file_name() != "." && e.file_name() != "..")
-                .map(|e| {
-                    let ft = e.file_type();
-                    let meta = e.metadata();
-                    DirEntry {
-                        name: e.file_name(),
-                        is_dir: ft.is_dir(),
-                        size: meta.size.unwrap_or(0),
-                    }
-                })
-                .collect();
-            list.sort_by_key(|e| (!e.is_dir, e.name.to_lowercase()));
-            Json(ListResponse { cwd: target.clone(), path: String::new(), entries: list })
-                .into_response()
-        }
-        Err(e) => {
-            let emsg = format!("{e}");
-            if is_permission_error(&emsg) && should_use_sudo(&session).await {
-                // Fallback: list via SSH exec with sudo
-                match list_via_ssh_exec(&session, &target).await {
-                    Ok(mut list) => {
-                        list.sort_by_key(|e| (!e.is_dir, e.name.to_lowercase()));
-                        Json(ListResponse {
-                            cwd: target.clone(),
-                            path: String::new(),
-                            entries: list,
-                        })
-                        .into_response()
-                    }
-                    Err(resp) => resp,
-                }
-            } else {
-                sftp_err(e)
-            }
-        }
+    if let Err(e) = validate_remote_path(&root, &target) {
+        return e;
     }
+    let entries = match sftp.read_dir(&target).await {
+        Ok(rd) => rd,
+        Err(e) => return sftp_err(e),
+    };
+    let mut list: Vec<DirEntry> = entries
+        .filter(|e| e.file_name() != "." && e.file_name() != "..")
+        .map(|e| {
+            let ft = e.file_type();
+            let meta = e.metadata();
+            DirEntry { name: e.file_name(), is_dir: ft.is_dir(), size: meta.size.unwrap_or(0) }
+        })
+        .collect();
+    list.sort_by_key(|e| (!e.is_dir, e.name.to_lowercase()));
+    let cwd_display = root;
+    let path_display = q.path.trim().trim_start_matches('/').to_string();
+    Json(ListResponse { cwd: cwd_display, path: path_display, entries: list }).into_response()
 }
 
 // ── meta ──────────────────────────────────────────────────────────────────
@@ -277,36 +96,27 @@ pub async fn remote_meta(session: Arc<Session>, q: PanePathQuery) -> Response {
         Ok(s) => s,
         Err(e) => return e,
     };
-    let target = resolve_remote_rel(&session, &q.path, q.cwd.as_deref());
-    // Try SFTP; fall back to SSH exec on permission errors
+    let root = {
+        let state = session.cwd_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.cwd.to_string_lossy().into_owned()
+    };
+    let target = normalize_remote_join(&root, &q.path);
     let target = match sftp.canonicalize(&target).await {
         Ok(p) => p,
-        Err(e) => {
-            let emsg = format!("{e}");
-            if is_permission_error(&emsg) && should_use_sudo(&session).await {
-                target
-            } else {
-                return sftp_err(e);
-            }
-        }
+        Err(e) => return sftp_err(e),
     };
-    // Try SFTP metadata; fall back to sudo stat/cat
-    let (file_size, is_file) = match sftp.metadata(&target).await {
-        Ok(m) => (m.size.unwrap_or(0), m.file_type().is_file()),
-        Err(e) => {
-            let emsg = format!("{e}");
-            if is_permission_error(&emsg) && should_use_sudo(&session).await {
-                // Assume it's a file for meta purposes; we'll verify when reading
-                (0, true)
-            } else {
-                return sftp_err(e);
-            }
-        }
+    if let Err(e) = validate_remote_path(&root, &target) {
+        return e;
+    }
+    let meta = match sftp.metadata(&target).await {
+        Ok(m) => m,
+        Err(e) => return sftp_err(e),
     };
-    if !is_file {
+    if !meta.file_type().is_file() {
         return json_err(StatusCode::BAD_REQUEST, "not a file");
     }
-    if file_size > MAX_DOWNLOAD {
+    let size = meta.size.unwrap_or(0);
+    if size > MAX_DOWNLOAD {
         return json_err(StatusCode::BAD_REQUEST, "file too large");
     }
     if let Some((kind, mime)) = media_kind(Path::new(&target)) {
@@ -321,17 +131,7 @@ pub async fn remote_meta(session: Arc<Session>, q: PanePathQuery) -> Response {
     // Read file content for text preview
     let bytes = match sftp.read(&target).await {
         Ok(b) => b,
-        Err(e) => {
-            let emsg = format!("{e}");
-            if is_permission_error(&emsg) && should_use_sudo(&session).await {
-                match read_via_ssh_exec(&session, &target).await {
-                    Ok(b) => b,
-                    Err(resp) => return resp,
-                }
-            } else {
-                return sftp_err(e);
-            }
-        }
+        Err(e) => return sftp_err(e),
     };
     let truncated = bytes.len() > MAX_TEXT_PREVIEW;
     let slice = if truncated { &bytes[..MAX_TEXT_PREVIEW] } else { &bytes[..] };
@@ -365,64 +165,37 @@ pub async fn remote_raw(session: Arc<Session>, q: PanePathQuery) -> Response {
         Ok(s) => s,
         Err(e) => return e,
     };
-    let target = resolve_remote_rel(&session, &q.path, q.cwd.as_deref());
+    let root = {
+        let state = session.cwd_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.cwd.to_string_lossy().into_owned()
+    };
+    let target = normalize_remote_join(&root, &q.path);
     let target = match sftp.canonicalize(&target).await {
         Ok(p) => p,
-        Err(e) => {
-            let emsg = format!("{e}");
-            if is_permission_error(&emsg) && should_use_sudo(&session).await {
-                target
-            } else {
-                return sftp_err(e);
-            }
-        }
+        Err(e) => return sftp_err(e),
     };
-    // Check metadata for file type and size (skip on permission error — will try sudo)
-    let mut use_sudo_fallback = false;
-    match sftp.metadata(&target).await {
-        Ok(m) => {
-            if !m.file_type().is_file() {
-                return json_err(StatusCode::BAD_REQUEST, "not a file");
-            }
-            let size = m.size.unwrap_or(0);
-            if size > MAX_DOWNLOAD {
-                return json_err(StatusCode::BAD_REQUEST, "file too large");
-            }
-        }
-        Err(e) => {
-            let emsg = format!("{e}");
-            if is_permission_error(&emsg) && should_use_sudo(&session).await {
-                use_sudo_fallback = true;
-            } else {
-                return sftp_err(e);
-            }
-        }
+    if let Err(e) = validate_remote_path(&root, &target) {
+        return e;
+    }
+    let meta = match sftp.metadata(&target).await {
+        Ok(m) => m,
+        Err(e) => return sftp_err(e),
+    };
+    if !meta.file_type().is_file() {
+        return json_err(StatusCode::BAD_REQUEST, "not a file");
+    }
+    let size = meta.size.unwrap_or(0);
+    if size > MAX_DOWNLOAD {
+        return json_err(StatusCode::BAD_REQUEST, "file too large");
     }
     let mime = media_kind(Path::new(&target)).map_or_else(
         || mime_guess::from_path(&target).first_or_octet_stream().to_string(),
         |(_, m)| m.to_string(),
     );
     // Read full file and stream it
-    let bytes = if use_sudo_fallback {
-        match read_via_ssh_exec(&session, &target).await {
-            Ok(b) => b,
-            Err(resp) => return resp,
-        }
-    } else {
-        match sftp.read(&target).await {
-            Ok(b) => b,
-            Err(e) => {
-                let emsg = format!("{e}");
-                if is_permission_error(&emsg) && should_use_sudo(&session).await {
-                    match read_via_ssh_exec(&session, &target).await {
-                        Ok(b) => b,
-                        Err(resp) => return resp,
-                    }
-                } else {
-                    return sftp_err(e);
-                }
-            }
-        }
+    let bytes = match sftp.read(&target).await {
+        Ok(b) => b,
+        Err(e) => return sftp_err(e),
     };
     let len = bytes.len();
     let mut headers = HeaderMap::new();
@@ -449,7 +222,11 @@ pub async fn remote_put_file(session: Arc<Session>, q: PanePathQuery, content: S
         Ok(s) => s,
         Err(e) => return e,
     };
-    let target = resolve_remote_rel(&session, &q.path, q.cwd.as_deref());
+    let root = {
+        let state = session.cwd_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.cwd.to_string_lossy().into_owned()
+    };
+    let target = normalize_remote_join(&root, &q.path);
     // Ensure parent exists by checking canonicalize
     let parent = Path::new(&target)
         .parent()
@@ -471,17 +248,23 @@ pub async fn remote_create_entry(
     parent: String,
     kind: String,
     name: String,
-    cwd: Option<String>,
 ) -> Response {
     let sftp = match sftp(&session).await {
         Ok(s) => s,
         Err(e) => return e,
     };
-    let parent_path = resolve_remote_rel(&session, &parent, cwd.as_deref());
+    let root = {
+        let state = session.cwd_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.cwd.to_string_lossy().into_owned()
+    };
+    let parent_path = normalize_remote_join(&root, &parent);
     let parent_canon = match sftp.canonicalize(&parent_path).await {
         Ok(p) => p,
         Err(e) => return sftp_err(e),
     };
+    if let Err(e) = validate_remote_path(&root, &parent_canon) {
+        return e;
+    }
     let dest = format!("{}/{}", parent_canon.trim_end_matches('/'), name);
     // Check if already exists
     match sftp.try_exists(&dest).await {
@@ -505,7 +288,7 @@ pub async fn remote_create_entry(
             Err(e) => return sftp_err(e),
         }
     }
-    let rel = dest.trim_start_matches('/');
+    let rel = path_after_root(&root, &dest);
     Json(serde_json::json!({ "rel": rel })).into_response()
 }
 
@@ -516,14 +299,25 @@ pub async fn remote_delete(session: Arc<Session>, q: PanePathQuery) -> Response 
         Ok(s) => s,
         Err(e) => return e,
     };
-    let target = resolve_remote_rel(&session, &q.path, q.cwd.as_deref());
+    let root = {
+        let state = session.cwd_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.cwd.to_string_lossy().into_owned()
+    };
+    let target = normalize_remote_join(&root, &q.path);
     let target = match sftp.canonicalize(&target).await {
         Ok(p) => p,
         Err(e) => return sftp_err(e),
     };
-    // Prevent deleting root
-    if target.trim_end_matches('/') == "/" {
-        return json_err(StatusCode::BAD_REQUEST, "cannot delete root");
+    if let Err(e) = validate_remote_path(&root, &target) {
+        return e;
+    }
+    // Prevent deleting workspace root
+    let root_canon = match sftp.canonicalize(&root).await {
+        Ok(r) => r,
+        Err(e) => return sftp_err(e),
+    };
+    if target.trim_end_matches('/') == root_canon.trim_end_matches('/') {
+        return json_err(StatusCode::BAD_REQUEST, "cannot delete workspace root");
     }
     let meta = match sftp.metadata(&target).await {
         Ok(m) => m,
@@ -569,11 +363,18 @@ pub async fn remote_rename(session: Arc<Session>, q: PanePathQuery, new_name: St
         Ok(s) => s,
         Err(e) => return e,
     };
-    let target = resolve_remote_rel(&session, &q.path, q.cwd.as_deref());
+    let root = {
+        let state = session.cwd_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.cwd.to_string_lossy().into_owned()
+    };
+    let target = normalize_remote_join(&root, &q.path);
     let target = match sftp.canonicalize(&target).await {
         Ok(p) => p,
         Err(e) => return sftp_err(e),
     };
+    if let Err(e) = validate_remote_path(&root, &target) {
+        return e;
+    }
     let parent = Path::new(&target)
         .parent()
         .map_or_else(|| "/".to_string(), |p| p.to_string_lossy().into_owned());
@@ -587,7 +388,7 @@ pub async fn remote_rename(session: Arc<Session>, q: PanePathQuery, new_name: St
     if let Err(e) = sftp.rename(&target, &dest).await {
         return sftp_err(e);
     }
-    let rel = dest.trim_start_matches('/');
+    let rel = path_after_root(&root, &dest);
     Json(serde_json::json!({ "ok": true, "rel": rel })).into_response()
 }
 
@@ -598,16 +399,26 @@ pub async fn remote_move(session: Arc<Session>, q: PanePathQuery, dest_dir: Stri
         Ok(s) => s,
         Err(e) => return e,
     };
-    let source = resolve_remote_rel(&session, &q.path, q.cwd.as_deref());
+    let root = {
+        let state = session.cwd_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.cwd.to_string_lossy().into_owned()
+    };
+    let source = normalize_remote_join(&root, &q.path);
     let source = match sftp.canonicalize(&source).await {
         Ok(p) => p,
         Err(e) => return sftp_err(e),
     };
-    let dest_path = resolve_remote_rel(&session, &dest_dir, q.cwd.as_deref());
+    if let Err(e) = validate_remote_path(&root, &source) {
+        return e;
+    }
+    let dest_path = normalize_remote_join(&root, &dest_dir);
     let dest_canon = match sftp.canonicalize(&dest_path).await {
         Ok(p) => p,
         Err(e) => return sftp_err(e),
     };
+    if let Err(e) = validate_remote_path(&root, &dest_canon) {
+        return e;
+    }
     let file_name = Path::new(&source)
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -621,23 +432,45 @@ pub async fn remote_move(session: Arc<Session>, q: PanePathQuery, dest_dir: Stri
     if let Err(e) = sftp.rename(&source, &dest).await {
         return sftp_err(e);
     }
-    let rel = dest.trim_start_matches('/');
+    let rel = path_after_root(&root, &dest);
     Json(serde_json::json!({ "ok": true, "rel": rel })).into_response()
 }
 
 // ── resolve ───────────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 pub async fn remote_resolve(session: Arc<Session>, path: String) -> Response {
     let sftp = match sftp(&session).await {
         Ok(s) => s,
         Err(e) => return e,
     };
-    let target = resolve_remote_rel(&session, &path, None);
+    let root = {
+        let state = session.cwd_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.cwd.to_string_lossy().into_owned()
+    };
+    let target = if path.starts_with('/') || path.starts_with('~') {
+        let expanded = if let Some(rest) = path.strip_prefix("~/") {
+            // Get remote home via canonicalize("~") won't work, use ssh_exec
+            format!("/home/{}", session.ssh_params.as_ref().map_or("root", |p| &p.username))
+                + "/"
+                + rest
+        } else if path == "~" {
+            format!("/home/{}", session.ssh_params.as_ref().map_or("root", |p| &p.username))
+        } else {
+            path.clone()
+        };
+        expanded
+    } else {
+        normalize_remote_join(&root, &path)
+    };
     let canon = match sftp.canonicalize(&target).await {
         Ok(p) => p,
         Err(e) => return sftp_err(e),
     };
-    let rel = canon.trim_start_matches('/').to_string();
+    if let Err(e) = validate_remote_path(&root, &canon) {
+        return e;
+    }
+    let rel = path_after_root(&root, &canon);
     Json(ResolveResponse { rel }).into_response()
 }
 
@@ -647,17 +480,23 @@ pub async fn remote_upload(
     session: Arc<Session>,
     dir: String,
     mut multipart: Multipart,
-    cwd: Option<String>,
 ) -> Response {
     let sftp = match sftp(&session).await {
         Ok(s) => s,
         Err(e) => return e,
     };
-    let dest_dir = resolve_remote_rel(&session, &dir, cwd.as_deref());
+    let root = {
+        let state = session.cwd_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.cwd.to_string_lossy().into_owned()
+    };
+    let dest_dir = normalize_remote_join(&root, &dir);
     let dest_dir = match sftp.canonicalize(&dest_dir).await {
         Ok(p) => p,
         Err(e) => return sftp_err(e),
     };
+    if let Err(e) = validate_remote_path(&root, &dest_dir) {
+        return e;
+    }
     let mut saved: Vec<String> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
     let mut pending_rel_path: Option<String> = None;
@@ -720,8 +559,9 @@ pub async fn remote_upload(
         }
         match sftp.write(&path, &data).await {
             Ok(()) => {
-                let rel = path.trim_start_matches('/');
-                saved.push(rel.to_string());
+                if let Some(rel) = path_after_root_checked(&root, &path) {
+                    saved.push(rel);
+                }
             }
             Err(e) => errors.push(format!("write {base}: {e}")),
         }
@@ -746,4 +586,20 @@ fn normalize_remote_join(root: &str, rel: &str) -> String {
         out.push_str(seg);
     }
     out
+}
+
+fn path_after_root_checked(root: &str, full: &str) -> Option<String> {
+    let norm_root = root.trim_end_matches('/');
+    let norm_full = full.trim_end_matches('/');
+    if norm_full.starts_with(norm_root) {
+        Some(
+            norm_full
+                .strip_prefix(norm_root)
+                .unwrap_or(norm_full)
+                .trim_start_matches('/')
+                .to_string(),
+        )
+    } else {
+        None
+    }
 }

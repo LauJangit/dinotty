@@ -111,7 +111,7 @@
             @toggle-broadcast="splitPane.toggleBroadcast()"
             @new-local-terminal="splitPane.splitPane('horizontal', true, activeWorkspacePath ?? undefined)"
             @reorder="
-              (src: string, tgt: string, pos: DropPosition) =>
+              (src: string, tgt: string, pos: 'left' | 'right' | 'top' | 'bottom') =>
                 splitPane.reorderPane(src, tgt, pos)
             "
             @divider-drag-end="onDividerDragEnd(tab)"
@@ -247,7 +247,7 @@ import ServerList from './components/ServerList.vue'
 import SshHostsPanel from './components/ssh/SshHostsPanel.vue'
 import SshAuthPromptDialog from './components/ssh/SshAuthPromptDialog.vue'
 import StatusBar from './components/terminal/StatusBar.vue'
-import type { Tab, TerminalTab, PluginTab, PaneLayout, DropPosition } from './types/pane'
+import type { Tab, TerminalTab, PluginTab, PaneLayout } from './types/pane'
 import { getAllLeaves, findLeaf, findFirstLeaf, ensureSplitRoot } from './types/pane'
 import { initializePaneMru } from './types/paneMru'
 // useSettings replaced by useSettingsStore
@@ -257,7 +257,6 @@ import {
   fetchAutoToken,
   validateToken,
   apiUrl,
-  markCookieAuthenticated,
 } from './composables/apiBase'
 import { isTauri, tauriInvoke } from './composables/useTransport'
 import { isTouchDevice, setActivePaneId } from './composables/useTerminal'
@@ -955,7 +954,6 @@ function getSendFn(): ((data: string) => void) | null {
 }
 
 async function onLoginSuccess() {
-  markCookieAuthenticated()
   ui.setAuthenticated(true)
   await getApiBase()
   await settingsStore.load()

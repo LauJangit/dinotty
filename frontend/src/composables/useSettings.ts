@@ -118,7 +118,6 @@ export interface TextConfig {
   scroll_sensitivity: number
   scroll_acceleration: number
   scrollbar_width: number
-  custom_fonts?: string[] | null
 }
 
 export interface SshProfile {
@@ -218,7 +217,6 @@ export const settings = reactive<SettingsData>({
     scroll_sensitivity: 1,
     scroll_acceleration: 0,
     scrollbar_width: 8,
-    custom_fonts: null,
   },
   bookmarks: [],
   workspace_bookmarks: [],
