@@ -10,5 +10,6 @@ AGENTS.md
 *.tsbuildinfo
 .pnpm-store/
 .DS_Store
+src-tauri/gen/schemas/*.json
 ghostty-comparison-optimization.md
 .star-cache

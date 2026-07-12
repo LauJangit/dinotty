@@ -109,6 +109,7 @@ pub async fn broadcast_task(session: Arc<Session>, pane_id: String, manager: Arc
 pub fn create_session(
     manager: &Arc<SessionManager>,
     pane_id: &str,
+    tab_id: Option<&str>,
     tauri_on_exit: Option<Arc<dyn Fn(String) + Send + Sync>>,
     cwd: Option<PathBuf>,
 ) -> Result<(Arc<Session>, String), String> {
@@ -124,6 +125,10 @@ pub fn create_session(
         cmd.arg(arg);
     }
     cmd.env("TERM", "xterm-256color");
+    cmd.env("DINOTTY_PANE_ID", pane_id);
+    if let Some(tid) = tab_id {
+        cmd.env("DINOTTY_TAB_ID", tid);
+    }
     configure_utf8_locale(&mut cmd);
 
     let home_path = shell::home_dir();

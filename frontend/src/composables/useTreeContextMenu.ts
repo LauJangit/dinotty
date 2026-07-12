@@ -1,5 +1,6 @@
 import { ref, computed, type Ref } from 'vue'
 import { copyToClipboard } from '../utils/clipboard'
+import { uiConfirm } from './useConfirm'
 import type { DirEntry } from '../components/workspace/TreeRows'
 
 interface Meta {
@@ -67,14 +68,17 @@ export function useTreeContextMenu(opts: {
     contextMenu.value = null
   }
 
-  function shouldBlockNavigate(): boolean {
+  async function shouldBlockNavigate(): Promise<boolean> {
     if (
       !opts.editorDirty.value ||
       !opts.meta.value ||
       (opts.meta.value.kind !== 'text' && opts.meta.value.kind !== 'markdown')
     )
       return false
-    return !confirm(opts.t('filePreview.discardChanges'))
+    return !(await uiConfirm(opts.t('filePreview.discardChanges'), {
+      confirmText: opts.t('filePreview.discardChanges'),
+      cancelText: opts.t('filePreview.cancel'),
+    }))
   }
 
   function onTreeContextMenu(payload: { ev: MouseEvent; rel: string; isDir: boolean }) {
@@ -96,22 +100,22 @@ export function useTreeContextMenu(opts: {
     contextMenu.value = { x: pos.clientX, y: pos.clientY, rel, isDir }
   }
 
-  function ctxNewFile() {
+  async function ctxNewFile() {
     if (!contextMenu.value) return
     const { rel, isDir } = contextMenu.value
     closeContextMenu()
-    if (shouldBlockNavigate()) return
+    if (await shouldBlockNavigate()) return
     const parentRel = isDir ? rel : opts.parentRelPath(rel)
     opts.inlineCreate.value = { parentRel, kind: 'file' }
     opts.expanded.value = new Set([...opts.expanded.value, parentRel])
     void opts.ensureChildren(parentRel)
   }
 
-  function ctxNewFolder() {
+  async function ctxNewFolder() {
     if (!contextMenu.value) return
     const { rel, isDir } = contextMenu.value
     closeContextMenu()
-    if (shouldBlockNavigate()) return
+    if (await shouldBlockNavigate()) return
     const parentRel = isDir ? rel : opts.parentRelPath(rel)
     opts.inlineCreate.value = { parentRel, kind: 'dir' }
     opts.expanded.value = new Set([...opts.expanded.value, parentRel])

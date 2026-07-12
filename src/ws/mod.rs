@@ -674,13 +674,14 @@ async fn handle_socket(
     }
 
     info!("No existing session found for pane={}, creating new PTY session", pane_id);
-    let (session, shell_type) = match crate::pty::create_session(&manager, &pane_id, None, None) {
-        Ok(x) => x,
-        Err(e) => {
-            error!("{}", e);
-            return;
-        }
-    };
+    let (session, shell_type) =
+        match crate::pty::create_session(&manager, &pane_id, None, None, None) {
+            Ok(x) => x,
+            Err(e) => {
+                error!("{}", e);
+                return;
+            }
+        };
 
     let (client_id, mut rx) = session.add_client();
 

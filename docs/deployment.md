@@ -1,13 +1,33 @@
 # 部署指南
 
-## Linux (systemd) 一键部署
+## 推荐发布流程（CI/CD）
+
+发布和部署优先使用仓库里的 `Package` workflow（`.github/workflows/package.yml`），不要手动在本机跑构建脚本作为正式产物来源。
+
+- 手动打包：进入 GitHub Actions → `Package` → `Run workflow`，选择 `dev` 或 `main`；手动运行只上传 Actions artifacts。
+- 正式发布：在 `main` 上推送 `v*` tag；CI 会构建包并发布到 GitHub Release。
+- CI 产物：`dinotty-macos` 包含 `.dmg`，`dinotty-linux` 包含桌面 `.deb` / `.AppImage` 和服务端 `dinotty-server_*.deb`，`dinotty-windows` 包含 NSIS 安装包和 portable `.exe`。
+- 产物暂存：CI 会把包复制到 `dist/package-artifacts/` 后上传，手动运行的 artifacts 默认保留 14 天。
+
+## 本地脚本定位
+
+`./scripts/build.sh` 和 `./scripts/build-linux-deb.sh` 只用于本地修改代码后的临时构建、验证或排障；正式部署和发布请走上面的 CI/CD 流程。
 
 ```bash
-# 构建二进制
-./build.sh native
+# macOS，在仓库根目录运行；仅用于本地改代码后的临时构建
+./scripts/build.sh native
+./scripts/build.sh list
 
-# 一键安装为 systemd 服务（支持开机自启 + 进程守护）
-sudo bash deploy/systemd/install.sh --bin target/release/dinotty-server --token your-secret-token
+# 远程构建 Linux deb；仅用于本地改代码后的临时排障
+./scripts/build-linux-deb.sh
+```
+
+## Linux systemd 部署（推荐使用 CI deb）
+
+从 `Package` workflow 的 `dinotty-linux` artifact 或 GitHub Release 下载服务端 deb 后安装：
+
+```bash
+sudo apt install ./dinotty-server_*.deb
 
 # 管理命令
 systemctl status dinotty       # 查看状态
@@ -16,55 +36,48 @@ systemctl stop dinotty         # 停止
 journalctl -u dinotty -f       # 查看实时日志
 
 # 修改配置后重启
-vim /etc/dinotty/env           # 编辑端口、Token、日志级别
-systemctl restart dinotty
+sudo vim /etc/dinotty/env      # 编辑端口、Token、日志级别
+sudo systemctl restart dinotty
+```
 
-# 卸载
+deb 安装后会部署 `dinotty-server`、systemd unit 和 `/etc/dinotty/env.example`，并启用/启动 `dinotty.service`。
+
+如果只是本地改代码后的临时二进制验证，可以显式传入本地构建产物：
+
+```bash
+sudo bash deploy/systemd/install.sh --bin target/release/dinotty-server --token your-secret-token
 sudo bash deploy/systemd/uninstall.sh
 ```
 
-## Linux deb 包（dinotty-server）
+## Linux 桌面包
 
-仓库根目录已配置 `cargo-deb` 元数据，可直接构建服务端 deb 包：
+从 CI 的 `dinotty-linux` artifact 或 GitHub Release 获取桌面包：
 
 ```bash
-cd frontend
-pnpm install --frozen-lockfile
-pnpm run build
-cd ..
+# deb 安装包
+sudo apt install ./Dinotty*.deb
 
-cargo install cargo-deb --locked
-cargo deb --profile release --package dinotty-server
-
-mkdir -p dist
-cp target/debian/dinotty-server_*.deb dist/
+# 或直接运行 AppImage
+chmod +x ./Dinotty*.AppImage
+./Dinotty*.AppImage
 ```
 
-产物位于 `target/debian/`，复制后也会出现在 `dist/`。deb 安装后会部署 `dinotty-server`、systemd unit 和 `/etc/dinotty/env.example`，并启用/启动 `dinotty.service`。
+## macOS 桌面包
 
-## Windows 原生运行
+从 CI 的 `dinotty-macos` artifact 或 GitHub Release 下载 `.dmg`，打开后按系统提示安装。
 
-Windows 可以直接运行原生服务器。先构建前端，再用 Cargo 构建 release：
+## Windows 桌面包
 
-```powershell
-cd frontend
-pnpm install
-pnpm run build
-cd ..
-cargo build --release -p dinotty-server
-.\target\release\dinotty-server.exe -p 8999
-```
+从 CI 的 `dinotty-windows` artifact 或 GitHub Release 下载：
 
-默认 shell 检测顺序为 `DINOTTY_SHELL` → `pwsh.exe` → `powershell.exe` → `%ComSpec%` / `cmd.exe`。如需指定 shell：
+- NSIS 安装包：适合正常安装和卸载。
+- portable `.exe`：适合免安装测试。
 
-```powershell
-$env:DINOTTY_SHELL = "C:\Program Files\PowerShell\7\pwsh.exe"
-.\target\release\dinotty-server.exe
-```
-
-如需开机自启，可以使用 Windows 任务计划程序、NSSM 或 WinSW 包装上述命令；当前仓库内置的一键安装脚本仅面向 Linux systemd。
+如需开机自启，可以使用 Windows 任务计划程序、NSSM 或 WinSW 包装 portable 可执行文件。
 
 ## Docker 部署
+
+Docker 镜像当前仍按本地 Compose 流程构建：
 
 ```bash
 cd deploy/docker
@@ -89,27 +102,15 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 Windows 上可通过 Docker Desktop 使用 Linux 容器部署；`.env` 中的工作区路径需要按 Docker Desktop 的挂载路径填写。
 
-## 跨平台构建
+## 跨平台包
 
-```bash
-# 列出 build.sh 支持的目标
-./build.sh list
+跨平台桌面包由 `Package` workflow 的 matrix 统一生成：
 
-# 交叉编译 Linux musl（静态链接，无 glibc 依赖）
-./build.sh cross
-
-# 构建 build.sh 覆盖的所有平台
-./build.sh all
-```
-
-`build.sh` 主要面向 Unix shell，当前输出到 `dist/` 的目标包括：
-
-- `dinotty-server-x86_64-unknown-linux-musl`
-- `dinotty-server-aarch64-unknown-linux-musl`
-- `dinotty-server-x86_64-apple-darwin`
-- `dinotty-server-aarch64-apple-darwin`
-
-Windows 原生二进制请在 Windows 主机上运行 `cargo build --release -p dinotty-server`，产物为 `target\release\dinotty-server.exe`。
+| 平台 | CI 环境 | 产物 |
+|------|---------|------|
+| macOS | `macos-latest` | `.dmg` |
+| Linux | `ubuntu-22.04` | 桌面 `.deb` / `.AppImage`、服务端 `dinotty-server_*.deb` |
+| Windows | `windows-latest` | NSIS `.exe`、portable `.exe` |
 
 ## 配置说明
 

@@ -1,13 +1,33 @@
 # Deployment Guide
 
-## Linux (systemd) One-Click Deploy
+## Recommended Release Flow (CI/CD)
+
+Use the repository `Package` workflow (`.github/workflows/package.yml`) for release and deployment artifacts. Do not treat local script output as the official release source.
+
+- Manual package: open GitHub Actions → `Package` → `Run workflow`, then choose `dev` or `main`; manual runs upload Actions artifacts only.
+- Official release: push a `v*` tag on `main`; CI builds packages and publishes GitHub Release assets.
+- CI artifacts: `dinotty-macos` contains `.dmg`, `dinotty-linux` contains desktop `.deb` / `.AppImage` and the server `dinotty-server_*.deb`, and `dinotty-windows` contains the NSIS installer and portable `.exe`.
+- Artifact staging: CI copies packages to `dist/package-artifacts/` before upload. Manual-run artifacts are retained for 14 days by default.
+
+## Local Script Scope
+
+`./scripts/build.sh` and `./scripts/build-linux-deb.sh` are only for temporary local builds, verification, or troubleshooting after changing code. Use the CI/CD flow above for deployment and releases.
 
 ```bash
-# Build binary
-./build.sh native
+# macOS, run from the repository root; only for temporary local builds after code changes
+./scripts/build.sh native
+./scripts/build.sh list
 
-# One-click install as systemd service (auto-start + process supervision)
-sudo bash deploy/systemd/install.sh --bin target/release/dinotty-server --token your-secret-token
+# Remote Linux deb build; only for local troubleshooting after code changes
+./scripts/build-linux-deb.sh
+```
+
+## Linux systemd Deploy (Use CI deb)
+
+Download the server deb from the `Package` workflow `dinotty-linux` artifact or from GitHub Releases, then install it:
+
+```bash
+sudo apt install ./dinotty-server_*.deb
 
 # Management commands
 systemctl status dinotty       # Check status
@@ -16,55 +36,48 @@ systemctl stop dinotty         # Stop
 journalctl -u dinotty -f       # View live logs
 
 # Update config and restart
-vim /etc/dinotty/env           # Edit port, token, log level
-systemctl restart dinotty
+sudo vim /etc/dinotty/env      # Edit port, token, log level
+sudo systemctl restart dinotty
+```
 
-# Uninstall
+Installing the deb deploys `dinotty-server`, the systemd unit, and `/etc/dinotty/env.example`, then enables and starts `dinotty.service`.
+
+For temporary local binary validation after changing code, pass the local build output explicitly:
+
+```bash
+sudo bash deploy/systemd/install.sh --bin target/release/dinotty-server --token your-secret-token
 sudo bash deploy/systemd/uninstall.sh
 ```
 
-## Linux deb Package (dinotty-server)
+## Linux Desktop Package
 
-The repository already includes `cargo-deb` metadata, so the server deb package can be built from the repository root:
+Download desktop packages from the CI `dinotty-linux` artifact or from GitHub Releases:
 
 ```bash
-cd frontend
-pnpm install --frozen-lockfile
-pnpm run build
-cd ..
+# deb installer
+sudo apt install ./Dinotty*.deb
 
-cargo install cargo-deb --locked
-cargo deb --profile release --package dinotty-server
-
-mkdir -p dist
-cp target/debian/dinotty-server_*.deb dist/
+# Or run the AppImage directly
+chmod +x ./Dinotty*.AppImage
+./Dinotty*.AppImage
 ```
 
-The package is written to `target/debian/`, and the copy command also places it in `dist/`. Installing the deb deploys `dinotty-server`, the systemd unit, and `/etc/dinotty/env.example`, then enables and starts `dinotty.service`.
+## macOS Desktop Package
 
-## Windows Native Run
+Download the `.dmg` from the CI `dinotty-macos` artifact or from GitHub Releases, then open it and follow the system installer prompts.
 
-Windows can run the native server directly. Build the frontend first, then build the release binary with Cargo:
+## Windows Desktop Package
 
-```powershell
-cd frontend
-pnpm install
-pnpm run build
-cd ..
-cargo build --release -p dinotty-server
-.\target\release\dinotty-server.exe -p 8999
-```
+Download packages from the CI `dinotty-windows` artifact or from GitHub Releases:
 
-The default shell is detected in this order: `DINOTTY_SHELL` → `pwsh.exe` → `powershell.exe` → `%ComSpec%` / `cmd.exe`. To override it:
+- NSIS installer: suitable for normal install and uninstall flows.
+- Portable `.exe`: suitable for install-free testing.
 
-```powershell
-$env:DINOTTY_SHELL = "C:\Program Files\PowerShell\7\pwsh.exe"
-.\target\release\dinotty-server.exe
-```
-
-For auto-start on Windows, wrap the command with Task Scheduler, NSSM, or WinSW. The one-click installer scripts in this repository currently target Linux systemd only.
+For auto-start on Windows, wrap the portable executable with Task Scheduler, NSSM, or WinSW.
 
 ## Docker Deploy
+
+Docker images are still built through the local Compose flow:
 
 ```bash
 cd deploy/docker
@@ -89,27 +102,15 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 On Windows, use Docker Desktop with Linux containers. Set workspace paths in `.env` using paths visible inside Docker Desktop mounts.
 
-## Cross-Platform Build
+## Cross-Platform Packages
 
-```bash
-# List targets supported by build.sh
-./build.sh list
+Cross-platform desktop packages are generated by the `Package` workflow matrix:
 
-# Cross-compile for Linux musl (static linking, no glibc dependency)
-./build.sh cross
-
-# Build all platforms covered by build.sh
-./build.sh all
-```
-
-`build.sh` is primarily for Unix shells. The current `dist/` outputs are:
-
-- `dinotty-server-x86_64-unknown-linux-musl`
-- `dinotty-server-aarch64-unknown-linux-musl`
-- `dinotty-server-x86_64-apple-darwin`
-- `dinotty-server-aarch64-apple-darwin`
-
-For a native Windows binary, run `cargo build --release -p dinotty-server` on Windows. The output is `target\release\dinotty-server.exe`.
+| Platform | CI runner | Artifacts |
+|----------|-----------|-----------|
+| macOS | `macos-latest` | `.dmg` |
+| Linux | `ubuntu-22.04` | desktop `.deb` / `.AppImage`, server `dinotty-server_*.deb` |
+| Windows | `windows-latest` | NSIS `.exe`, portable `.exe` |
 
 ## Configuration
 
