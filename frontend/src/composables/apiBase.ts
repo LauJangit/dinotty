@@ -5,6 +5,10 @@ const STORAGE_KEY = 'dinotty_auth_token'
 // Browser mode: cookie-based session (no token in localStorage).
 // Tauri mode: Bearer token in localStorage (tauri_fetch has no cookie jar).
 let loggedIn = false
+// Session-authenticated with no bearer token: Tauri loopback-bypass, or a
+// desktop/web cookie session. setAuthToken() is never called on these paths,
+// so hasAuthToken() must not depend on a stored token alone.
+let sessionAuthed = false
 
 let cached = ''
 let inflight: Promise<string> | null = null
@@ -23,7 +27,13 @@ export function setAuthToken(token: string): void {
   localStorage.setItem(STORAGE_KEY, token)
 }
 
+export function markCookieAuthenticated(): void {
+  sessionAuthed = true
+  if (!isTauri()) loggedIn = true
+}
+
 export function clearAuthToken(): void {
+  sessionAuthed = false
   if (!isTauri()) {
     loggedIn = false
     return
@@ -32,6 +42,7 @@ export function clearAuthToken(): void {
 }
 
 export function hasAuthToken(): boolean {
+  if (sessionAuthed) return true
   if (!isTauri()) return loggedIn
   return !!localStorage.getItem(STORAGE_KEY)
 }

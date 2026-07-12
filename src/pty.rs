@@ -196,6 +196,8 @@ pub fn create_session(
         ssh_cmd_tx: std::sync::Mutex::new(None),
         ssh_handle: tokio::sync::Mutex::new(None),
         sftp_session: std::sync::Mutex::new(None),
+        remote_home: std::sync::Mutex::new(None),
+        remote_user: std::sync::Mutex::new(None),
         output_tx,
         output_rx: std::sync::Mutex::new(Some(output_rx)),
         pending_results: std::sync::Mutex::new(Vec::new()),

@@ -98,8 +98,8 @@ else
             cp "$RELEASE_BIN" "${INSTALL_DIR}/dinotty-server"
         else
             die "未找到二进制文件。请先构建:
-  构建: ./build.sh native
-  交叉编译: ./build.sh cross
+  构建: ./scripts/build.sh native
+  交叉编译: ./scripts/build.sh cross
 或使用 --bin 指定路径"
         fi
     fi

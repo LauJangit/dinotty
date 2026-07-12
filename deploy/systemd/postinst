@@ -13,12 +13,18 @@ fi
 # Create data directory
 mkdir -p /var/lib/dinotty
 chown dinotty:dinotty /var/lib/dinotty
+chmod 750 /var/lib/dinotty
 
 # Create config directory and copy example if needed
 mkdir -p /etc/dinotty
+chown root:dinotty /etc/dinotty
+chmod 750 /etc/dinotty
 if [ ! -f /etc/dinotty/env ] && [ -f /etc/dinotty/env.example ]; then
     cp /etc/dinotty/env.example /etc/dinotty/env
-    chown dinotty:dinotty /etc/dinotty/env
+fi
+if [ -f /etc/dinotty/env ]; then
+    chown root:dinotty /etc/dinotty/env
+    chmod 640 /etc/dinotty/env
 fi
 
 # Reload systemd to pick up new unit file

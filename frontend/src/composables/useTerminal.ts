@@ -176,7 +176,8 @@ function setupGlobalTauriDragDrop() {
   if (!listen) return
 
   listen('file-drop-paths', (event: any) => {
-    const paths: string[] = event.payload || []
+    const payload = event.payload || []
+    const paths: string[] = Array.isArray(payload) ? payload : (payload.paths || [])
     if (paths.length > 0 && lastFocusedInstance) {
       const escaped = paths.map((p: string) =>
         /[\s'"\\()&;|<>$!`{}[\]#?*~]/.test(p) ? `'${p.replace(/'/g, "'\\''")}'` : p

@@ -500,6 +500,8 @@ pub struct TextConfig {
     pub scroll_acceleration: f32,
     #[serde(default = "default_scrollbar_width")]
     pub scrollbar_width: u8,
+    #[serde(default)]
+    pub custom_fonts: Option<Vec<String>>,
 }
 
 fn default_font_size() -> u8 {
@@ -540,11 +542,81 @@ impl Default for TextConfig {
             scroll_sensitivity: default_scroll_sensitivity(),
             scroll_acceleration: default_scroll_acceleration(),
             scrollbar_width: default_scrollbar_width(),
+            custom_fonts: None,
         }
     }
 }
 
-fn clamp_text_config(t: &mut TextConfig) {
+const FONT_ANCHORS: [&str; 5] =
+    ["Menlo", "Consolas", "Courier New", "DejaVu Sans Mono", "monospace"];
+
+/// Trim ASCII/Unicode whitespace AND U+FEFF (BOM/ZWNBSP), matching JS `String.trim()` which
+/// strips U+FEFF as ECMAScript `WhiteSpace`. Rust `str::trim()` does not remove U+FEFF.
+fn trim_font(s: &str) -> &str {
+    s.trim_matches(|c: char| c.is_whitespace() || c == '\u{FEFF}')
+}
+
+/// Extract the primary family from a plain name OR a CSS stack: first comma segment, strip one
+/// matched outer quote pair (ASCII ' or "), trim. Mirrors the TS primaryFamily.
+fn primary_family(value: &str) -> String {
+    let first = trim_font(value.split(',').next().unwrap_or(""));
+    let mut chars = first.chars();
+    if let (Some(f), Some(l)) = (chars.next(), first.chars().last()) {
+        if first.chars().count() >= 2 && (f == '"' || f == '\'') && f == l {
+            // Use char-based indices to avoid panicking on multi-byte UTF-8 boundaries.
+            let inner: String = first.chars().skip(1).take(first.chars().count() - 2).collect();
+            return trim_font(&inner).to_string();
+        }
+    }
+    first.to_string()
+}
+
+fn clamp_custom_fonts(v: &mut Vec<String>) -> bool {
+    let anchor_identities: Vec<String> =
+        FONT_ANCHORS.iter().map(|anchor| anchor.to_lowercase()).collect();
+    let mut seen = Vec::new();
+    let mut sanitized = Vec::new();
+
+    for entry in v.iter() {
+        let primary = primary_family(entry);
+        let trimmed = trim_font(&primary);
+        if trimmed.is_empty()
+            || trimmed.chars().count() > 100
+            || trimmed.chars().any(|c| {
+                c == '"' || c == '\\' || c.is_control() || matches!(c, '<' | '>' | ';' | '{' | '}')
+            })
+        {
+            continue;
+        }
+
+        let identity = trimmed.to_lowercase();
+        if anchor_identities.contains(&identity) || seen.contains(&identity) {
+            continue;
+        }
+
+        seen.push(identity);
+        sanitized.push(trimmed.to_string());
+        if sanitized.len() == 20 {
+            break;
+        }
+    }
+
+    let changed = sanitized.len() != v.len() || sanitized.iter().zip(v.iter()).any(|(a, b)| a != b);
+    *v = sanitized;
+    changed
+}
+
+// Legit CSS font stacks contain only letters/digits/space/comma/quotes.
+// Anything with control chars or < > ; { } is a CSS-injection vector -> neutralise.
+fn font_family_is_unsafe(s: &str) -> bool {
+    s.chars().any(|c| c.is_control() || matches!(c, '<' | '>' | ';' | '{' | '}'))
+}
+
+fn clamp_text_config(t: &mut TextConfig) -> bool {
+    let old_scroll_sensitivity = t.scroll_sensitivity;
+    let old_scroll_acceleration = t.scroll_acceleration;
+    let old_scrollbar_width = t.scrollbar_width;
+
     t.scroll_sensitivity = if t.scroll_sensitivity.is_finite() {
         t.scroll_sensitivity.clamp(0.1, 2.0)
     } else {
@@ -556,6 +628,24 @@ fn clamp_text_config(t: &mut TextConfig) {
         default_scroll_acceleration()
     };
     t.scrollbar_width = t.scrollbar_width.clamp(4, 16);
+
+    let mut changed = t.scroll_sensitivity.to_bits() != old_scroll_sensitivity.to_bits()
+        || t.scroll_acceleration.to_bits() != old_scroll_acceleration.to_bits()
+        || t.scrollbar_width != old_scrollbar_width;
+    if let Some(v) = t.custom_fonts.as_mut() {
+        if clamp_custom_fonts(v) {
+            changed = true;
+        }
+    }
+    if font_family_is_unsafe(&t.font_family) {
+        t.font_family = "monospace".to_string();
+        changed = true;
+    }
+    changed
+}
+
+fn clamp_text_on_load(t: &mut TextConfig) -> bool {
+    clamp_text_config(t)
 }
 
 fn default_mode() -> String {
@@ -711,7 +801,7 @@ fn bg_image_path() -> PathBuf {
 
 pub fn load_settings() -> Settings {
     let path = settings_path();
-    if path.exists() {
+    let mut settings = if path.exists() {
         match std::fs::read_to_string(&path) {
             Ok(data) => match serde_json::from_str::<Settings>(&data) {
                 Ok(mut settings) => {
@@ -720,20 +810,35 @@ pub fn load_settings() -> Settings {
                         settings.upload_dir = default_upload_dir();
                         migrated = true;
                     }
-                    clamp_text_config(&mut settings.text);
-                    if migrated {
+                    let text_changed = clamp_text_config(&mut settings.text);
+                    if migrated || text_changed {
                         if let Err(e) = save_settings(&settings) {
-                            error!("migrate settings: {}", e);
+                            error!("persist settings on load: {}", e);
                         }
                     }
                     return settings;
                 }
-                Err(e) => error!("parse settings: {}", e),
+                Err(e) => {
+                    error!("parse settings: {}", e);
+                    Settings::default()
+                }
             },
-            Err(e) => error!("read settings: {}", e),
+            Err(e) => {
+                error!("read settings: {}", e);
+                Settings::default()
+            }
+        }
+    } else {
+        Settings::default()
+    };
+    let migrated = migrate_settings(&mut settings);
+    let text_changed = clamp_text_on_load(&mut settings.text);
+    if migrated || text_changed {
+        if let Err(e) = save_settings(&settings) {
+            error!("persist settings on load: {}", e);
         }
     }
-    Settings::default()
+    settings
 }
 
 fn migrate_settings(settings: &mut Settings) -> bool {
@@ -862,7 +967,7 @@ pub async fn put_settings(
     Json(mut new_settings): Json<Settings>,
 ) -> impl IntoResponse {
     new_settings.settings_version = CURRENT_SETTINGS_VERSION;
-    clamp_text_config(&mut new_settings.text);
+    let _ = clamp_text_config(&mut new_settings.text);
     match save_settings(&new_settings) {
         Ok(()) => {
             *state.1.write().await = new_settings;

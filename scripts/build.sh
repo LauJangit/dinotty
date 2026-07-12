@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 使用方法（macOS，在仓库根目录运行）：
+#   ./scripts/build.sh [COMMAND] [TARGET ...]
 set -euo pipefail
 
 BIN="dinotty-server"

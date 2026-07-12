@@ -1,5 +1,6 @@
 import { ref, computed, watch, type Ref } from 'vue'
-import { getApiBase, apiUrl, authFetch } from './apiBase'
+import { getApiBase, apiUrl, authFetch, getAuthToken } from './apiBase'
+import { isTauri } from './useTransport'
 
 interface Meta {
   kind: string
@@ -35,6 +36,34 @@ export function getMarked() {
     })
   }
   return _markedPromise
+}
+
+/** Resolve a relative image path against the markdown file's directory */
+function resolveImagePath(relPath: string, filePath: string): string {
+  if (/^(https?:\/\/|data:|blob:)/.test(relPath)) return relPath
+  const baseDir = filePath.includes('/') ? filePath.slice(0, filePath.lastIndexOf('/')) : ''
+  const parts = (baseDir ? baseDir + '/' + relPath : relPath).split('/')
+  const resolved: string[] = []
+  for (const p of parts) {
+    if (p === '.' || p === '') continue
+    if (p === '..') resolved.pop()
+    else resolved.push(p)
+  }
+  return resolved.join('/')
+}
+
+/** Rewrite relative <img src> in rendered HTML to /api/workspace/raw URLs */
+function rewriteImageSrcs(html: string, filePath: string, paneId: string): string {
+  return html.replace(/<img\b([^>]*?)\ssrc=(["'])(.+?)\2/gi, (_match, prefix, quote, src) => {
+    if (/^(https?:\/\/|\/api\/workspace\/raw)/.test(src)) return `<img${prefix} src=${quote}${src}${quote}`
+    const resolved = resolveImagePath(src, filePath)
+    const q = new URLSearchParams({ pane_id: paneId, path: resolved })
+    if (isTauri()) {
+      const token = getAuthToken()
+      if (token) q.set('token', token)
+    }
+    return `<img${prefix} src=${quote}${apiUrl(`/api/workspace/raw?${q}`)}${quote}`
+  })
 }
 
 export function getDOMPurify() {
@@ -82,7 +111,9 @@ export function useFileEditor(opts: {
     mdDebounceTimer = setTimeout(async () => {
       try {
         const [m, dp] = await Promise.all([getMarked(), getDOMPurify()])
-        const html = m.parse(src, { async: false }) as string
+        let html = m.parse(src, { async: false }) as string
+        const filePath = opts.selectedRel.value
+        if (filePath) html = rewriteImageSrcs(html, filePath, opts.paneId())
         markdownEditorHtml.value = dp.default.sanitize(html)
       } catch {
         markdownEditorHtml.value = ''
@@ -150,3 +181,6 @@ export function useFileEditor(opts: {
     onSelectionDismiss,
   }
 }
+
+/** Factory alias — use this when creating independent editor instances per pane */
+export const createFileEditor = useFileEditor

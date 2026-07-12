@@ -123,6 +123,15 @@ pub struct Session {
     /// Cached SFTP session for workspace operations. Created lazily.
     /// Actual type: `Arc<russh_sftp::client::SftpSession>`
     pub sftp_session: Mutex<Option<Box<dyn std::any::Any + Send + Sync>>>,
+    /// Remote home directory for SSH sessions. Used for `~` expansion in
+    /// CWD sniffing and workspace path resolution.
+    /// `None` for local sessions.
+    pub remote_home: Mutex<Option<PathBuf>>,
+    /// Current PTY user for SSH sessions. Detects user switches (e.g. `su root`).
+    /// When the PTY user differs from the SSH auth user, SFTP operations may
+    /// fail due to permission issues, and SSH exec fallback with sudo is needed.
+    /// `None` means not yet detected (lazy initialization on first workspace op).
+    pub remote_user: Mutex<Option<String>>,
     /// Raw PTY output channel: reader sends raw bytes here for xterm.js rendering.
     /// Unbounded so the PTY reader never blocks on send.
     pub output_tx: mpsc::UnboundedSender<Vec<u8>>,
@@ -347,10 +356,13 @@ impl Session {
     }
 
     pub fn on_pty_output(&self, data: &[u8]) {
-        let home = crate::platform::shell::home_dir();
+        let default_home = crate::platform::shell::home_dir();
+        let remote_home_guard =
+            self.remote_home.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let home = remote_home_guard.as_ref().unwrap_or(&default_home);
         let mut state = self.cwd_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let CwdState { ref mut cwd, ref mut sniff_buf } = *state;
-        sniff_cwd_from_title_osc(sniff_buf, data, &home, cwd);
+        sniff_cwd_from_title_osc(sniff_buf, data, home, cwd);
     }
 
     /// Replace the input channel, closing the old one (if any) so the previous
