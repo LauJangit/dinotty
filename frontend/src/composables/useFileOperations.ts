@@ -1,7 +1,6 @@
 import { ref, computed, type Ref } from 'vue'
 import { getApiBase, apiUrl, authFetch, getAuthToken } from './apiBase'
 import { isTauri, tauriInvoke } from './useTransport'
-import { isInternalDragActive, getInternalDragRel, clearInternalDrag } from './internalDragState'
 import type { DirEntry } from '../components/workspace/TreeRows'
 
 // --- Tauri native drag-drop support ---
@@ -36,43 +35,8 @@ function setupTauriFileDrop() {
 
   // Tauri v2 listen() returns Promise<UnlistenFn>
   const unlistenDrop = listen('file-drop-paths', async (event: any) => {
-    // Internal tree drag → emit on the target EditorPane
-    if (isInternalDragActive()) {
-      const rel = getInternalDragRel()
-      clearInternalDrag()
-      if (rel) {
-        const payload = event.payload || {}
-        const pos = payload.position || { x: 0, y: 0 }
-        // Tauri position is in physical pixels; convert to CSS pixels
-        const dpr = window.devicePixelRatio || 1
-        const cx = (pos.x ?? 0) / dpr
-        const cy = (pos.y ?? 0) / dpr
-        const el = cx && cy ? document.elementFromPoint(cx, cy) : null
-        const pane = el?.closest('.editor-pane') as HTMLElement | null
-        if (pane) {
-          const rect = pane.getBoundingClientRect()
-          const x = cx - rect.left
-          const y = cy - rect.top
-          const w = rect.width
-          const h = rect.height
-          const edge = Math.min(Math.min(w, h) * 0.25, 40)
-          let position: string
-          if (x < edge) position = 'left'
-          else if (x > w - edge) position = 'right'
-          else if (y < edge) position = 'top'
-          else if (y > h - edge) position = 'bottom'
-          else position = 'center'
-          const leafId = pane.dataset.leafId || ''
-          pane.dispatchEvent(
-            new CustomEvent('file-drop', { detail: { leafId, rel, position }, bubbles: true })
-          )
-        }
-      }
-      return
-    }
     if (!_activeUploadFn) return
-    const payload = event.payload || []
-    const paths: string[] = Array.isArray(payload) ? payload : (payload.paths || [])
+    const paths: string[] = event.payload || []
     if (!paths.length) return
     const files: { file: File; path: string }[] = []
     for (const p of paths) {
@@ -93,7 +57,6 @@ function setupTauriFileDrop() {
 
   // Listen for drag-enter/leave to show drop overlay
   const unlistenActive = listen('file-drop-active', (event: any) => {
-    if (isInternalDragActive()) return // ignore native events for internal tree drags
     if (!_dragCounterRef) return
     _dragCounterRef.value = event.payload ? 1 : 0
   })
@@ -149,7 +112,6 @@ export function useFileOperations(opts: {
   const rawUrl = computed(() => {
     if (!opts.selectedRel.value || opts.selectedIsDir.value) return ''
     const q = new URLSearchParams({ pane_id: opts.paneId(), path: opts.selectedRel.value })
-    if (opts.cwdLabel.value) q.set('cwd', opts.cwdLabel.value)
     // Browser: same-origin requests include cookies automatically.
     // Tauri: need token in URL for tauri_fetch or direct image loads.
     if (isTauri()) {
@@ -173,14 +135,6 @@ export function useFileOperations(opts: {
   }
 
   function absolutePath(rel: string): string {
-    // SSH mode: cwdLabel starts with '/' and changes as user navigates, but
-    // tree rel paths are always relative to the initial root '/', so rel IS
-    // the path from root — just prefix with '/'.
-    // Local mode: cwdLabel is the stable PTY cwd (e.g. /Users/me/project),
-    // and rel is relative to it, so join them.
-    if (opts.cwdLabel.value.startsWith('/')) {
-      return rel ? `/${rel}` : opts.cwdLabel.value.replace(/\/+$/, '') || '/'
-    }
     const root = opts.cwdLabel.value.replace(/\/+$/, '')
     return rel ? `${root}/${rel}` : root
   }
@@ -217,7 +171,6 @@ export function useFileOperations(opts: {
         if (resp.status >= 400) console.error('[upload] server error:', resp.status)
       } else {
         const q = new URLSearchParams({ pane_id: opts.paneId(), dir })
-        if (opts.cwdLabel.value) q.set('cwd', opts.cwdLabel.value)
         const fd = new FormData()
         for (const { file, path } of files) {
           fd.append('path', path)
@@ -321,7 +274,6 @@ export function useFileOperations(opts: {
     await getApiBase()
     const name = rel.split('/').pop() || 'file'
     const q = new URLSearchParams({ pane_id: opts.paneId(), path: rel })
-    if (opts.cwdLabel.value) q.set('cwd', opts.cwdLabel.value)
     const url = apiUrl(`/api/workspace/raw?${q}`)
     if (isTauri()) {
       const token = getAuthToken()
@@ -360,7 +312,6 @@ export function useFileOperations(opts: {
     if (!skipConfirm && !confirm(msg)) return false
     await getApiBase()
     const q = new URLSearchParams({ pane_id: opts.paneId(), path: rel })
-    if (opts.cwdLabel.value) q.set('cwd', opts.cwdLabel.value)
     const res = await authFetch(apiUrl(`/api/workspace/delete?${q}`), { method: 'DELETE' })
     if (!res.ok) return false
     const parentRel = parentRelPath(rel)

@@ -71,12 +71,8 @@ async function onSubmit() {
     })
     if (res.ok) {
       // Token saved server-side; now authenticate to get a session cookie.
-      const r = await validateToken(val)
-      if (r.ok) {
-        emit('success')
-      } else {
-        error.value = t('setup.saveFailed')
-      }
+      await validateToken(val)
+      emit('success')
     } else {
       error.value = t('setup.saveFailed')
     }
