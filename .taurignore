@@ -1,0 +1,6 @@
+# Keep Tauri dev watcher from restarting the desktop app on frontend/tooling output.
+frontend/node_modules/
+frontend/dist/
+src-tauri/gen/
+target/
+dist/

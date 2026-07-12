@@ -33,7 +33,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, defineAsyncComponent } from 'vue'
+import { ref, computed, watch, nextTick, defineAsyncComponent } from 'vue'
 import { useSettings, notifyTextChange } from '../composables/useSettings'
 import { useI18n } from '../composables/useI18n'
 import {
@@ -54,10 +54,10 @@ import NotificationTab from './settings/NotificationTab.vue'
 import PluginsTab from './settings/PluginsTab.vue'
 import AboutTab from './settings/AboutTab.vue'
 
-defineProps<{ open: boolean }>()
+const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: []; 'token-changed': [] }>()
 
-const { settings, saveSettings, applyCurrentTheme } = useSettings()
+const { settings, saveSettings, loadSettings, applyCurrentTheme } = useSettings()
 const { t } = useI18n()
 
 const activeTab = ref<
@@ -65,7 +65,9 @@ const activeTab = ref<
 >('general')
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
+let suppressSave = false
 function scheduleSave() {
+  if (suppressSave) return
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => saveSettings(), 500)
 }
@@ -78,6 +80,17 @@ watch(() => ({ ...settings.text }), notifyTextChange)
 
 // Save on any setting change
 watch(settings, scheduleSave, { deep: true })
+
+// Re-fetch settings from backend when the panel opens (multi-end sync).
+// Cancel any pending debounced save and suppress the autosave that the
+// remote Object.assign would trigger, so we neither PUT back the fetched
+// value nor let a stale pending timer overwrite it.
+watch(() => props.open, (v) => {
+  if (!v) return
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
+  suppressSave = true
+  void loadSettings().finally(() => nextTick(() => { suppressSave = false }))
+})
 
 const tabs = computed(() => [
   { id: 'general' as const, label: t('settings.tab.general'), icon: SettingsIcon },
@@ -505,6 +518,7 @@ const tabs = computed(() => [
   right: 0;
   max-height: 260px;
   overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: 6px;

@@ -2,6 +2,13 @@ import { defineComponent, ref, h, onMounted, nextTick } from 'vue'
 import type { VNode } from 'vue'
 import { isTauri } from '../../composables/useTransport'
 import { useI18n } from '../../composables/useI18n'
+import { setInternalDrag, clearInternalDrag } from '../../composables/internalDragState'
+
+function hasType(dt: DataTransfer | undefined | null, type: string): boolean {
+  if (!dt) return false
+  const t = dt.types
+  return t.includes ? t.includes(type) : (t as any).contains(type)
+}
 
 export interface DirEntry {
   name: string
@@ -329,18 +336,19 @@ export const TreeRows = defineComponent({
                     ev.dataTransfer?.setData('text/plain', absJoinWorkspaceRoot(root, rel))
                   }
                   ev.dataTransfer!.effectAllowed = 'copyMove'
+                  setInternalDrag(rel)
                 },
                 onDragend: (ev: DragEvent) => {
                   const root = p.workspaceRoot as string
                   if (root) dispatchDropToTerminal(ev, absJoinWorkspaceRoot(root, rel))
+                  setTimeout(clearInternalDrag, 200)
                 },
                 onDragover: (ev: DragEvent) => {
-                  const types = ev.dataTransfer?.types
-                  if (types?.includes('application/x-tree-move')) {
+                  if (hasType(ev.dataTransfer, 'application/x-tree-move')) {
                     ev.preventDefault()
                     ev.dataTransfer!.dropEffect = 'move'
                     ;(ev.currentTarget as HTMLElement).classList.add('drop-target')
-                  } else if (types?.includes('Files')) {
+                  } else if (hasType(ev.dataTransfer, 'Files')) {
                     ev.preventDefault()
                     ev.dataTransfer!.dropEffect = 'copy'
                     ;(ev.currentTarget as HTMLElement).classList.add('drop-target-upload')
@@ -364,7 +372,7 @@ export const TreeRows = defineComponent({
                   const srcRel = ev.dataTransfer?.getData('application/x-tree-move')
                   if (srcRel !== undefined && srcRel !== rel && !rel.startsWith(srcRel + '/')) {
                     emit('move-entry', { src: srcRel, destDir: rel })
-                  } else if (ev.dataTransfer?.types.includes('Files')) {
+                  } else if (hasType(ev.dataTransfer, 'Files')) {
                     emit('upload-to-dir', rel, ev)
                   }
                 },
@@ -503,10 +511,12 @@ export const TreeRows = defineComponent({
                     ev.dataTransfer?.setData('text/plain', absJoinWorkspaceRoot(root, rel))
                   }
                   ev.dataTransfer!.effectAllowed = 'copyMove'
+                  setInternalDrag(rel)
                 },
                 onDragend: (ev: DragEvent) => {
                   const root = p.workspaceRoot as string
                   if (root) dispatchDropToTerminal(ev, absJoinWorkspaceRoot(root, rel))
+                  setTimeout(clearInternalDrag, 200)
                 },
                 ...makeLongPressHandlers(rel, false),
               },
@@ -559,11 +569,10 @@ export const TreeRows = defineComponent({
         {
           class: 'tree-rows',
           onDragover: (ev: DragEvent) => {
-            const types = ev.dataTransfer?.types
-            if (types?.includes('application/x-tree-move')) {
+            if (hasType(ev.dataTransfer, 'application/x-tree-move')) {
               ev.preventDefault()
               ev.dataTransfer!.dropEffect = 'move'
-            } else if (types?.includes('Files')) {
+            } else if (hasType(ev.dataTransfer, 'Files')) {
               ev.preventDefault()
               ev.dataTransfer!.dropEffect = 'copy'
             }
@@ -573,7 +582,7 @@ export const TreeRows = defineComponent({
             const srcRel = ev.dataTransfer?.getData('application/x-tree-move')
             if (srcRel !== undefined && srcRel.includes('/')) {
               emit('move-entry', { src: srcRel, destDir: '' })
-            } else if (ev.dataTransfer?.types.includes('Files')) {
+            } else if (hasType(ev.dataTransfer, 'Files')) {
               emit('upload-to-dir', '', ev)
             }
           },

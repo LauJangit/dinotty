@@ -152,14 +152,26 @@ jobs:
         shell: pwsh
         run: |
           Remove-Item -LiteralPath target/release/bundle -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -LiteralPath target/debian -Recurse -Force -ErrorAction SilentlyContinue
           Remove-Item -LiteralPath src-tauri/target/release/bundle -Recurse -Force -ErrorAction SilentlyContinue
 
       - name: Build desktop packages
         working-directory: src-tauri
         run: pnpm dlx "@tauri-apps/cli@${{ env.TAURI_CLI_VERSION }}" build --bundles ${{ matrix.bundles }} --ci
 
+      - name: Install cargo-deb
+        if: matrix.platform == 'linux'
+        run: |
+          if ! command -v cargo-deb >/dev/null 2>&1; then
+            cargo install cargo-deb --locked
+          fi
+
+      - name: Build server deb package
+        if: matrix.platform == 'linux'
+        run: cargo deb --profile release --package dinotty-server
+
       - name: Stage Windows portable executable
-        if: github.event_name == 'workflow_dispatch' && matrix.platform == 'windows'
+        if: matrix.platform == 'windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -173,11 +185,20 @@ jobs:
             throw 'dinotty-desktop.exe not found'
           }
 
+          $version = (Get-Content -Raw 'src-tauri/tauri.conf.json' | ConvertFrom-Json).version
+          $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
+            'AMD64' { 'x64' }
+            'ARM64' { 'arm64' }
+            'x86' { 'x86' }
+            default { $env:PROCESSOR_ARCHITECTURE.ToLowerInvariant() }
+          }
+          $portableName = 'Dinotty_{0}_{1}-portable.exe' -f $version, $arch
+
           $portableDir = 'target/release/bundle/portable'
           New-Item -ItemType Directory -Path $portableDir -Force | Out-Null
-          Copy-Item -LiteralPath $exe -Destination (Join-Path $portableDir 'Dinotty-portable.exe') -Force
+          Copy-Item -LiteralPath $exe -Destination (Join-Path $portableDir $portableName) -Force
 
-      - name: Stage desktop packages
+      - name: Stage package artifacts
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -217,15 +238,24 @@ jobs:
             }
           }
 
+          $serverDebDir = 'target/debian'
+          if (Test-Path -LiteralPath $serverDebDir) {
+            Get-ChildItem -LiteralPath $serverDebDir -Filter '*.deb' -File -ErrorAction SilentlyContinue |
+              ForEach-Object {
+                Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $stage $_.Name) -Force
+                $copied++
+              }
+          }
+
           if ($copied -eq 0) {
-            throw 'No desktop package artifacts were found to upload.'
+            throw 'No package artifacts were found to upload.'
           }
 
           Get-ChildItem -LiteralPath $stage -File | ForEach-Object {
             Write-Host "Staged $($_.Name)"
           }
 
-      - name: Upload desktop packages
+      - name: Upload package artifacts
         uses: actions/upload-artifact@v4
         with:
           name: dinotty-${{ matrix.platform }}
@@ -243,7 +273,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Download desktop packages
+      - name: Download package artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: dinotty-*

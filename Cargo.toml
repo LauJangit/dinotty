@@ -63,16 +63,16 @@ license-file = ["LICENSE", "0"]
 extended-description = "Dinotty is a web-based terminal IDE accessible from any browser."
 section = "net"
 priority = "optional"
-depends = "libc6"
+depends = "$auto, adduser, systemd"
 maintainer-scripts = "deploy/systemd"
 assets = [
     ["target/release/dinotty-server", "usr/bin/dinotty-server", "755"],
-    ["deploy/systemd/dinotty.service", "lib/systemd/system/dinotty.service", "644"],
     ["deploy/systemd/env.example", "etc/dinotty/env.example", "644"],
 ]
 conf-files = ["/etc/dinotty/env.example"]
 
 [package.metadata.deb.systemd-units]
+unit-name = "dinotty"
 enable = true
 start = true
 

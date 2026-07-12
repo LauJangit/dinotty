@@ -1,6 +1,6 @@
 [Unit]
 Description=Dinotty Web Terminal IDE
-Documentation=https://github.com/zulinliu/dinotty
+Documentation=https://github.com/xichan96/dinotty
 After=network-online.target
 Wants=network-online.target
 StartLimitBurst=5

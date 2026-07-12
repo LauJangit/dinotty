@@ -22,8 +22,8 @@ export interface SplitPane {
 
 export type PaneLayout = LeafPane | SplitPane
 
-/** Drop position for iTerm2-style 4-zone drag-and-drop */
-export type DropPosition = 'left' | 'right' | 'top' | 'bottom'
+/** Drop position for iTerm2-style 4-zone drag-and-drop + editor center drop */
+export type DropPosition = 'left' | 'right' | 'top' | 'bottom' | 'center'
 
 /** Terminal tab with split pane layout */
 export interface TerminalTab {

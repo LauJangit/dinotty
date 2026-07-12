@@ -103,58 +103,50 @@
             <span>{{ currentFontLabel }}</span>
             <span class="font-dropdown-arrow">▾</span>
           </div>
-          <div
-            v-if="fontDropdownOpen"
-            class="font-dropdown-backdrop"
-            @click="closeFontDropdown"
-          ></div>
-          <div v-if="fontDropdownOpen" class="font-dropdown-menu">
+          <div v-if="fontDropdownOpen" class="font-dropdown-backdrop" @click="closeFontDropdown"></div>
+          <div v-if="fontDropdownOpen" class="font-dropdown-menu" @wheel="onFontMenuWheel">
             <div
+              v-for="item in fontList"
+              :key="item.kind + ':' + item.family"
               class="font-dropdown-item"
-              :class="{ active: !settings.text.font_family }"
-              @click="selectFont('')"
+              :class="{ active: item.selected }"
+              @click="selectFontItem(item)"
             >
-              <span class="font-item-label">{{ t('settings.text.fontFamilyDefault') }}</span>
-            </div>
-            <div
-              v-for="font in fontFamilies"
-              :key="font.value"
-              class="font-dropdown-item"
-              :class="{ active: settings.text.font_family === font.value }"
-              :style="{ fontFamily: font.value }"
-              @click="selectFont(font.value)"
-            >
-              <span class="font-item-label">{{ font.label }}</span>
-              <span class="font-item-sample">Aa 01</span>
+              <span class="font-item-label">{{ fontItemLabel(item) }}</span>
+              <span
+                v-if="item.available"
+                class="font-item-sample"
+                :style="{ fontFamily: item.previewStack }"
+              >Aa 01</span>
+              <span v-else class="font-item-badge">{{ t('settings.text.fontNotInstalled') }}</span>
+              <button
+                v-if="item.removable"
+                class="font-item-remove"
+                :title="t('settings.text.fontRemove')"
+                @click.stop="removeFontItem(item)"
+              >×</button>
+              <button
+                v-else-if="item.kind === 'orphan'"
+                class="font-item-remove"
+                :title="t('settings.text.fontAdd')"
+                @click.stop="addOrphanToList(item)"
+              >+</button>
             </div>
             <div class="font-dropdown-divider"></div>
-            <div
-              class="font-dropdown-item"
-              :class="{ active: isCustomFont || customFontEditing }"
-              @click="enterCustomFont"
-            >
-              <span class="font-item-label">{{ t('settings.text.fontFamilyCustom') }}</span>
-            </div>
-            <div
-              v-if="isCustomFont || customFontEditing"
-              class="font-custom-input-wrap"
-              @click.stop
-            >
+            <div class="font-custom-input-wrap" @click.stop>
               <input
-                ref="customFontInput"
-                v-model="customFontName"
+                ref="addFontInput"
+                v-model="addFontName"
                 class="shortcut-input font-custom-input"
-                :placeholder="t('settings.text.fontFamilyCustomHint')"
-                @keydown.enter="applyCustomFont"
-                @blur="applyCustomFont"
+                :placeholder="t('settings.text.fontAddPlaceholder')"
+                @keydown.enter="addFontFromInput"
               />
+              <button class="shortcut-add" @click="addFontFromInput">{{ t('settings.text.fontAdd') }}</button>
             </div>
+            <div v-if="addFontError" class="font-add-error">{{ addFontError }}</div>
           </div>
         </div>
       </div>
-
-      <details class="ansi-details">
-        <summary>{{ t('settings.advancedText') }}</summary>
 
       <div class="settings-row">
         <label>{{ t('settings.text.lineHeight') }}</label>
@@ -185,6 +177,8 @@
           <span class="range-val">{{ settings.text.letter_spacing }}px</span>
         </div>
       </div>
+
+      <CollapsibleSection :title="t('settings.advancedText')" level="section" default-open>
 
       <div class="settings-row">
         <label>{{ t('settings.text.cursorStyle') }}</label>
@@ -272,7 +266,7 @@
         </div>
       </div>
 
-      </details>
+      </CollapsibleSection>
     </div>
 
     <div class="settings-group" style="text-align: right">
@@ -284,11 +278,20 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, onBeforeUnmount } from 'vue'
+import { ref, computed, onBeforeUnmount, reactive } from 'vue'
 import { useSettings, notifyTextChange } from '../../composables/useSettings'
 import CollapsibleSection from './CollapsibleSection.vue'
 import { useI18n } from '../../composables/useI18n'
 import { themes, getThemeByName } from '../../themes'
+import { primaryFamily, toFontFamilyStack, fontIdentity } from '../../utils/fontFamily'
+import {
+  buildFontList,
+  normalizeCustomFonts,
+  validateFontName,
+  type FontItem,
+  type AddFontError,
+} from '../../utils/fontList'
+import { isFontAvailable, clearNegativeFontCache } from '../../utils/fontAvailability'
 
 const { settings, saveSettings, applyCurrentTheme } = useSettings()
 const { t, themeLabel } = useI18n()
@@ -404,75 +407,113 @@ function resetCustomColors() {
 
 // ── Text / Font ──
 
-const fontFamilies = [
-  { label: 'Menlo', value: 'Menlo, monospace' },
-  { label: 'Monaco', value: 'Monaco, monospace' },
-  { label: 'Consolas', value: 'Consolas, monospace' },
-  { label: 'Courier New', value: '"Courier New", monospace' },
-  { label: 'SF Mono', value: '"SF Mono", monospace' },
-  { label: 'Fira Code', value: '"Fira Code", monospace' },
-  { label: 'FiraCode Nerd Font', value: '"FiraCode Nerd Font", monospace' },
-  { label: 'JetBrains Mono', value: '"JetBrains Mono", monospace' },
-  { label: 'Source Code Pro', value: '"Source Code Pro", monospace' },
-  { label: 'IBM Plex Mono', value: '"IBM Plex Mono", monospace' },
-  { label: 'Ubuntu Mono', value: '"Ubuntu Mono", monospace' },
-]
-
+const customColorsOpen = ref(false)
+const advancedTextOpen = ref(false)
 const fontDropdownOpen = ref(false)
-const customFontEditing = ref(false)
-const customFontName = ref('')
-const customFontInput = ref<HTMLInputElement | null>(null)
 
-const isCustomFont = computed(() => {
-  const current = settings.text.font_family
-  if (!current) return false
-  return !fontFamilies.some((f) => f.value === current)
-})
+// ── Font picker (DT17) ──
+const availability = reactive<Record<string, boolean>>({})
+const addFontName = ref('')
+const addFontError = ref('')
+const addFontInput = ref<HTMLInputElement | null>(null)
 
-const currentFontLabel = computed(() => {
-  const current = settings.text.font_family
-  if (!current) return t('settings.text.fontFamilyDefault')
-  const found = fontFamilies.find((f) => f.value === current)
-  if (found) return found.label
-  return customFontName.value || current.replace(/, monospace$/, '')
-})
+const customFonts = computed<string[]>(() => settings.text.custom_fonts ?? [])
 
-function selectFont(value: string) {
-  settings.text.font_family = value
-  customFontEditing.value = false
-  customFontName.value = ''
-  fontDropdownOpen.value = false
-  onTextSettingChange()
+interface DecoratedItem extends FontItem { available: boolean }
+
+const fontList = computed<DecoratedItem[]>(() =>
+  buildFontList(settings.text.font_family || '', customFonts.value).map((it) => {
+    let available = true
+    if (it.kind !== 'default') {
+      const id = fontIdentity(it.family)
+      available = id === 'monospace' ? true : (availability[id] ?? true)
+    }
+    return { ...it, available }
+  }),
+)
+
+const currentFontLabel = computed(() =>
+  settings.text.font_family ? primaryFamily(settings.text.font_family) : t('settings.text.fontFamilyDefault'),
+)
+
+function fontItemLabel(item: FontItem): string {
+  return item.kind === 'default' ? t('settings.text.fontFamilyDefault') : item.family
 }
 
-function enterCustomFont() {
-  customFontEditing.value = true
-  if (isCustomFont.value) {
-    customFontName.value = settings.text.font_family.replace(/, monospace$/, '')
+function probe(family: string) {
+  const id = fontIdentity(family)
+  if (id in availability) return
+  availability[id] = isFontAvailable(family)
+}
+
+async function runProbes() {
+  try {
+    const fonts = (document as unknown as { fonts?: { ready?: Promise<unknown> } }).fonts
+    if (fonts?.ready) await fonts.ready
+  } catch { /* ignore */ }
+  clearNegativeFontCache()
+  for (const key of Object.keys(availability)) delete availability[key]
+  for (const it of buildFontList(settings.text.font_family || '', customFonts.value)) {
+    if (it.kind !== 'default') probe(it.family)
   }
-  nextTick(() => customFontInput.value?.focus())
+}
+
+function onFontMenuWheel(e: WheelEvent) {
+  const el = e.currentTarget as HTMLElement
+  const atTop = el.scrollTop <= 0 && e.deltaY < 0
+  const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1 && e.deltaY > 0
+  if (atTop || atBottom) e.preventDefault()
 }
 
 function toggleFontDropdown() {
-  if (fontDropdownOpen.value) {
-    closeFontDropdown()
-    return
-  }
+  if (fontDropdownOpen.value) { closeFontDropdown(); return }
   fontDropdownOpen.value = true
+  addFontError.value = ''
+  void runProbes()
 }
 
 function closeFontDropdown() {
   fontDropdownOpen.value = false
-  customFontEditing.value = false
+  addFontError.value = ''
 }
 
-function applyCustomFont() {
-  const name = customFontName.value.trim()
-  if (name) {
-    settings.text.font_family = `${name}, monospace`
-    onTextSettingChange()
+function selectFontItem(item: FontItem) {
+  settings.text.font_family = item.kind === 'default' ? '' : toFontFamilyStack(item.family)
+  fontDropdownOpen.value = false
+  onTextSettingChange()
+}
+
+const ADD_ERR_KEY: Record<Exclude<AddFontError, ''>, string> = {
+  blank: 'settings.text.fontErrBlank',
+  tooLong: 'settings.text.fontErrTooLong',
+  invalidChars: 'settings.text.fontErrInvalidChars',
+  duplicate: 'settings.text.fontErrDuplicate',
+  limit: 'settings.text.fontErrLimit',
+}
+
+function addFontValue(rawName: string) {
+  const name = primaryFamily(rawName)
+  const err = validateFontName(name, customFonts.value)
+  if (err) { addFontError.value = t(ADD_ERR_KEY[err]); return }
+  settings.text.custom_fonts = normalizeCustomFonts([...customFonts.value, name])
+  addFontName.value = ''
+  addFontError.value = ''
+  probe(name)
+  onTextSettingChange()
+}
+
+function addFontFromInput() { addFontValue(addFontName.value) }
+
+function addOrphanToList(item: FontItem) { addFontValue(item.family) }
+
+function removeFontItem(item: FontItem) {
+  if (!item.removable) return
+  const id = fontIdentity(item.family)
+  settings.text.custom_fonts = normalizeCustomFonts(customFonts.value.filter((c) => fontIdentity(c) !== id))
+  if (fontIdentity(settings.text.font_family || '') === id) {
+    settings.text.font_family = 'monospace'
   }
-  closeFontDropdown()
+  onTextSettingChange()
 }
 
 let textChangeTimer: ReturnType<typeof setTimeout> | null = null
