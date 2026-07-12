@@ -45,6 +45,8 @@ pub struct Settings {
     pub upload_dir: String,
     #[serde(default)]
     pub default_base_dir: Option<String>,
+    #[serde(default)]
+    pub default_workspace_root: Option<String>,
     #[serde(default = "default_upload_cap_mb")]
     pub upload_cap_mb: u64,
     #[serde(default = "default_upload_cap_count")]
@@ -719,6 +721,19 @@ pub struct ActionKeyboardConfig {
     pub rows: Vec<Vec<ActionKey>>,
 }
 
+impl Settings {
+    /// Resolve `default_workspace_root`, returning `None` when unset, empty,
+    /// whitespace-only, or not a directory.
+    pub fn resolved_default_workspace_root(&self) -> Option<std::path::PathBuf> {
+        self.default_workspace_root
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .map(std::path::PathBuf::from)
+            .filter(|p| p.is_dir())
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -734,6 +749,7 @@ impl Default for Settings {
             action_keyboard: None,
             upload_dir: default_upload_dir(),
             default_base_dir: None,
+            default_workspace_root: None,
             upload_cap_mb: default_upload_cap_mb(),
             upload_cap_count: default_upload_cap_count(),
             upload_file_cap_mb: 0,
