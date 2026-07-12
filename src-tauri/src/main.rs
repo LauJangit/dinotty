@@ -57,7 +57,10 @@ fn spawn_tauri_output_forwarder(
                     loop {
                         match rx.try_recv() {
                             Ok(SessionClientEvent::Output(data)) => batch.push_str(&data),
-                            Ok(event @ SessionClientEvent::Resize { .. }) => {
+                            Ok(
+                                event @ (SessionClientEvent::Resize { .. }
+                                | SessionClientEvent::SessionExit { .. }),
+                            ) => {
                                 pending = Some(event);
                                 break;
                             }
@@ -78,6 +81,10 @@ fn spawn_tauri_output_forwarder(
                     {
                         break;
                     }
+                }
+                SessionClientEvent::SessionExit { pane_id: exit_pane_id } => {
+                    let _ = app.emit("pty-exit", PtyExit { pane_id: exit_pane_id });
+                    break;
                 }
             }
         }

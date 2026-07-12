@@ -555,6 +555,9 @@ async fn handle_socket(
                     SessionClientEvent::Resize { cols, rows } => {
                         serde_json::to_string(&ServerMsg::Resize { cols, rows })
                     }
+                    SessionClientEvent::SessionExit { pane_id: _ } => {
+                        serde_json::to_string(&ServerMsg::SessionExit)
+                    }
                 }
                 .expect("serialization is infallible");
                 if fwd_ws_out_tx.send(Message::Text(msg)).is_err() {
@@ -701,6 +704,9 @@ async fn handle_socket(
                 }
                 SessionClientEvent::Resize { cols, rows } => {
                     serde_json::to_string(&ServerMsg::Resize { cols, rows })
+                }
+                SessionClientEvent::SessionExit { pane_id: _ } => {
+                    serde_json::to_string(&ServerMsg::SessionExit)
                 }
             }
             .expect("serialization is infallible");
@@ -976,6 +982,9 @@ pub async fn handle_open_api_ws(socket: WebSocket, manager: Arc<SessionManager>,
                 }
                 SessionClientEvent::Resize { cols, rows } => {
                     serde_json::to_string(&ServerMsg::Resize { cols, rows })
+                }
+                SessionClientEvent::SessionExit { pane_id: _ } => {
+                    serde_json::to_string(&ServerMsg::SessionExit)
                 }
             }
             .expect("serialization is infallible");
