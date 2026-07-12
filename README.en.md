@@ -41,22 +41,34 @@ A **multi-device** terminal server purpose-built for **coding agents**. Run Clau
 
 The desktop client delivers a professional experience comparable to iTerm2:
 
-**Split Screen** — Draggable multi-pane split with free layout adjustment:
+**Split Broadcast** — Draggable multi-pane split, type in one pane and execute in all panes simultaneously:
 
 <p align="center">
-  <img src="docs/images/split-screen.GIF" alt="Split screen demo" width="600" />
+  <img src="docs/images/gif/1-split-broadcast.gif" alt="Split broadcast demo" width="600" />
+</p>
+
+**Command Bookmarks** — Right-click terminal text to bookmark, group management, one-click execution:
+
+<p align="center">
+  <img src="docs/images/gif/2-command-bookmark.gif" alt="Command bookmarks demo" width="600" />
+</p>
+
+**SSH Connection & File Browser** — Built-in SSH client, remote sessions feel just like local, full SFTP file management:
+
+<p align="center">
+  <img src="docs/images/gif/3-ssh-file-browser.gif" alt="SSH connection and file browser demo" width="600" />
+</p>
+
+**Workspace Management & Mission Control** — Multi-workspace isolation, Mission Control overview, quick switching:
+
+<p align="center">
+  <img src="docs/images/gif/4-workspace-mission-control.gif" alt="Workspace management demo" width="600" />
 </p>
 
 **Plugin System** — Hot-reloadable JS plugins with built-in CC Switch, JSON Formatter, and more:
 
 <p align="center">
-  <img src="docs/images/plugin-system.GIF" alt="Plugin system demo" width="600" />
-</p>
-
-**Web Preview** — Preview local dev servers on your phone, built-in reverse proxy, no need to switch browsers:
-
-<p align="center">
-  <img src="docs/images/web-preview.GIF" alt="Web preview demo" width="600" />
+  <img src="docs/images/gif/5-plugin.gif" alt="Plugin system demo" width="600" />
 </p>
 
 ## Why Dinotty?

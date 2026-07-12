@@ -41,22 +41,34 @@
 
 桌面端同样专业好用，媲美 iTerm2 的终端体验：
 
-**分屏** — 可拖拽的多面板分屏，自由调整布局：
+**分屏广播** — 可拖拽的多面板分屏，一个 pane 输入，多个 pane 同步执行：
 
 <p align="center">
-  <img src="docs/images/split-screen.GIF" alt="分屏演示" width="600" />
+  <img src="docs/images/gif/1-split-broadcast.gif" alt="分屏广播演示" width="600" />
+</p>
+
+**命令收藏** — 右键终端文本直接收藏，分组管理，一键执行：
+
+<p align="center">
+  <img src="docs/images/gif/2-command-bookmark.gif" alt="命令收藏演示" width="600" />
+</p>
+
+**SSH 连接与文件浏览器** — 内建 SSH 客户端，远程会话与本地体验一致，SFTP 文件管理全覆盖：
+
+<p align="center">
+  <img src="docs/images/gif/3-ssh-file-browser.gif" alt="SSH 连接与文件浏览器演示" width="600" />
+</p>
+
+**工作区管理与 Mission Control** — 多工作区隔离，Mission Control 概览，快速切换：
+
+<p align="center">
+  <img src="docs/images/gif/4-workspace-mission-control.gif" alt="工作区管理演示" width="600" />
 </p>
 
 **插件系统** — JS 插件热重载，内置 CC Switch、JSON Formatter 等：
 
 <p align="center">
-  <img src="docs/images/plugin-system.GIF" alt="插件系统演示" width="600" />
-</p>
-
-**网页预览** — 手机上也能预览本地开发服务器，内建反向代理，不用切浏览器：
-
-<p align="center">
-  <img src="docs/images/web-preview.GIF" alt="网页预览演示" width="600" />
+  <img src="docs/images/gif/5-plugin.gif" alt="插件系统演示" width="600" />
 </p>
 
 ## 为什么选择 Dinotty？
