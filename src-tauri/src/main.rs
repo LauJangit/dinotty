@@ -5,7 +5,10 @@ use dinotty_server::pty;
 use dinotty_server::session::{SessionClientEvent, SessionManager, SessionStatus, SyncMsg};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, OnceLock};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, OnceLock,
+};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -14,6 +17,7 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut}
 mod embedded_server;
 
 static EMBEDDED_HTTP_PORT: OnceLock<u16> = OnceLock::new();
+static DESKTOP_SHUTDOWN_STARTED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Serialize)]
 struct PtyOutput {
@@ -423,11 +427,6 @@ async fn tauri_upload(
 }
 
 #[tauri::command]
-fn close_window(window: tauri::Window) {
-    let _ = window.destroy();
-}
-
-#[tauri::command]
 fn toggle_window(window: tauri::Window) {
     if window.is_visible().unwrap_or(false) {
         let _ = window.hide();
@@ -457,6 +456,31 @@ fn toggle_webview_window(window: &tauri::WebviewWindow) {
     }
 }
 
+fn terminate_sessions_once(manager: &SessionManager) {
+    if DESKTOP_SHUTDOWN_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    let pane_ids: Vec<String> = manager.sessions.iter().map(|entry| entry.key().clone()).collect();
+    tracing::info!("Desktop shutdown: terminating {} session(s)", pane_ids.len());
+    for pane_id in pane_ids {
+        manager.kill_and_remove(&pane_id);
+    }
+}
+
+fn quit_desktop_app(app: &AppHandle, manager: &SessionManager) {
+    terminate_sessions_once(manager);
+    if let Err(e) = app.global_shortcut().unregister_all() {
+        tracing::warn!("Failed to unregister global shortcuts during shutdown: {e}");
+    }
+    app.exit(0);
+}
+
+#[tauri::command]
+fn close_window(app: AppHandle, state: State<'_, Arc<SessionManager>>) {
+    quit_desktop_app(&app, state.inner().as_ref());
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::new(
@@ -483,6 +507,8 @@ fn main() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let _runtime_enter = runtime.enter();
     manager.start_cleanup_task();
+
+    let run_manager = Arc::clone(&manager);
 
     tauri::Builder::default()
         // Keep one desktop instance so a second launch focuses the hidden/tray window instead
@@ -516,6 +542,7 @@ fn main() {
             let show_item = MenuItemBuilder::with_id("show", "Show/Hide").build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
             let menu = MenuBuilder::new(app).items(&[&show_item, &quit_item]).build()?;
+            let quit_manager = Arc::clone(&manager);
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
@@ -526,7 +553,7 @@ fn main() {
                         }
                     }
                     "quit" => {
-                        app.exit(0);
+                        quit_desktop_app(app, quit_manager.as_ref());
                     }
                     _ => {}
                 })
@@ -568,8 +595,11 @@ fn main() {
                 _ => {}
             },
             tauri::WindowEvent::CloseRequested { api, .. } => {
+                if DESKTOP_SHUTDOWN_STARTED.load(Ordering::SeqCst) {
+                    return;
+                }
                 api.prevent_close();
-                let _ = window.hide();
+                let _ = window.emit("window-close-requested", ());
             }
             _ => {}
         })
@@ -591,7 +621,7 @@ fn main() {
         ])
         .build(tauri::generate_context!())
         .expect("error building tauri application")
-        .run(|app_handle, event| {
+        .run(move |app_handle, event| {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {
                 if let Some(win) = app_handle.get_webview_window("main") {
@@ -600,8 +630,12 @@ fn main() {
                 }
             }
 
+            if matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit) {
+                terminate_sessions_once(run_manager.as_ref());
+            }
+
             #[cfg(not(target_os = "macos"))]
-            let _ = (app_handle, event);
+            let _ = app_handle;
         });
 }
 
