@@ -264,8 +264,7 @@ fn clamp_text_on_load_preserves_empty_font_family() {
 #[test]
 fn clamp_text_on_load_neutralises_unsafe_font_family() {
     for font_family in ["a;b{}", "Bad\nFont"] {
-        let mut text =
-            TextConfig { font_family: font_family.into(), ..TextConfig::default() };
+        let mut text = TextConfig { font_family: font_family.into(), ..TextConfig::default() };
 
         assert!(clamp_text_on_load(&mut text));
         assert_eq!(text.font_family, "monospace");
@@ -284,10 +283,24 @@ fn clamp_text_on_load_keeps_legit_font_stack() {
 #[test]
 fn clamp_text_on_load_keeps_monospace_and_empty_font_family() {
     for font_family in ["monospace", ""] {
-        let mut text =
-            TextConfig { font_family: font_family.into(), ..TextConfig::default() };
+        let mut text = TextConfig { font_family: font_family.into(), ..TextConfig::default() };
 
         assert!(!clamp_text_on_load(&mut text));
         assert_eq!(text.font_family, font_family);
     }
+}
+
+#[test]
+fn clamp_custom_fonts_drops_css_injection_vectors() {
+    let mut fonts = vec![
+        "Good Font".into(),
+        "Evil<script>".into(),
+        "Evil;drop".into(),
+        "Evil{bad}".into(),
+        "Evil>arrow".into(),
+        "Another Good".into(),
+    ];
+
+    assert!(clamp_custom_fonts(&mut fonts));
+    assert_eq!(fonts, vec!["Good Font", "Another Good"]);
 }

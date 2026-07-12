@@ -550,8 +550,8 @@ impl Default for TextConfig {
 const FONT_ANCHORS: [&str; 5] =
     ["Menlo", "Consolas", "Courier New", "DejaVu Sans Mono", "monospace"];
 
-/// Trim ASCII/Unicode whitespace AND U+FEFF (BOM/ZWNBSP), matching JS String.trim() which
-/// strips U+FEFF as ECMAScript WhiteSpace. Rust str::trim() does not remove U+FEFF.
+/// Trim ASCII/Unicode whitespace AND U+FEFF (BOM/ZWNBSP), matching JS `String.trim()` which
+/// strips U+FEFF as ECMAScript `WhiteSpace`. Rust `str::trim()` does not remove U+FEFF.
 fn trim_font(s: &str) -> &str {
     s.trim_matches(|c: char| c.is_whitespace() || c == '\u{FEFF}')
 }
@@ -563,14 +563,15 @@ fn primary_family(value: &str) -> String {
     let mut chars = first.chars();
     if let (Some(f), Some(l)) = (chars.next(), first.chars().last()) {
         if first.chars().count() >= 2 && (f == '"' || f == '\'') && f == l {
-            return trim_font(&first[1..first.len() - 1]).to_string();
+            // Use char-based indices to avoid panicking on multi-byte UTF-8 boundaries.
+            let inner: String = first.chars().skip(1).take(first.chars().count() - 2).collect();
+            return trim_font(&inner).to_string();
         }
     }
     first.to_string()
 }
 
 fn clamp_custom_fonts(v: &mut Vec<String>) -> bool {
-    let original = v.clone();
     let anchor_identities: Vec<String> =
         FONT_ANCHORS.iter().map(|anchor| anchor.to_lowercase()).collect();
     let mut seen = Vec::new();
@@ -581,7 +582,9 @@ fn clamp_custom_fonts(v: &mut Vec<String>) -> bool {
         let trimmed = trim_font(&primary);
         if trimmed.is_empty()
             || trimmed.chars().count() > 100
-            || trimmed.chars().any(|c| c == '"' || c == '\\' || c.is_control())
+            || trimmed.chars().any(|c| {
+                c == '"' || c == '\\' || c.is_control() || matches!(c, '<' | '>' | ';' | '{' | '}')
+            })
         {
             continue;
         }
@@ -598,7 +601,7 @@ fn clamp_custom_fonts(v: &mut Vec<String>) -> bool {
         }
     }
 
-    let changed = sanitized != original;
+    let changed = sanitized.len() != v.len() || sanitized.iter().zip(v.iter()).any(|(a, b)| a != b);
     *v = sanitized;
     changed
 }

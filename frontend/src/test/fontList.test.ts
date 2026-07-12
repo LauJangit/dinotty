@@ -91,6 +91,10 @@ describe('normalizeCustomFonts', () => {
     expect(result).toHaveLength(MAX_CUSTOM_FONTS)
     expect(result[result.length - 1]).toBe('Font 19')
   })
+
+  it('drops CSS injection vectors', () => {
+    expect(normalizeCustomFonts(['Good', 'Evil<script>', 'Evil;drop', 'Evil{bad}', 'Evil>arrow'])).toEqual(['Good'])
+  })
 })
 
 describe('validateFontName', () => {
@@ -102,6 +106,9 @@ describe('validateFontName', () => {
     ['Menlo, monospace', [], 'duplicate'],
     ['Foo, Bar', [], ''],
     [`AB${String.fromCharCode(0x80)}`, [], 'invalidChars'],
+    ['Evil<script>', [], 'invalidChars'],
+    ['Evil;drop', [], 'invalidChars'],
+    ['Evil{bad}', [], 'invalidChars'],
     ['foo', ['Foo'], 'duplicate'],
     ['New Font', Array.from({ length: 20 }, (_, i) => `Font ${i}`), 'limit'],
     ['New Font', ['Existing Font'], ''],
