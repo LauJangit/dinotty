@@ -11,7 +11,7 @@
     "shell:allow-open",
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister",
-    "clipboard:allow-read-text",
-    "clipboard:allow-write-text"
+    "clipboard-manager:allow-read-text",
+    "clipboard-manager:allow-write-text"
   ]
 }
