@@ -194,8 +194,8 @@ export const DEFAULT_ACTION_KEYBOARD: ActionKeyboardConfig = {
       { label: 'opencode', send: 'opencode', auto_enter: true, icon: OpencodeLogo },
     ],
     [
-      { label: 'esc', send: '\x1b', style: 'danger', auto_enter: true },
-      { label: 'ctrl+c', send: '\x03', style: 'danger', auto_enter: true },
+      { label: 'esc', send: '\x1b', style: 'danger' },
+      { label: 'ctrl+c', send: '\x03', style: 'danger' },
       { label: 'clear', send: 'clear', auto_enter: true },
       { label: '⌫', send: '\x7f', repeat: true, grow: 1.5 },
     ],
