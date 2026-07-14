@@ -1399,6 +1399,9 @@ function onGlobalKeydown(e: KeyboardEvent) {
     const binding = getBinding(id)
     if (keyEventMatchesBinding(e, binding)) {
       e.preventDefault()
+      if (id === 'closeTab') {
+        lastTabCloseShortcutAt = Date.now()
+      }
       action()
       return
     }
@@ -1452,12 +1455,20 @@ const _focusHandler = () => {
 }
 
 // Tauri window close confirmation
+// On macOS, Cmd+W is bound to the native "Close" menu item and fires CloseRequested
+// in addition to the JS keydown handler. Track when the tab-close shortcut fires so
+// the window-close-requested listener can suppress the app-exit path — Cmd+W should
+// close the tab, not quit the app.
+let lastTabCloseShortcutAt = 0
 let unlistenWindowClose: (() => void) | undefined
 function setupTauriWindowClose() {
   if (!isTauri()) return
   const listen = (window as any).__TAURI__?.event?.listen
   if (!listen) return
   listen('window-close-requested', () => {
+    if (Date.now() - lastTabCloseShortcutAt < 500) {
+      return
+    }
     if (appSettings.confirm_before_close_tab && tabs.value.some((t) => t.type === 'terminal')) {
       windowCloseConfirmVisible.value = true
     } else {
