@@ -927,6 +927,13 @@ function focusActive() {
   if (!tab) return
   if (tab.type === 'terminal') {
     const paneId = tab.activePaneId
+    // Defer focus/blur/fit if ANY pane in this tab is mid-IME-composition.
+    // Calling .blur()/.focus()/.fit() during composition aborts the IME
+    // session and causes xterm's diff-fallback to leak preedit text as
+    // raw input (P3).
+    for (const leaf of getAllLeaves(tab.layout)) {
+      if (termRefs[leaf.paneId]?.isComposing()) return
+    }
     if (!(isTouchDevice() && kbVisible.value)) {
       // Blur all other panes first to prevent duplicate input in Tauri WKWebView
       for (const leaf of getAllLeaves(tab.layout)) {
@@ -1240,6 +1247,9 @@ window.__dinotty_terminal_api = {
     return tab?.type === 'terminal' ? tab.activePaneId : ''
   },
 }
+// Test hooks for P3 verification (focusActive + isComposing guard).
+window.__dinotty_test_focus_active = focusActive
+window.__dinotty_test_is_composing = (paneId: string) => termRefs[paneId]?.isComposing() ?? false
 window.__dinotty_ui_notify = (
   message: string,
   level?: 'info' | 'warn' | 'error',

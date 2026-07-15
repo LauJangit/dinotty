@@ -230,6 +230,11 @@ export class TerminalInstance {
   private _trackingWheelState: TrackingWheelState | null = null
   private _wheelRowHeightWarned = false
   private _symCredits: Array<{ data: string; src: 0 | 1; at: number }> = []
+  // IME composition state. Tracked via compositionstart/compositionend on the
+  // xterm textarea so focusActive() can avoid .focus()/.blur()/.fit() during
+  // composition - those calls interrupt the IME session and cause xterm's
+  // diff-fallback to leak preedit text as raw input.
+  private _composing = false
   private _writeQueue: string[] = []
   private _writing = false
   // Watchdog for silent xterm.write() callback loss. xterm.js can drop the
@@ -467,6 +472,23 @@ export class TerminalInstance {
       textarea.inputMode = 'none'
       textarea.setAttribute('virtualkeyboardpolicy', 'manual')
     }
+    // Track IME composition state on all platforms so focusActive() can
+    // defer .focus()/.blur()/.fit() during composition. Interrupting an
+    // in-flight composition causes xterm's diff-fallback to leak preedit
+    // text as raw input (P3).
+    if (textarea) {
+      const onStart = () => { this._composing = true }
+      const onEnd = () => { this._composing = false }
+      textarea.addEventListener('compositionstart', onStart)
+      textarea.addEventListener('compositionend', onEnd)
+      const prevCleanup = this._compositionCleanup
+      this._compositionCleanup = () => {
+        textarea.removeEventListener('compositionstart', onStart)
+        textarea.removeEventListener('compositionend', onEnd)
+        this._composing = false
+        prevCleanup?.()
+      }
+    }
     if (textarea && isTauri()) {
       const onImeInput = (e: InputEvent) => {
         if (e.inputType !== 'insertText') return
@@ -475,9 +497,11 @@ export class TerminalInstance {
         if (this._resolveSym(data, 0, performance.now())) this._emitInput(data)
       }
       textarea.addEventListener('input', onImeInput as EventListener)
+      const prevCleanup = this._compositionCleanup
       this._compositionCleanup = () => {
         textarea.removeEventListener('input', onImeInput as EventListener)
         this._symCredits = []
+        prevCleanup?.()
       }
     }
 
@@ -714,6 +738,10 @@ export class TerminalInstance {
 
   getSelection(): string {
     return this.xterm?.getSelection() ?? ''
+  }
+
+  get isComposing(): boolean {
+    return this._composing
   }
 
   selectAll() {
