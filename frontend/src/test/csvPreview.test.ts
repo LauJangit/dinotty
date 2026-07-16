@@ -66,32 +66,66 @@ describe('CsvPreview', function csvPreviewComponentSuite() {
     expect(wrapper.find('tbody').text()).not.toContain('Alice')
   })
 
-  it('filters rows with a condition on the selected column', async function filtersSelectedColumn() {
+  it('combines multiple conditions with AND and OR', async function combinesConditions() {
     // 步骤1：挂载包含城市和状态字段的 CSV 表格。
     const wrapper = mount(CsvPreview, {
       props: {
         content:
-          'name,city,status\nAlice,Shanghai,active\nBob,Shanghai,inactive\nCarol,Beijing,active',
+          'name,city,status\nAlice,Shanghai,active\nBob,Shanghai,inactive\nCarol,Beijing,active\nDavid,Shenzhen,inactive',
         filePath: 'people.csv',
         truncated: false,
       },
     })
 
-    // 步骤2：打开条件筛选并指定城市列等于 Shanghai。
+    // 步骤2：添加“城市等于 Shanghai”和“状态等于 active”两个条件。
     await wrapper.get('[data-testid="csv-filter-toggle"]').trigger('click')
-    await wrapper.get('[data-testid="csv-filter-column"]').setValue('1')
-    await wrapper.get('[data-testid="csv-filter-operator"]').setValue('equals')
-    await wrapper.get('[data-testid="csv-filter-value"]').setValue('Shanghai')
+    await wrapper.get('[data-testid="csv-filter-column-0"]').setValue('1')
+    await wrapper.get('[data-testid="csv-filter-operator-0"]').setValue('equals')
+    await wrapper.get('[data-testid="csv-filter-value-0"]').setValue('Shanghai')
+    await wrapper.get('[data-testid="csv-filter-add"]').trigger('click')
+    await wrapper.get('[data-testid="csv-filter-column-1"]').setValue('2')
+    await wrapper.get('[data-testid="csv-filter-operator-1"]').setValue('equals')
+    await wrapper.get('[data-testid="csv-filter-value-1"]').setValue('active')
 
-    // 步骤3：确认仅保留城市完全匹配的两行。
-    expect(wrapper.findAll('tbody tr')).toHaveLength(2)
+    // 步骤3：AND 模式只保留同时满足两个条件的 Alice。
+    expect(wrapper.findAll('tbody tr')).toHaveLength(1)
+    expect(wrapper.find('tbody').text()).toContain('Alice')
+    expect(wrapper.find('tbody').text()).not.toContain('Bob')
+    expect(wrapper.find('tbody').text()).not.toContain('Carol')
+
+    // 步骤4：切换 OR 模式后保留满足任一条件的三行。
+    await wrapper.get('[data-testid="csv-filter-logic-or"]').trigger('click')
+    expect(wrapper.findAll('tbody tr')).toHaveLength(3)
     expect(wrapper.find('tbody').text()).toContain('Alice')
     expect(wrapper.find('tbody').text()).toContain('Bob')
+    expect(wrapper.find('tbody').text()).toContain('Carol')
+    expect(wrapper.find('tbody').text()).not.toContain('David')
+  })
+
+  it('negates an individual filter condition', async function negatesCondition() {
+    // 步骤1：挂载包含状态字段的 CSV 表格并设置状态等于 active。
+    const wrapper = mount(CsvPreview, {
+      props: {
+        content: 'name,status\nAlice,active\nBob,inactive\nCarol,active',
+        filePath: 'people.csv',
+        truncated: false,
+      },
+    })
+    await wrapper.get('[data-testid="csv-filter-toggle"]').trigger('click')
+    await wrapper.get('[data-testid="csv-filter-column-0"]').setValue('1')
+    await wrapper.get('[data-testid="csv-filter-operator-0"]').setValue('equals')
+    await wrapper.get('[data-testid="csv-filter-value-0"]').setValue('active')
+
+    // 步骤2：启用“非”后只保留不满足该条件的 Bob。
+    await wrapper.get('[data-testid="csv-filter-negate-0"]').setValue(true)
+    expect(wrapper.findAll('tbody tr')).toHaveLength(1)
+    expect(wrapper.find('tbody').text()).toContain('Bob')
+    expect(wrapper.find('tbody').text()).not.toContain('Alice')
     expect(wrapper.find('tbody').text()).not.toContain('Carol')
   })
 
-  it('shows selected columns and can restore all columns', async function selectsVisibleColumns() {
-    // 步骤1：挂载包含三列的 CSV 表格并打开列显示设置。
+  it('applies column choices only after confirming the dialog', async function confirmsColumns() {
+    // 步骤1：挂载包含三列的 CSV 表格并打开列显示弹窗。
     const wrapper = mount(CsvPreview, {
       props: {
         content: 'name,city,status\nAlice,Shanghai,active',
@@ -100,17 +134,29 @@ describe('CsvPreview', function csvPreviewComponentSuite() {
       },
     })
     await wrapper.get('[data-testid="csv-columns-toggle"]').trigger('click')
+    expect(wrapper.get('[data-testid="csv-columns-dialog"]').attributes('role')).toBe('dialog')
 
-    // 步骤2：隐藏城市和状态列，只保留姓名列。
+    // 步骤2：取消弹窗后不应用临时取消的城市列。
+    await wrapper.get('[data-testid="csv-column-option-1"]').setValue(false)
+    await wrapper.get('[data-testid="csv-columns-cancel"]').trigger('click')
+    expect(wrapper.find('[data-testid="csv-columns-dialog"]').exists()).toBe(false)
+    expect(wrapper.findAll('thead th')).toHaveLength(4)
+    expect(wrapper.find('thead').text()).toContain('city')
+
+    // 步骤3：重新打开弹窗，确定后只显示姓名列。
+    await wrapper.get('[data-testid="csv-columns-toggle"]').trigger('click')
     await wrapper.get('[data-testid="csv-column-option-1"]').setValue(false)
     await wrapper.get('[data-testid="csv-column-option-2"]').setValue(false)
+    await wrapper.get('[data-testid="csv-columns-confirm"]').trigger('click')
     expect(wrapper.findAll('thead th')).toHaveLength(2)
     expect(wrapper.find('thead').text()).toContain('name')
     expect(wrapper.find('thead').text()).not.toContain('city')
     expect(wrapper.findAll('tbody td')).toHaveLength(1)
 
-    // 步骤3：一键恢复后重新显示全部三列。
-    await wrapper.get('[data-testid="csv-columns-show-all"]').trigger('click')
+    // 步骤4：在弹窗中全选并确定后恢复全部三列。
+    await wrapper.get('[data-testid="csv-columns-toggle"]').trigger('click')
+    await wrapper.get('[data-testid="csv-columns-select-all"]').trigger('click')
+    await wrapper.get('[data-testid="csv-columns-confirm"]').trigger('click')
     expect(wrapper.findAll('thead th')).toHaveLength(4)
     expect(wrapper.find('thead').text()).toContain('city')
     expect(wrapper.find('thead').text()).toContain('status')
