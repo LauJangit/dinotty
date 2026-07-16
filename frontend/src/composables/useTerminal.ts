@@ -260,6 +260,19 @@ export class TerminalInstance {
   private _settleTimeouts: ReturnType<typeof setTimeout>[] = []
   private _settleRaf: number = 0
   private _settleGeneration: number = 0
+  // Zero-size watchdog: when the wrapper collapses to 0×0 (cold reload flex
+  // chain collapse, hidden tab becoming visible, mobile keyboard
+  // dismissing) the settle-ladder [50,120,250,450,700]ms can sample 0×0 at
+  // every tick and give up. ResizeObserver should fire when the wrapper
+  // recovers, but browsers occasionally fail to recompute an active
+  // percent-based flex chain, leaving the terminal permanently 0×0 until
+  // an external reflow (drag/refresh). This retry polls every 250ms for up
+  // to 30s as a safety net — _refit is idempotent so the cost is trivial
+  // when the wrapper is already non-zero.
+  private _zeroSizeRetryTimer: ReturnType<typeof setTimeout> | null = null
+  private _zeroSizeRetries = 0
+  private static readonly ZERO_SIZE_RETRY_MS = 250
+  private static readonly ZERO_SIZE_MAX_RETRIES = 120
   private _transportConnected = false
   private _lastSentCols = 0
   private _lastSentRows = 0
@@ -763,6 +776,7 @@ export class TerminalInstance {
     if (this._reconnectTimer) clearTimeout(this._reconnectTimer)
     for (const h of this._settleTimeouts) clearTimeout(h)
     this._settleTimeouts = []
+    this._clearZeroSizeRetry()
     if (this._settleRaf) cancelAnimationFrame(this._settleRaf)
     if (this._peerFollowTimer) {
       clearTimeout(this._peerFollowTimer)
@@ -1229,7 +1243,15 @@ export class TerminalInstance {
     }
     if (this._destroyed || !this.fitAddon || !this.xterm || !this._wrapper) return null
     const rect = this._wrapper.getBoundingClientRect()
-    if (rect.width === 0 || rect.height === 0) return null
+    if (rect.width === 0 || rect.height === 0) {
+      // Flex chain collapsed (cold reload, hidden tab, mobile keyboard).
+      // settle-ladder samples 0×0 at every tick and gives up after 700ms;
+      // poll until the wrapper recovers so we don't strand the terminal at
+      // blank until an external reflow (drag/refresh).
+      this._scheduleZeroSizeRetry()
+      return null
+    }
+    this._clearZeroSizeRetry()
     try {
       this.fitAddon.fit()
     } catch {
@@ -1274,6 +1296,35 @@ export class TerminalInstance {
     }
   }
 
+  // Schedule a zero-size retry. Called when _doFitAndResize or _settleRefit
+  // see rect.width === 0 || rect.height === 0. The retry goes through
+  // _refit → _doFitAndResize, so it reuses the existing dedup rAF path
+  // and cancels itself once the wrapper becomes non-zero.
+  private _scheduleZeroSizeRetry() {
+    if (this._zeroSizeRetryTimer) return
+    if (this._zeroSizeRetries >= TerminalInstance.ZERO_SIZE_MAX_RETRIES) {
+      console.warn(
+        `[dinotty] terminal wrapper still 0×0 after ${this._zeroSizeRetries} retries (~${Math.round(this._zeroSizeRetries * TerminalInstance.ZERO_SIZE_RETRY_MS / 1000)}s); giving up, will recover on next ResizeObserver event`
+      )
+      this._zeroSizeRetries = 0
+      return
+    }
+    this._zeroSizeRetries++
+    this._zeroSizeRetryTimer = setTimeout(() => {
+      this._zeroSizeRetryTimer = null
+      if (this._destroyed) return
+      this._refit()
+    }, TerminalInstance.ZERO_SIZE_RETRY_MS) as unknown as ReturnType<typeof setTimeout>
+  }
+
+  private _clearZeroSizeRetry() {
+    if (this._zeroSizeRetryTimer) {
+      clearTimeout(this._zeroSizeRetryTimer)
+      this._zeroSizeRetryTimer = null
+    }
+    this._zeroSizeRetries = 0
+  }
+
   private _doFitAndResize(force = false) {
     if (this._followingPeer) {
       if (this._wrapperChanged()) this._pendingLocalRefit = true
@@ -1281,7 +1332,11 @@ export class TerminalInstance {
     }
     if (!this.fitAddon || !this.xterm || !this._wrapper) return
     const rect = this._wrapper.getBoundingClientRect()
-    if (rect.width === 0 || rect.height === 0) return
+    if (rect.width === 0 || rect.height === 0) {
+      this._scheduleZeroSizeRetry()
+      return
+    }
+    this._clearZeroSizeRetry()
     try {
       this.fitAddon.fit()
     } catch {
