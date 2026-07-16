@@ -237,19 +237,35 @@ export class TerminalInstance {
   private _composing = false
   private _writeQueue: string[] = []
   private _writing = false
-  // DEC mode 2026 transaction buffer. While _syncActive is true, server-side
-  // Output is held here instead of entering the write pump; on sync_end the
-  // joined buffer is enqueued as a single write so xterm sees a coherent
-  // stream and doesn't repaint per 32 KiB / per rAF chunk mid-redraw. The
-  // server's 256 KiB SYNC_BUFFER_LIMIT can force-flush mid-transaction, so
-  // _syncTransactionBuffer can grow unbounded across multiple flushes — bound
-  // it locally to avoid pathological memory growth if an app emits a huge
-  // sync burst and never sends DECRST (the server watchdog should also fire,
-  // but defense-in-depth on the client is cheap).
-  private _syncActive = false
-  private _syncTransactionBuffer: string[] = []
-  private _syncTransactionBytes = 0
-  private static readonly MAX_SYNC_TRANSACTION_BYTES = 8 * 1024 * 1024
+  // Output transaction buffer shared by DEC mode 2026 (sync_begin/sync_end)
+  // and the fit-then-snapshot replay handshake (replay_begin/replay_end). A
+  // depth counter supports nesting: a sync_end arriving mid-replay defers the
+  // flush until replay_end closes the outer transaction. While depth > 0,
+  // server-side Output is held here instead of entering the write pump; on
+  // the outermost end the joined buffer is enqueued as a single write so
+  // xterm sees a coherent stream and doesn't repaint per 32 KiB / per rAF
+  // chunk mid-redraw — and settle-ladder / ResizeObserver cannot interrupt
+  // mid-write (which was the root cause of refresh-misalign P2).
+  //
+  // The 8 MiB cap is a safety net against pathological bursts (an app that
+  // emits a huge sync burst and never sends DECRST, or a snapshot that grows
+  // beyond reason). The server watchdog + SYNC_BUFFER_LIMIT also bound it,
+  // but defense-in-depth on the client is cheap.
+  private _transactionDepth = 0
+  private _transactionBuffer: string[] = []
+  private _transactionBytes = 0
+  private static readonly MAX_TRANSACTION_BYTES = 8 * 1024 * 1024
+  // Snapshot of the (cols, rows) the client requested in its last
+  // SnapshotRequest. Used at replay_end to detect whether the wrapper size
+  // changed mid-replay — if so, the snapshot is encoded at the wrong size and
+  // we should re-request. Null before the first SnapshotRequest is sent.
+  private _snapshotRequestedSize: { cols: number; rows: number } | null = null
+  // True between Reconnected and replay_end. While set, _sendResize is
+  // suppressed: the server's atomic_resize_and_snapshot does the PTY resize
+  // in the same critical section as the snapshot, so a client-sent resize
+  // during this window would race it and re-introduce the refresh-misalign.
+  // Cleared on replay_end (or _resetTransaction, defensively).
+  private _snapshotPending = false
   // Watchdog for silent xterm.write() callback loss. xterm.js can drop the
   // write callback without throwing (observed when resize interleaves with a
   // pending write under high output), which strands _writing=true forever.
@@ -816,7 +832,7 @@ export class TerminalInstance {
     this._textUnsub?.()
     this._writeQueue = []
     this._writing = false
-    this._resetSyncTransaction()
+    this._resetTransaction()
     if (this._writeWatchdog) {
       clearTimeout(this._writeWatchdog)
       this._writeWatchdog = null
@@ -855,8 +871,8 @@ export class TerminalInstance {
     this._transport.onMessage((msg) => {
       if (this._destroyed || !this.xterm) return
       if (msg.type === 'output') {
-        if (this._syncActive) {
-          this._appendToSyncTransaction(msg.data)
+        if (this._transactionDepth > 0) {
+          this._appendToTransaction(msg.data)
         } else {
           this._enqueueWrite(msg.data)
         }
@@ -873,23 +889,31 @@ export class TerminalInstance {
         // Reset sync transaction: the server's sync_active state is not
         // replayed across reconnect — any in-flight SyncBegin is lost.
         // Without this, a post-reconnect SyncEnd would flush a stale buffer.
-        this._resetSyncTransaction()
+        this._resetTransaction()
+        // Mark that we owe the server a snapshot_request. Suppresses _sendResize
+        // until replay_end lands — the server's atomic_resize_and_snapshot
+        // owns the PTY resize during this window.
+        this._snapshotPending = true
         if (this._writeWatchdog) {
           clearTimeout(this._writeWatchdog)
           this._writeWatchdog = null
         }
         this._writePinnedToBottom = true
         this._doFitAndResize(true)
+        // Kick off the fit-then-snapshot handshake: the zero-size retry
+        // path or settle-ladder will call _maybeSendSnapshotRequest once the
+        // wrapper converges to a stable non-zero size.
+        this._maybeSendSnapshotRequest()
         this._scheduleSettleResize()
       } else if (msg.type === 'resize') {
         // Server breaks sync mode before broadcasting Resize (see
         // apply_and_broadcast_resize), so SyncEnd lands before Resize in the
-        // FIFO channel. If a Resize arrives while _syncActive is somehow
-        // still true (race), flush first so buffered bytes land before the
+        // FIFO channel. If a Resize arrives while a transaction is somehow
+        // still active (race), flush first so buffered bytes land before the
         // resize changes xterm geometry.
-        if (this._syncActive) {
-          this._flushSyncTransaction()
-          this._syncActive = false
+        if (this._transactionDepth > 0) {
+          this._flushTransaction()
+          this._transactionDepth = 0
         }
         this._followPeerResize(msg.cols, msg.rows)
       } else if (msg.type === 'session_exit') {
@@ -898,6 +922,10 @@ export class TerminalInstance {
         this._handleSyncBegin()
       } else if (msg.type === 'sync_end') {
         this._handleSyncEnd()
+      } else if (msg.type === 'replay_begin') {
+        this._handleReplayBegin(msg.cols, msg.rows)
+      } else if (msg.type === 'replay_end') {
+        this._handleReplayEnd()
       }
     })
 
@@ -950,19 +978,25 @@ export class TerminalInstance {
         // full page reload.
         this._writeQueue = []
         this._writing = false
-        // Reset sync transaction: server's sync_active state is not replayed
+        // Reset transaction: server's sync_active state is not replayed
         // across reconnect — any in-flight SyncBegin is lost.
-        this._resetSyncTransaction()
+        this._resetTransaction()
+        // Owe the server a snapshot_request; suppress _sendResize until
+        // replay_end (see _snapshotPending doc comment).
+        this._snapshotPending = true
         if (this._writeWatchdog) {
           clearTimeout(this._writeWatchdog)
           this._writeWatchdog = null
         }
         this._writePinnedToBottom = true
         this._doFitAndResize(true)
+        // Kick off fit-then-snapshot handshake — settle-ladder / zero-size
+        // retry will fire _maybeSendSnapshotRequest when the wrapper converges.
+        this._maybeSendSnapshotRequest()
         this._scheduleSettleResize()
       } else if (msg.type === 'output') {
-        if (this._syncActive) {
-          this._appendToSyncTransaction(msg.data)
+        if (this._transactionDepth > 0) {
+          this._appendToTransaction(msg.data)
         } else {
           this._enqueueWrite(msg.data)
         }
@@ -975,9 +1009,9 @@ export class TerminalInstance {
         // apply_and_broadcast_resize), so SyncEnd lands before Resize. Flush
         // any residual transaction first to keep buffered bytes ahead of the
         // resize geometry change.
-        if (this._syncActive) {
-          this._flushSyncTransaction()
-          this._syncActive = false
+        if (this._transactionDepth > 0) {
+          this._flushTransaction()
+          this._transactionDepth = 0
         }
         this._followPeerResize(msg.cols, msg.rows)
       } else if (msg.type === 'session_exit') {
@@ -986,6 +1020,10 @@ export class TerminalInstance {
         this._handleSyncBegin()
       } else if (msg.type === 'sync_end') {
         this._handleSyncEnd()
+      } else if (msg.type === 'replay_begin') {
+        this._handleReplayBegin(msg.cols, msg.rows)
+      } else if (msg.type === 'replay_end') {
+        this._handleReplayEnd()
       }
     }
 
@@ -1033,61 +1071,151 @@ export class TerminalInstance {
     if (!this._writing) this._processWriteQueue()
   }
 
-  // ── DEC mode 2026 transaction handling ───────────────────────
+  // ── Output transaction handling ─────────────────────────────
   //
-  // Server enqueues SyncBegin → buffered Output (during sync_active) → SyncEnd
-  // → post-sync live Output, in that FIFO order per client. Frontend diverts
-  // Output into _syncTransactionBuffer between SyncBegin and SyncEnd, then
-  // writes the merged buffer to xterm as a single enqueueWrite on SyncEnd.
-  // This collapses the per-chunk rAF repaints that xterm would otherwise do
-  // for each 32 KiB / 64 KiB flush chunk mid-redraw.
+  // Two protocols share this buffer:
+  //  - DEC mode 2026 (sync_begin/sync_end): server buffers live Output
+  //    during synchronized redraw and flushes as ≤64 KiB chunks; without
+  //    batching here, xterm repaints each chunk as a separate rAF tick,
+  //    producing the intermediate frames 2026 is designed to suppress.
+  //  - Fit-then-snapshot replay (replay_begin/replay_end): server pushes
+  //    scrollback+snapshot at the client's requested size; without batching,
+  //    settle-ladder / ResizeObserver can interrupt mid-write and the
+  //    snapshot's absolute-row addressing clamps/wraps to wrong dimensions
+  //    (refresh-misalign P2 root cause).
+  //
+  // A depth counter supports nesting: a sync_end arriving mid-replay defers
+  // the flush until replay_end closes the outer transaction. Stray end
+  // events with depth == 0 are no-ops.
 
   private _handleSyncBegin() {
-    // If a prior transaction was left open (missed SyncEnd — should be rare
-    // since the server watchdog forces closure), flush it first to preserve
-    // output ordering before starting a new one.
-    if (this._syncActive) {
-      this._flushSyncTransaction()
-    }
-    this._syncActive = true
-    this._syncTransactionBuffer = []
-    this._syncTransactionBytes = 0
+    this._beginTransaction()
   }
 
   private _handleSyncEnd() {
-    if (!this._syncActive) {
-      // Stray SyncEnd without matching SyncBegin (e.g. arrived after a
-      // reconnect that reset state). Ignore — no buffer to flush.
+    this._endTransaction()
+  }
+
+  private _handleReplayBegin(cols: number, rows: number) {
+    // Record the size the server claims the snapshot was encoded at — used
+    // at replay_end to detect whether our wrapper changed mid-replay and we
+    // need to re-request.
+    this._snapshotRequestedSize = { cols, rows }
+    this._beginTransaction()
+  }
+
+  private _handleReplayEnd() {
+    this._endTransaction()
+    // Optional correctness check (MV: just log mismatch; a follow-up can
+    // re-request automatically). If the wrapper size changed during the
+    // replay, the snapshot was encoded at a stale size and may misalign.
+    if (this._snapshotRequestedSize && this.xterm && this.fitAddon && this._wrapper) {
+      const rect = this._wrapper.getBoundingClientRect()
+      if (rect.width > 0 && rect.height > 0) {
+        // Compare xterm's current cols/rows (already fit) to what the
+        // snapshot was encoded at. If they differ, the wrapper changed
+        // during replay.
+        if (this.xterm.cols !== this._snapshotRequestedSize.cols
+          || this.xterm.rows !== this._snapshotRequestedSize.rows) {
+          console.warn(
+            `[dinotty] replay_end size mismatch: snapshot ` +
+            `${this._snapshotRequestedSize.cols}x${this._snapshotRequestedSize.rows}, ` +
+            `xterm now ${this.xterm.cols}x${this.xterm.rows} — snapshot may misalign`
+          )
+        }
+      }
+    }
+    this._snapshotRequestedSize = null
+    // End of the snapshot window: _sendResize is no longer suppressed. The
+    // next settle-ladder tick will reclaim the PTY size if our wrapper has
+    // drifted from the snapshot's cols/rows.
+    this._snapshotPending = false
+  }
+
+  private _beginTransaction() {
+    this._transactionDepth++
+  }
+
+  private _endTransaction() {
+    if (this._transactionDepth === 0) {
+      // Stray end without matching begin. Ignore.
       return
     }
-    this._flushSyncTransaction()
-    this._syncActive = false
-  }
-
-  private _appendToSyncTransaction(data: string) {
-    this._syncTransactionBuffer.push(data)
-    this._syncTransactionBytes += data.length
-    if (this._syncTransactionBytes >= TerminalInstance.MAX_SYNC_TRANSACTION_BYTES) {
-      // Pathological burst (app emitted >8 MiB inside one sync transaction
-      // without DECRST, or server watchdog force-flushed raw). Bound memory
-      // by flushing early; _syncActive stays true so subsequent Output still
-      // diverts into a fresh buffer until SyncEnd arrives.
-      this._flushSyncTransaction()
+    this._transactionDepth--
+    if (this._transactionDepth === 0) {
+      this._flushTransaction()
     }
   }
 
-  private _flushSyncTransaction() {
-    if (this._syncTransactionBuffer.length === 0) return
-    const merged = this._syncTransactionBuffer.join('')
-    this._syncTransactionBuffer = []
-    this._syncTransactionBytes = 0
+  private _appendToTransaction(data: string) {
+    this._transactionBuffer.push(data)
+    this._transactionBytes += data.length
+    if (this._transactionBytes >= TerminalInstance.MAX_TRANSACTION_BYTES) {
+      // Pathological burst (app emitted >8 MiB inside one transaction without
+      // an end event, or server watchdog force-flushed raw). Bound memory by
+      // flushing early; depth stays >0 so subsequent Output still diverts
+      // into a fresh buffer until the matching end arrives.
+      this._flushTransaction()
+    }
+  }
+
+  private _flushTransaction() {
+    if (this._transactionBuffer.length === 0) return
+    const merged = this._transactionBuffer.join('')
+    this._transactionBuffer = []
+    this._transactionBytes = 0
     this._enqueueWrite(merged)
   }
 
-  private _resetSyncTransaction() {
-    this._syncActive = false
-    this._syncTransactionBuffer = []
-    this._syncTransactionBytes = 0
+  private _resetTransaction() {
+    this._transactionDepth = 0
+    this._transactionBuffer = []
+    this._transactionBytes = 0
+    this._snapshotRequestedSize = null
+    this._snapshotPending = false
+  }
+
+  /// Send a snapshot_request to the server after the wrapper has converged to
+  /// a stable non-zero size. The server will reply with replay_begin → chunks
+  /// → replay_end. We do NOT enqueue a resize to the PTY here — the server's
+  /// atomic_resize_and_snapshot does the PTY resize in the same critical
+  /// section as the snapshot, which is what makes the snapshot's dimensions
+  /// match the client's actual geometry (the root fix for refresh-misalign).
+  ///
+  /// Idempotent: if _snapshotRequestedSize is already set (a request is in
+  /// flight, waiting on replay_begin), bail. _doFitAndResize also calls this
+  /// when the wrapper recovers from a 0×0 collapse so the zero-size retry
+  /// path eventually fires the request.
+  private _maybeSendSnapshotRequest() {
+    if (this._destroyed || !this.xterm || !this.fitAddon || !this._wrapper) return
+    if (!this._snapshotPending) return
+    if (this._snapshotRequestedSize) return
+    const rect = this._wrapper.getBoundingClientRect()
+    if (rect.width === 0 || rect.height === 0) {
+      // Still collapsed — _doFitAndResize's zero-size retry will call us
+      // again when the wrapper recovers. Bail without sending.
+      return
+    }
+    let cols = this.xterm.cols
+    let rows = this.xterm.rows
+    if (cols < 2 || rows < 2) {
+      // xterm hasn't been fit yet — do one fit now to read cols/rows.
+      try {
+        this.fitAddon.fit()
+        cols = this.xterm.cols
+        rows = this.xterm.rows
+      } catch {
+        return
+      }
+    }
+    if (cols < 2 || rows < 2) return
+    this._snapshotRequestedSize = { cols, rows }
+    const msg: ClientMsg = { type: 'snapshot_request', cols, rows }
+    if (this.ws) {
+      this.ws.send(JSON.stringify(msg))
+    } else if (this._transport) {
+      this._transport.send(msg)
+    }
   }
 
   private _processWriteQueue() {
@@ -1265,6 +1393,11 @@ export class TerminalInstance {
   }
 
   private _sendResize(cols: number, rows: number): boolean {
+    // Suppress during the snapshot window: the server's
+    // atomic_resize_and_snapshot does the PTY resize in lockstep with the
+    // snapshot encode. A client resize here would race it and re-introduce
+    // the refresh-misalign the handshake is meant to fix.
+    if (this._snapshotPending) return false
     const resizeMsg: ClientMsg = { type: 'resize', cols, rows }
     if (this._transport) {
       if (!this._transportConnected) return false
@@ -1473,6 +1606,12 @@ export class TerminalInstance {
         this._resizeDebounce = 0
         this._sendResize(cols, rows)
       }, 25)
+    }
+    // If we owe the server a snapshot_request (Reconnected arrived while the
+    // wrapper was 0×0), fire it now that the wrapper has recovered. Idempotent
+    // — bails if already sent or if we're between replay_begin and replay_end.
+    if (this._snapshotPending) {
+      this._maybeSendSnapshotRequest()
     }
   }
 

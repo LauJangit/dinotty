@@ -162,6 +162,24 @@ export class TauriIpcTransport implements Transport {
         }
       })
     )
+    this._unlistenFns.push(
+      await listen('pty-replay-begin', (e: any) => {
+        if (e.payload.pane_id === this.paneId) {
+          this._messageHandler?.({
+            type: 'replay_begin',
+            cols: e.payload.cols,
+            rows: e.payload.rows,
+          })
+        }
+      })
+    )
+    this._unlistenFns.push(
+      await listen('pty-replay-end', (e: any) => {
+        if (e.payload.pane_id === this.paneId) {
+          this._messageHandler?.({ type: 'replay_end' })
+        }
+      })
+    )
 
     try {
       const shellType: string = (await this._invoke('pty_spawn')) as string
@@ -183,6 +201,10 @@ export class TauriIpcTransport implements Transport {
       })
     } else if (msg.type === 'resize') {
       this._invoke('pty_resize', { cols: msg.cols, rows: msg.rows }).catch(() => {})
+    } else if (msg.type === 'snapshot_request') {
+      this._invoke('pty_snapshot_request', { cols: msg.cols, rows: msg.rows }).catch((err: unknown) => {
+        console.error('pty_snapshot_request failed:', err)
+      })
     }
   }
 

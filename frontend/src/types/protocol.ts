@@ -9,7 +9,20 @@ export interface ResizeMsg {
   rows: number
 }
 
-export type ClientMsg = InputMsg | ResizeMsg
+/// Client → server: after Reconnected, the client converges its layout, fits
+/// once, and sends SnapshotRequest{cols, rows}. Server replies with
+/// ReplayBegin → scrollback+snapshot chunks → ReplayEnd, and applies PTY
+/// resize to (cols, rows) atomically with the snapshot. Replaces the legacy
+/// flow where the server pushed a snapshot at stale session.size immediately
+/// on connect, which the client's fit-ladder could interrupt mid-write and
+/// cause absolute-row addressing to clamp/wrap to wrong dimensions.
+export interface SnapshotRequestMsg {
+  type: 'snapshot_request'
+  cols: number
+  rows: number
+}
+
+export type ClientMsg = InputMsg | ResizeMsg | SnapshotRequestMsg
 
 export interface OutputMsg {
   type: 'output'
@@ -51,6 +64,23 @@ export interface SyncEndMsg {
   type: 'sync_end'
 }
 
+/// Server → client: replay transaction boundary (fit-then-snapshot handshake).
+/// ReplayBegin precedes scrollback+snapshot chunks generated at the client's
+/// requested size; ReplayEnd follows them. Frontend diverts Output into the
+/// transaction buffer during replay (same mechanism as SyncBegin/End) and
+/// writes the merged buffer to xterm as a single batch on ReplayEnd. Cols/rows
+/// carry the dimensions the snapshot was encoded at — client compares to its
+/// current wrapper size and re-requests on mismatch.
+export interface ReplayBeginMsg {
+  type: 'replay_begin'
+  cols: number
+  rows: number
+}
+
+export interface ReplayEndMsg {
+  type: 'replay_end'
+}
+
 export type ServerMsg =
   | OutputMsg
   | ShellInfoMsg
@@ -59,6 +89,8 @@ export type ServerMsg =
   | SessionExitMsg
   | SyncBeginMsg
   | SyncEndMsg
+  | ReplayBeginMsg
+  | ReplayEndMsg
 
 // Sync WS messages
 export interface SyncTabList {

@@ -69,7 +69,9 @@ fn spawn_tauri_output_forwarder(
                                 event @ (SessionClientEvent::Resize { .. }
                                 | SessionClientEvent::SessionExit { .. }
                                 | SessionClientEvent::SyncBegin
-                                | SessionClientEvent::SyncEnd),
+                                | SessionClientEvent::SyncEnd
+                                | SessionClientEvent::ReplayBegin { .. }
+                                | SessionClientEvent::ReplayEnd),
                             ) => {
                                 pending = Some(event);
                                 break;
@@ -107,6 +109,15 @@ fn spawn_tauri_output_forwarder(
                         "pty-sync",
                         PtySyncControl { pane_id: pane_id.clone(), active: false },
                     );
+                }
+                SessionClientEvent::ReplayBegin { cols, rows } => {
+                    let _ = app.emit(
+                        "pty-replay-begin",
+                        serde_json::json!({ "pane_id": pane_id, "cols": cols, "rows": rows }),
+                    );
+                }
+                SessionClientEvent::ReplayEnd => {
+                    let _ = app.emit("pty-replay-end", serde_json::json!({ "pane_id": pane_id }));
                 }
             }
         }
@@ -161,17 +172,17 @@ fn spawn_tauri_write_task(session: Arc<dinotty_server::session::Session>, pane_i
     });
 }
 
-fn emit_join_sync(app: &AppHandle, pane_id: &str, session: &Arc<dinotty_server::session::Session>) {
+/// Emit `pty-reconnected` only — does NOT push a snapshot. The frontend will
+/// converge its layout, fit once, then invoke `pty_snapshot_request` to get
+/// the scrollback+snapshot via the replay transaction (pty-replay-begin →
+/// pty-output chunks → pty-replay-end). This is the Tauri side of the
+/// fit-then-snapshot handshake (proposal 3), mirroring ws/mod.rs.
+fn emit_reconnected(app: &AppHandle, pane_id: &str, session: &Arc<dinotty_server::session::Session>) {
     let (cols, rows) = *session.size.lock().unwrap_or_else(|e| e.into_inner());
     let _ = app.emit(
         "pty-reconnected",
         serde_json::json!({ "pane_id": pane_id, "cols": cols, "rows": rows }),
     );
-    let snapshot = {
-        let screen = session.screen.lock().unwrap_or_else(|e| e.into_inner());
-        screen.snapshot()
-    };
-    let _ = app.emit("pty-output", PtyOutput { pane_id: pane_id.to_string(), data: snapshot });
 }
 
 #[tauri::command]
@@ -201,8 +212,13 @@ fn pty_spawn(
         {
             session.remove_client(client_id);
         }
-        emit_join_sync(&app, &pane_id, &session);
+        // Spawn forwarder BEFORE emit_reconnected so the new client
+        // (snapshot_pending=true via add_client) is registered before the
+        // frontend receives pty-reconnected and (after converging) calls
+        // pty_snapshot_request. The snapshot_pending flag drops live Output
+        // for this client until ReplayEnd is enqueued.
         spawn_tauri_output_forwarder(app.clone(), pane_id.clone(), Arc::clone(&session));
+        emit_reconnected(&app, &pane_id, &session);
         // Set up channel-based write task (replaces old input channel, if any)
         spawn_tauri_write_task(Arc::clone(&session), pane_id.clone());
         return Ok(session.shell_type.clone());
@@ -256,6 +272,48 @@ fn pty_resize(
         .unwrap_or_else(|e| e.into_inner())
         .ok_or("tauri client not connected")?;
     session.resize_debounced(origin_id, cols, rows);
+    Ok(())
+}
+
+/// Fit-then-snapshot handshake (proposal 3): client converged its local layout,
+/// fit once, and is now asking the server to resize PTY+screen to (cols, rows)
+/// and emit the scrollback+snapshot as a replay transaction. Server runs the
+/// atomic resize+snapshot in one critical section and emits pty-replay-begin
+/// → pty-output (scrollback+snapshot chunks via SessionClientEvent::Output) →
+/// pty-replay-end, then clears the client's snapshot_pending so future live
+/// Output is delivered normally. Mirrors the WS path in ws/mod.rs.
+#[tauri::command]
+async fn pty_snapshot_request(
+    pane_id: String,
+    cols: u16,
+    rows: u16,
+    app: AppHandle,
+    state: State<'_, Arc<SessionManager>>,
+) -> Result<(), String> {
+    let session = state
+        .sessions
+        .get(&pane_id)
+        .ok_or("session not found")?
+        .value()
+        .clone();
+    let origin_id = session
+        .tauri_client_id
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .ok_or("tauri client not connected")?;
+    // atomic_resize_and_snapshot_for_client enqueues ReplayBegin/End via the
+    // session's per-client mpsc channel; the Tauri output forwarder task
+    // (spawn_tauri_output_forwarder) consumes the channel and emits the
+    // corresponding pty-* events. So we just call it and let the forwarder
+    // handle the wire events.
+    session
+        .atomic_resize_and_snapshot_for_client(origin_id, cols, rows)
+        .await
+        .map_err(|e| {
+            tracing::warn!("pty_snapshot_request failed: {e}, pane={pane_id}");
+            e
+        })?;
+    let _ = app; // app not needed — forwarder emits events
     Ok(())
 }
 
@@ -667,6 +725,7 @@ fn main() {
             pty_spawn,
             pty_write,
             pty_resize,
+            pty_snapshot_request,
             pty_kill,
             pty_detach,
             embedded_http_origin,
