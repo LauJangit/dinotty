@@ -102,7 +102,7 @@ describe('presentationGate output vector', () => {
                   : { start: '22:00', end: '22:00' }
 
                 const expected = presentationEnabled ? {
-                  storeHistory: settings.channels.panel,
+                  storeHistory: true,
                   showTabIndicator: settings.channels.tab_indicator,
                   showPopup: settings.channels.popup,
                   playSound: settings.channels.sound,
@@ -163,7 +163,7 @@ describe('presentationGate output vector', () => {
         }
         const output = gate(settings)
         expect(output).toEqual(enabled ? {
-          storeHistory: settings.channels.panel,
+          storeHistory: true,
           showTabIndicator: settings.channels.tab_indicator,
           showPopup: settings.channels.popup,
           playSound: settings.channels.sound,
@@ -180,16 +180,16 @@ describe('presentationGate output vector', () => {
   })
 
   it.each([
-    [false, true, false, true],
-    [true, false, true, false],
+    [false, true],
+    [true, false],
   ])(
-    'keeps popup=%s independent from panel=%s',
-    (popup, panel, showPopup, storeHistory) => {
+    'keeps popup=%s independent from panel=%s while history stays enabled',
+    (popup, panel) => {
       const settings = cloneSettings()
       settings.channels.popup = popup
       settings.channels.panel = panel
 
-      expect(gate(settings)).toMatchObject({ showPopup, storeHistory })
+      expect(gate(settings)).toMatchObject({ showPopup: popup, storeHistory: true })
     },
   )
 

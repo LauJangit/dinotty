@@ -368,7 +368,7 @@ export function presentationGate(
   const { settings } = ctx
   const output: PresentationOutput = settings.presentation_enabled
     ? {
-        storeHistory: settings.channels.panel,
+        storeHistory: settings.presentation_enabled,
         showTabIndicator: settings.channels.tab_indicator,
         showPopup: settings.channels.popup,
         playSound: settings.channels.sound,

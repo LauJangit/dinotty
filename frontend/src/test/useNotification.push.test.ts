@@ -154,7 +154,7 @@ describe('pushNotification - plugin notify path', () => {
     expect(listNotifications()).toHaveLength(1)
   })
 
-  it('shows a plugin toast without storing history when popup=true and panel=false', () => {
+  it('shows a plugin toast and still stores history regardless of panel setting (history is not toggleable)', () => {
     toastSpy.mockClear()
     const channels = useNotificationPresentation().settings.channels
     channels.popup = true
@@ -162,7 +162,7 @@ describe('pushNotification - plugin notify path', () => {
     pushNotification({ type: 'info', body: 'toast only', source: 'plugin' })
     vi.runAllTimers()
     expect(toastSpy).toHaveBeenCalledOnce()
-    expect(listNotifications()).toHaveLength(0)
+    expect(listNotifications()).toHaveLength(1)
   })
 
   it('does NOT show toast when master enabled=false', () => {

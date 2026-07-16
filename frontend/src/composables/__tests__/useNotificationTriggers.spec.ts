@@ -340,6 +340,177 @@ describe('raised envelope compatibility', () => {
   })
 })
 
+describe('unhandled history pruning', () => {
+  it('prunes a pane card immediately when a local pane read is created', () => {
+    const notif = useNotification()
+    __dispatchServerMessageForTest(snapshot('1', [pane('pane-a', '5')]))
+    __dispatchServerMessageForTest(raised({ eventSeq: '5' }))
+    expect(notif.historyCount.value).toBe(1)
+
+    markPanesRead([{ paneId: 'pane-a', throughEventSeq: '5' }], 'focus')
+
+    expect(notif.notifications.value).toEqual([])
+    expect(notif.historyCount.value).toBe(0)
+  })
+
+  it('prunes a notif card immediately when a local notif read is created', () => {
+    const notif = useNotification()
+    __dispatchServerMessageForTest(snapshot('1', [], [{ notifId: 'notif-a', read: false }]))
+    __dispatchServerMessageForTest(raised({ pane_id: '', notifId: 'notif-a' }))
+    expect(notif.historyCount.value).toBe(1)
+
+    markNotifsRead(['notif-a'], 'dismiss')
+
+    expect(notif.notifications.value).toEqual([])
+    expect(notif.historyCount.value).toBe(0)
+  })
+
+  it('does not insert a late raised card masked by an active-read overlay', () => {
+    const notif = useNotification()
+    __dispatchServerMessageForTest(snapshot('1', [pane('pane-a', '5')]))
+    __dispatchServerMessageForTest(delta('2', [pane('pane-a', '6', '5')]))
+    setActiveReadContext({
+      getActiveFocusedPaneId: () => 'pane-a',
+      isAppForeground: () => true,
+      getActiveTabPaneIds: () => ['pane-a'],
+    })
+
+    evaluateActiveRead()
+    expect(notif.unreadAttentionCount.value).toBe(0)
+
+    __dispatchServerMessageForTest(raised({ eventSeq: '6' }))
+
+    expect(notif.notifications.value).toEqual([])
+    expect(notif.unreadAttentionCount.value).toBe(0)
+  })
+
+  it('prunes a pane card when a cross-client delta reads through its event sequence', () => {
+    const notif = useNotification()
+    __dispatchServerMessageForTest(snapshot('1', [pane('pane-a', '5')]))
+    __dispatchServerMessageForTest(raised({ eventSeq: '5' }))
+    expect(notif.historyCount.value).toBe(1)
+
+    __dispatchServerMessageForTest(delta('2', [pane('pane-a', '5', '5')]))
+
+    expect(notif.historyCount.value).toBe(0)
+  })
+
+  it('prunes a pane-less notification card when a delta marks its notif read', () => {
+    const notif = useNotification()
+    __dispatchServerMessageForTest(snapshot('1', [], [{ notifId: 'notif-a', read: false }]))
+    __dispatchServerMessageForTest(raised({ pane_id: '', notifId: 'notif-a' }))
+    expect(notif.historyCount.value).toBe(1)
+
+    __dispatchServerMessageForTest(delta('2', [], [{ notifId: 'notif-a', read: true }]))
+
+    expect(notif.historyCount.value).toBe(0)
+  })
+
+  it('prunes current-epoch pane and notif cards when authoritative entries disappear', () => {
+    const notif = useNotification()
+    __dispatchServerMessageForTest(snapshot(
+      '1',
+      [pane('pane-a', '2')],
+      [{ notifId: 'notif-a', read: false }],
+    ))
+    __dispatchServerMessageForTest(raised({ eventSeq: '2' }))
+    __dispatchServerMessageForTest(raised({ pane_id: '', notifId: 'notif-a' }))
+
+    __dispatchServerMessageForTest(delta(
+      '2',
+      [{
+        paneId: 'pane-a', latestEventSeq: null, readThroughSeq: null,
+        firstUnreadAt: null, severity: null, removed: true,
+      }],
+      [{ notifId: 'notif-a', read: null, removed: true }],
+    ))
+
+    expect(notif.historyCount.value).toBe(0)
+  })
+
+  it('prunes cards proven read by a reconnect snapshot', () => {
+    const notif = useNotification()
+    __dispatchServerMessageForTest(snapshot(
+      '1',
+      [pane('pane-a', '7')],
+      [{ notifId: 'notif-a', read: false }],
+    ))
+    __dispatchServerMessageForTest(raised({ eventSeq: '7' }))
+    __dispatchServerMessageForTest(raised({ pane_id: '', notifId: 'notif-a' }))
+    expect(notif.historyCount.value).toBe(2)
+
+    __dispatchServerMessageForTest(snapshot(
+      '2',
+      [pane('pane-a', '7', '7')],
+      [{ notifId: 'notif-a', read: true }],
+    ))
+
+    expect(notif.historyCount.value).toBe(0)
+  })
+
+  it('prunes current-epoch cards absent from a same-epoch snapshot', () => {
+    const notif = useNotification()
+    __dispatchServerMessageForTest(snapshot(
+      '1',
+      [pane('pane-a', '7')],
+      [{ notifId: 'notif-a', read: false }],
+    ))
+    __dispatchServerMessageForTest(raised({ eventSeq: '7' }))
+    __dispatchServerMessageForTest(raised({ pane_id: '', notifId: 'notif-a' }))
+    expect(notif.historyCount.value).toBe(2)
+
+    __dispatchServerMessageForTest(snapshot('2'))
+
+    expect(notif.historyCount.value).toBe(0)
+  })
+
+  it('keeps a same-epoch local fallback card across projection refreshes', () => {
+    const notif = useNotification()
+    const channels = useNotificationPresentation().settings.channels
+    channels.popup = true
+    channels.panel = true
+    __dispatchServerMessageForTest(snapshot('1'))
+    pushNotification({ type: 'error', body: 'network fallback', source: 'plugin' })
+    const fallbackCard = notif.notifications.value[0]
+    expect(fallbackCard.paneId).toBeUndefined()
+    expect(fallbackCard.notifId).toBeUndefined()
+
+    __dispatchServerMessageForTest(snapshot('2'))
+
+    expect(notif.notifications.value).toEqual([fallbackCard])
+  })
+
+  it('keeps a card unread when its toast X closes and sends no mark-read request', () => {
+    const toast = createToastSpy()
+    setToastInstance(toast)
+    useNotificationPresentation().settings.coalesce_window_ms = 0
+    const notif = useNotification()
+    __dispatchServerMessageForTest(snapshot('1', [pane('pane-a', '3')]))
+    __dispatchServerMessageForTest(raised({ eventSeq: '3' }))
+    vi.advanceTimersByTime(0)
+
+    const options = toast.mock.calls[0][1] as any
+    options.onClose()
+
+    expect(notif.historyCount.value).toBe(1)
+    expect(FakeWebSocket.instances[0].sent).toEqual([])
+  })
+
+  it('preserves a stale-epoch card during authoritative pruning and allows manual dismissal', () => {
+    const notif = useNotification()
+    __dispatchServerMessageForTest(snapshot('1', [pane('pane-a', '4')]))
+    __dispatchServerMessageForTest(raised({ eventSeq: '4' }))
+    const staleCard = notif.notifications.value[0]
+
+    __dispatchServerMessageForTest({ ...snapshot('1'), epoch: 'epoch-b' })
+
+    expect(notif.notifications.value).toEqual([staleCard])
+    notif.dismissOne(staleCard.id)
+    expect(notif.historyCount.value).toBe(0)
+    expect(FakeWebSocket.instances[0].sent).toEqual([])
+  })
+})
+
 describe('raised presentation pipeline', () => {
   it('stores every event but coalesces a 10-event same-pane burst to one presentation vector', () => {
     const toast = vi.fn()

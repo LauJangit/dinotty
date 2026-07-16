@@ -206,7 +206,7 @@ describe('useNotification protocol dispatcher', () => {
     )
     expect(notif.unreadAttentionCount.value).toBe(0)
 
-    __dispatchServerMessageForTest(legacyEvent())
+    __dispatchServerMessageForTest(legacyEvent({ eventSeq: '3' }))
     expect(notif.historyCount.value).toBe(1)
   })
 

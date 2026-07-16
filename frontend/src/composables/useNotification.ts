@@ -347,7 +347,51 @@ export function aggregateSeverity(paneIds: string[]): NotificationType | null {
   return highest
 }
 
+function historyItemMatchesReadTarget(card: NotificationItem, target: OverlayTarget): boolean {
+  if ('paneId' in target) {
+    return card.paneId === target.paneId
+      && card.eventSeq !== undefined
+      && BigInt(card.eventSeq) <= target.throughEventSeq
+  }
+  return card.notifId === target.notifId
+}
+
+function pruneHistoryByReadTargets(targets: OverlayTarget[]) {
+  const epoch = attentionStore.epoch
+  if (epoch === null || targets.length === 0) return
+  notifications.value = notifications.value.filter(
+    (card) => card.epoch !== epoch || !targets.some((target) =>
+      historyItemMatchesReadTarget(card, target)
+    )
+  )
+}
+
+function pruneHistoryByAuthoritativeRead() {
+  const epoch = attentionStore.epoch
+  if (epoch === null) return
+  notifications.value = notifications.value.filter((card) => {
+    if (card.epoch !== epoch) return true
+
+    let paneRead = false
+    if (card.paneId !== undefined) {
+      const pane = attentionStore.panes.get(card.paneId)
+      paneRead = pane === undefined || (
+        card.eventSeq !== undefined && pane.readThroughSeq >= BigInt(card.eventSeq)
+      )
+    }
+
+    let notifRead = false
+    if (card.notifId !== undefined) {
+      const notif = attentionStore.notifs.get(card.notifId)
+      notifRead = notif === undefined || notif.read === true
+    }
+
+    return !paneRead && !notifRead
+  })
+}
+
 function refreshProjection() {
+  pruneHistoryByAuthoritativeRead()
   const next = attentionStore.unreadPaneSeverities()
   delete next['']
   for (const paneId of Object.keys(unreadByPane)) {
@@ -381,6 +425,19 @@ function rememberHistoryKey(key: string): boolean {
 }
 
 function insertHistory(item: NotificationItem) {
+  const epoch = attentionStore.epoch
+  if (epoch !== null && item.epoch === epoch) {
+    const pane = item.paneId === undefined ? undefined : attentionStore.panes.get(item.paneId)
+    const paneRead = pane !== undefined
+      && item.eventSeq !== undefined
+      && pane.readThroughSeq >= BigInt(item.eventSeq)
+    const notifRead = item.notifId !== undefined
+      && attentionStore.notifs.get(item.notifId)?.read === true
+    const overlayRead = [...attentionStore.overlays.values()].some((overlay) =>
+      overlay.targets.some((target) => historyItemMatchesReadTarget(item, target))
+    )
+    if (paneRead || notifRead || overlayRead) return
+  }
   notifications.value.unshift(item)
   if (notifications.value.length > 100) notifications.value.length = 100
 }
@@ -675,6 +732,7 @@ export function markPanesRead(
     wirePanes.push({ paneId: requested.paneId, throughEventSeq })
     targets.push({ paneId: requested.paneId, throughEventSeq: BigInt(throughEventSeq) })
   }
+  pruneHistoryByReadTargets(targets)
   createPending(targets, reason, wirePanes, [])
 }
 
@@ -691,8 +749,10 @@ export function markNotifsRead(notifIds: string[], reason: MarkReadReason) {
   const requestedIds = [...new Set(notifIds)]
   for (const notifId of requestedIds) presentationScheduler.cancelNotif(notifId)
   const ids = requestedIds.filter((notifId) => attentionStore.notifs.has(notifId))
+  const targets: OverlayTarget[] = ids.map((notifId) => ({ notifId }))
+  pruneHistoryByReadTargets(targets)
   createPending(
-    ids.map((notifId) => ({ notifId })),
+    targets,
     reason,
     [],
     ids.map((notifId) => ({ notifId }))
