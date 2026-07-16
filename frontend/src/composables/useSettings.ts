@@ -1,4 +1,4 @@
-import { reactive } from 'vue'
+import { reactive, readonly, ref } from 'vue'
 import { applyThemeToDOM, getXtermTheme } from '../themes'
 import { getApiBase, apiUrl, authFetch, hasAuthToken } from './apiBase'
 import { resolveEffectiveTheme } from './useDeviceThemeSelection'
@@ -302,13 +302,37 @@ export const settings = reactive<SettingsData>({
 
 let loaded = false
 let loadPromise: Promise<void> | null = null
+let loadedNotificationPresentationEcho: {
+  channels?: unknown
+  sounds?: unknown
+} | null = null
+const settingsLoadedState = ref(false)
+export const settingsLoaded = readonly(settingsLoadedState)
+
+export function __setSettingsLoadedForTest(value: boolean) {
+  settingsLoadedState.value = value
+}
+
+export function __resetSettingsLoadStateForTest() {
+  loaded = false
+  loadPromise = null
+  loadedNotificationPresentationEcho = null
+  settingsLoadedState.value = false
+}
 
 export function useSettings() {
   if (!loaded) {
     loadPromise = loadSettings()
     loaded = true
   }
-  return { settings, saveSettings, loadSettings, applyCurrentTheme, getCurrentXtermTheme }
+  return {
+    settings,
+    settingsLoaded,
+    saveSettings,
+    loadSettings,
+    applyCurrentTheme,
+    getCurrentXtermTheme,
+  }
 }
 
 function restoreActionIcons() {
@@ -340,18 +364,28 @@ function syncActionKeyboardStorage() {
   }
 }
 
-async function loadSettings() {
+export async function loadSettings() {
   if (!hasAuthToken()) return
   try {
     await getApiBase()
     const res = await authFetch(apiUrl('/api/settings'))
     if (res.ok) {
       const data = await res.json()
+      const notification = data?.notification as Record<string, unknown> | undefined
+      loadedNotificationPresentationEcho = {
+        ...(notification && Object.prototype.hasOwnProperty.call(notification, 'channels')
+          ? { channels: JSON.parse(JSON.stringify(notification.channels)) }
+          : {}),
+        ...(notification && Object.prototype.hasOwnProperty.call(notification, 'sounds')
+          ? { sounds: JSON.parse(JSON.stringify(notification.sounds)) }
+          : {}),
+      }
       Object.assign(settings, data)
       restoreActionIcons()
       applyCurrentTheme()
       // Sync action keyboard to localStorage for static mobile-keyboard.js
       syncActionKeyboardStorage()
+      settingsLoadedState.value = true
     }
   } catch (e) {
     console.error('[settings] load failed:', e)
@@ -364,11 +398,27 @@ export async function saveSettings() {
     if (loadPromise) await loadPromise
     // Sync action keyboard to localStorage for static mobile-keyboard.js
     syncActionKeyboardStorage()
+    const payload = JSON.parse(JSON.stringify(settings)) as SettingsData
+    const notification = payload.notification as unknown as Record<string, unknown>
+    for (const key of [
+      'presentation_enabled', 'channels', 'sounds', 'dnd_level', 'ignore_current_tab',
+      'quiet_hours', 'coalesce_window_ms',
+    ]) {
+      delete notification[key]
+    }
+    if (loadedNotificationPresentationEcho) {
+      if (Object.prototype.hasOwnProperty.call(loadedNotificationPresentationEcho, 'channels')) {
+        notification.channels = JSON.parse(JSON.stringify(loadedNotificationPresentationEcho.channels))
+      }
+      if (Object.prototype.hasOwnProperty.call(loadedNotificationPresentationEcho, 'sounds')) {
+        notification.sounds = JSON.parse(JSON.stringify(loadedNotificationPresentationEcho.sounds))
+      }
+    }
     await getApiBase()
     const res = await authFetch(apiUrl('/api/settings'), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(settings),
+      body: JSON.stringify(payload),
     })
     if (!res.ok) {
       console.error('[settings] save failed:', res.status, await res.text())

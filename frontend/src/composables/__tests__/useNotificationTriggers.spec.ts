@@ -56,13 +56,20 @@ vi.mock('../apiBase', () => ({
 import { settings } from '../useSettings'
 import {
   __dispatchServerMessageForTest,
+  __pendingPresentationCountForTest,
   __pendingRequestCountForTest,
   __resetForTest,
+  __setPresentationEffectsForTest,
   evaluateActiveRead,
   markPaneReadIfUnread,
+  markNotifsRead,
+  markPanesRead,
+  pushNotification,
   setActiveReadContext,
+  setToastInstance,
   useNotification,
 } from '../useNotification'
+import { useNotificationPresentation } from '../useNotificationPresentation'
 
 function pane(paneId: string, latestEventSeq: string, readThroughSeq = '0') {
   return {
@@ -74,12 +81,27 @@ function pane(paneId: string, latestEventSeq: string, readThroughSeq = '0') {
   }
 }
 
-function snapshot(revision: string, panes = [] as ReturnType<typeof pane>[]) {
-  return { type: 'snapshot', epoch: 'epoch-a', revision, panes, notifs: [] }
+function snapshot(
+  revision: string,
+  panes = [] as ReturnType<typeof pane>[],
+  notifs = [] as Array<{ notifId: string; read: boolean | null; removed?: true }>,
+) {
+  return { type: 'snapshot', epoch: 'epoch-a', revision, panes, notifs }
 }
 
-function delta(revision: string, panes = [] as ReturnType<typeof pane>[]) {
-  return { type: 'state_delta', epoch: 'epoch-a', revision, panes, notifs: [] }
+function delta(
+  revision: string,
+  panes = [] as Array<ReturnType<typeof pane> | {
+    paneId: string
+    latestEventSeq: null
+    readThroughSeq: null
+    firstUnreadAt: null
+    severity: null
+    removed: true
+  }>,
+  notifs = [] as Array<{ notifId: string; read: boolean | null; removed?: true }>,
+) {
+  return { type: 'state_delta', epoch: 'epoch-a', revision, panes, notifs }
 }
 
 function raised(overrides: Record<string, unknown> = {}) {
@@ -106,12 +128,18 @@ beforeEach(() => {
     enabled: true,
     osc_notify: true,
     bell: { enabled: true },
-    channels: { sound: false, vibration: false, panel: false },
+    channels: { sound: false, vibration: false, panel: true, tab_indicator: false },
     sounds: {},
   }
+  const presentation = useNotificationPresentation().settings
+  presentation.channels.sound = false
+  presentation.channels.vibration = false
+  presentation.channels.panel = true
+  vi.stubGlobal('navigator', { vibrate: vi.fn() })
 })
 
 afterEach(() => {
+  vi.restoreAllMocks()
   __resetForTest()
   vi.useRealTimers()
 })
@@ -131,6 +159,7 @@ describe('active-read state triggers', () => {
     setActiveReadContext({
       getActiveFocusedPaneId: () => 'pane-a',
       isAppForeground: () => true,
+      getActiveTabPaneIds: () => ['pane-a'],
     })
 
     __dispatchServerMessageForTest(message())
@@ -155,6 +184,7 @@ describe('active-read state triggers', () => {
       setActiveReadContext({
         getActiveFocusedPaneId: () => focusedPaneId,
         isAppForeground: () => foreground,
+        getActiveTabPaneIds: () => ['pane-a'],
       })
     }
 
@@ -169,6 +199,7 @@ describe('active-read state triggers', () => {
     setActiveReadContext({
       getActiveFocusedPaneId: () => 'pane-a',
       isAppForeground: () => true,
+      getActiveTabPaneIds: () => ['pane-a'],
     })
     __dispatchServerMessageForTest(snapshot('1', [pane('pane-a', '5')]))
     __dispatchServerMessageForTest(delta('2', [pane('pane-a', '5')]))
@@ -182,6 +213,7 @@ describe('active-read state triggers', () => {
     setActiveReadContext({
       getActiveFocusedPaneId: () => 'pane-a',
       isAppForeground: () => true,
+      getActiveTabPaneIds: () => ['pane-a'],
     })
     __dispatchServerMessageForTest(snapshot('1'))
     __dispatchServerMessageForTest({ type: 'resync_required' })
@@ -197,6 +229,7 @@ describe('active-read state triggers', () => {
     setActiveReadContext({
       getActiveFocusedPaneId: () => 'pane-a',
       isAppForeground: () => true,
+      getActiveTabPaneIds: () => ['pane-a'],
     })
     __dispatchServerMessageForTest(snapshot('1', [pane('pane-a', '5')]))
 
@@ -220,6 +253,7 @@ describe('active-read state triggers', () => {
     setActiveReadContext({
       getActiveFocusedPaneId: () => 'pane-a',
       isAppForeground: () => true,
+      getActiveTabPaneIds: () => ['pane-a'],
     })
     __dispatchServerMessageForTest(snapshot('1', [pane('pane-a', '5')]))
 
@@ -235,6 +269,7 @@ describe('active-read state triggers', () => {
     setActiveReadContext({
       getActiveFocusedPaneId: () => 'pane-a',
       isAppForeground: () => foreground,
+      getActiveTabPaneIds: () => ['pane-a'],
     })
     __dispatchServerMessageForTest(snapshot('1', [pane('pane-a', '8')]))
     expect(__pendingRequestCountForTest()).toBe(0)
@@ -292,5 +327,281 @@ describe('raised envelope compatibility', () => {
     __dispatchServerMessageForTest(snapshot('1'))
     __dispatchServerMessageForTest(raised())
     expect(notif.historyCount.value).toBe(0)
+  })
+})
+
+describe('raised presentation pipeline', () => {
+  it('stores every event but coalesces a 10-event same-pane burst to one presentation vector', () => {
+    const toast = vi.fn()
+    const sound = vi.fn()
+    __setPresentationEffectsForTest({ playSound: sound })
+    const vibrate = vi.mocked(navigator.vibrate)
+    setToastInstance(toast)
+    const local = useNotificationPresentation().settings
+    local.coalesce_window_ms = 100
+    local.channels.sound = true
+    local.channels.vibration = true
+    expect(local.channels.panel).toBe(true)
+    const notif = useNotification()
+
+    for (let seq = 1; seq <= 10; seq++) {
+      __dispatchServerMessageForTest(raised({ eventSeq: String(seq), body: `event-${seq}` }))
+      vi.advanceTimersByTime(10)
+    }
+    expect(notif.historyCount.value).toBe(10)
+    expect(__pendingPresentationCountForTest()).toBe(1)
+    expect(toast).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(100)
+    expect(__pendingPresentationCountForTest()).toBe(0)
+    expect(toast).toHaveBeenCalledOnce()
+    expect(sound).toHaveBeenCalledOnce()
+    expect(vibrate).toHaveBeenCalledOnce()
+  })
+
+  it('dismisses a pane card during its open coalesce window with no later presentation', () => {
+    const toast = vi.fn()
+    const sound = vi.fn()
+    __setPresentationEffectsForTest({ playSound: sound })
+    const vibrate = vi.mocked(navigator.vibrate)
+    setToastInstance(toast)
+    const local = useNotificationPresentation().settings
+    local.coalesce_window_ms = 50
+    local.channels.sound = true
+    local.channels.vibration = true
+    const notif = useNotification()
+
+    __dispatchServerMessageForTest(raised({ eventSeq: '3' }))
+    notif.dismissOne(notif.notifications.value[0].id)
+    vi.advanceTimersByTime(50)
+
+    expect(toast).not.toHaveBeenCalled()
+    expect(sound).not.toHaveBeenCalled()
+    expect(vibrate).not.toHaveBeenCalled()
+    expect(__pendingPresentationCountForTest()).toBe(0)
+  })
+
+  it('markNotifsRead cancels a scheduled server-originated pane-less notification', () => {
+    const toast = vi.fn()
+    setToastInstance(toast)
+    useNotificationPresentation().settings.coalesce_window_ms = 50
+    useNotification()
+    __dispatchServerMessageForTest(snapshot('1', [], [{ notifId: 'server-notif', read: false }]))
+    __dispatchServerMessageForTest(raised({ pane_id: '', notifId: 'server-notif' }))
+
+    markNotifsRead(['server-notif'], 'dismiss')
+    vi.advanceTimersByTime(50)
+
+    expect(toast).not.toHaveBeenCalled()
+    expect(__pendingPresentationCountForTest()).toBe(0)
+  })
+
+  it('dismiss cancels a purely local fallback card under its local notif identity', () => {
+    const toast = vi.fn()
+    setToastInstance(toast)
+    useNotificationPresentation().settings.coalesce_window_ms = 50
+    const notif = useNotification()
+    pushNotification({ type: 'error', body: 'network fallback', source: 'plugin' })
+    const item = notif.notifications.value[0]
+    expect(item.presentationIdentity).toEqual({ kind: 'notif', id: item.id })
+
+    notif.dismissOne(item.id)
+    vi.advanceTimersByTime(50)
+
+    expect(toast).not.toHaveBeenCalled()
+    expect(__pendingPresentationCountForTest()).toBe(0)
+  })
+
+  it('uses the active-leaf mask independently of authoritative active-read cancellation', () => {
+    const toast = vi.fn()
+    setToastInstance(toast)
+    const local = useNotificationPresentation().settings
+    local.coalesce_window_ms = 50
+    expect(local.channels.panel).toBe(true)
+    const notif = useNotification()
+    setActiveReadContext({
+      getActiveFocusedPaneId: () => 'pane-a',
+      isAppForeground: () => true,
+      getActiveTabPaneIds: () => ['pane-a'],
+    })
+
+    __dispatchServerMessageForTest(raised())
+    expect(notif.historyCount.value).toBe(1)
+    vi.advanceTimersByTime(50)
+    expect(toast).not.toHaveBeenCalled()
+    expect(__pendingRequestCountForTest()).toBe(0)
+  })
+
+  it('cancels pending presentation on local read and permits a later sequence above the watermark', () => {
+    const toast = vi.fn()
+    setToastInstance(toast)
+    useNotificationPresentation().settings.coalesce_window_ms = 50
+    useNotification()
+    __dispatchServerMessageForTest(snapshot('1', [pane('pane-a', '5')]))
+    __dispatchServerMessageForTest(raised({ eventSeq: '5' }))
+
+    markPanesRead([{ paneId: 'pane-a', throughEventSeq: '5' }], 'focus')
+    vi.advanceTimersByTime(50)
+    expect(toast).not.toHaveBeenCalled()
+
+    __dispatchServerMessageForTest(raised({ eventSeq: '6', body: 'new unread' }))
+    vi.advanceTimersByTime(50)
+    expect(toast).toHaveBeenCalledOnce()
+  })
+
+  it('cancels from mark_read_result arrival for a pane-less notification', () => {
+    const toast = vi.fn()
+    setToastInstance(toast)
+    useNotificationPresentation().settings.coalesce_window_ms = 50
+    useNotification()
+    __dispatchServerMessageForTest(snapshot('1', [], [{ notifId: 'notif-a', read: false }]))
+    markNotifsRead(['notif-a'], 'dismiss')
+    const request = JSON.parse(FakeWebSocket.instances[0].sent[0])
+    __dispatchServerMessageForTest(raised({ pane_id: '', notifId: 'notif-a' }))
+    expect(__pendingPresentationCountForTest()).toBe(1)
+
+    __dispatchServerMessageForTest({
+      type: 'mark_read_result',
+      requestId: request.requestId,
+      epoch: 'epoch-a',
+      appliedAtRevision: '1',
+      results: [{ target: { notifId: 'notif-a' }, status: 'applied' }],
+    })
+    vi.advanceTimersByTime(50)
+    expect(toast).not.toHaveBeenCalled()
+  })
+
+  it('cancels from a proving pane delta', () => {
+    const toast = vi.fn()
+    setToastInstance(toast)
+    useNotificationPresentation().settings.coalesce_window_ms = 50
+    useNotification()
+    __dispatchServerMessageForTest(snapshot('1'))
+    __dispatchServerMessageForTest(raised({ eventSeq: '4' }))
+    __dispatchServerMessageForTest(delta('2', [pane('pane-a', '4', '4')]))
+    vi.advanceTimersByTime(50)
+    expect(toast).not.toHaveBeenCalled()
+  })
+
+  it('cancels from a proving pane snapshot', () => {
+    const toast = vi.fn()
+    setToastInstance(toast)
+    useNotificationPresentation().settings.coalesce_window_ms = 50
+    useNotification()
+    __dispatchServerMessageForTest(snapshot('1'))
+    __dispatchServerMessageForTest(raised({ eventSeq: '4' }))
+    __dispatchServerMessageForTest(snapshot('2', [pane('pane-a', '4', '4')]))
+    vi.advanceTimersByTime(50)
+    expect(toast).not.toHaveBeenCalled()
+  })
+
+  it('cancels and fully removes pane scheduler state on a removal delta', () => {
+    const toast = vi.fn()
+    setToastInstance(toast)
+    useNotificationPresentation().settings.coalesce_window_ms = 50
+    useNotification()
+    __dispatchServerMessageForTest(snapshot('1'))
+    __dispatchServerMessageForTest(raised({ eventSeq: '9' }))
+    __dispatchServerMessageForTest(delta('2', [{
+      paneId: 'pane-a', latestEventSeq: null, readThroughSeq: null,
+      firstUnreadAt: null, severity: null, removed: true,
+    }]))
+    vi.advanceTimersByTime(50)
+    expect(toast).not.toHaveBeenCalled()
+
+    __dispatchServerMessageForTest(raised({ eventSeq: '1', body: 'reused pane id' }))
+    vi.advanceTimersByTime(50)
+    expect(toast).toHaveBeenCalledOnce()
+  })
+
+  it('local focus intent cancels before authoritative pane state exists without sending mark-read', () => {
+    const toast = vi.fn()
+    setToastInstance(toast)
+    useNotificationPresentation().settings.coalesce_window_ms = 50
+    useNotification()
+    __dispatchServerMessageForTest(raised({ eventSeq: '3' }))
+    markPaneReadIfUnread('pane-a', 'focus')
+    expect(__pendingRequestCountForTest()).toBe(0)
+    vi.advanceTimersByTime(50)
+    expect(toast).not.toHaveBeenCalled()
+  })
+
+  it.each(['terminal_input', 'active_observed'] as const)(
+    '%s cancels before authoritative pane state exists without sending mark-read',
+    (reason) => {
+      const toast = vi.fn()
+      setToastInstance(toast)
+      useNotificationPresentation().settings.coalesce_window_ms = 50
+      useNotification()
+      __dispatchServerMessageForTest(raised({ eventSeq: '3' }))
+
+      if (reason === 'active_observed') {
+        setActiveReadContext({
+          getActiveFocusedPaneId: () => 'pane-a',
+          isAppForeground: () => true,
+          getActiveTabPaneIds: () => [],
+        })
+        evaluateActiveRead()
+      } else {
+        markPaneReadIfUnread('pane-a', reason)
+      }
+
+      expect(__pendingRequestCountForTest()).toBe(0)
+      vi.advanceTimersByTime(50)
+      expect(toast).not.toHaveBeenCalled()
+      expect(__pendingPresentationCountForTest()).toBe(0)
+    },
+  )
+
+  it('a pane mark_read_result arrival cancels that pane scheduler slot', () => {
+    const toast = vi.fn()
+    setToastInstance(toast)
+    useNotificationPresentation().settings.coalesce_window_ms = 50
+    useNotification()
+    __dispatchServerMessageForTest(raised({ eventSeq: '4' }))
+
+    __dispatchServerMessageForTest({
+      type: 'mark_read_result',
+      requestId: 'already-retired-request',
+      epoch: 'epoch-a',
+      appliedAtRevision: '1',
+      results: [{ target: { paneId: 'pane-a' }, status: 'applied' }],
+    })
+    vi.advanceTimersByTime(50)
+
+    expect(toast).not.toHaveBeenCalled()
+    expect(__pendingPresentationCountForTest()).toBe(0)
+  })
+
+  it('cancels pane-less scheduling from notif read and removed state updates', () => {
+    const toast = vi.fn()
+    setToastInstance(toast)
+    useNotificationPresentation().settings.coalesce_window_ms = 50
+    useNotification()
+    __dispatchServerMessageForTest(snapshot('1'))
+    __dispatchServerMessageForTest(raised({ pane_id: '', notifId: 'notif-read' }))
+    __dispatchServerMessageForTest(delta('2', [], [{ notifId: 'notif-read', read: true }]))
+    __dispatchServerMessageForTest(raised({ pane_id: '', notifId: 'notif-removed' }))
+    __dispatchServerMessageForTest(delta('3', [], [{ notifId: 'notif-removed', read: null, removed: true }]))
+    vi.advanceTimersByTime(50)
+    expect(toast).not.toHaveBeenCalled()
+  })
+
+  it('cancels pane and pane-less scheduling from card dismiss and clearAll', () => {
+    const toast = vi.fn()
+    setToastInstance(toast)
+    useNotificationPresentation().settings.coalesce_window_ms = 50
+    const notif = useNotification()
+    __dispatchServerMessageForTest(snapshot('1'))
+
+    __dispatchServerMessageForTest(raised({ pane_id: '', notifId: 'notif-dismiss' }))
+    notif.dismissOne(notif.notifications.value[0].id)
+    __dispatchServerMessageForTest(raised({ pane_id: '', notifId: 'notif-clear' }))
+    __dispatchServerMessageForTest(raised({ pane_id: 'pane-clear', eventSeq: '1' }))
+    notif.clearAll()
+
+    vi.advanceTimersByTime(50)
+    expect(toast).not.toHaveBeenCalled()
+    expect(__pendingPresentationCountForTest()).toBe(0)
   })
 })

@@ -63,6 +63,9 @@ const mocks = vi.hoisted(() => {
     clearForPaneIds: vi.fn(),
     notificationItems: { value: [] as unknown[] },
     unreadAttentionCount: { value: 0 },
+    unreadByPane: {} as Record<string, string>,
+    authoritativeSeverity: null as string | null,
+    presentationSettings: null as any,
     authFetch: vi.fn<(input: string, init?: RequestInit) => Promise<any>>(async () => ({
       ok: true,
       status: 200,
@@ -133,20 +136,31 @@ vi.mock('../composables/useNotification', () => ({
     notifications: mocks.notificationItems,
     unreadAttentionCount: mocks.unreadAttentionCount,
     historyCount: { value: 0 },
-    unreadByPane: {},
+    unreadByPane: mocks.unreadByPane,
     togglePanel: vi.fn(),
     clearPaneUnread: vi.fn(),
     clearForPaneIds: mocks.clearForPaneIds,
     setGoToPaneHandler: vi.fn(),
   }),
-  aggregateSeverity: vi.fn(() => null),
+  aggregateSeverity: vi.fn(() => mocks.authoritativeSeverity),
   pushNotification: mocks.pushNotification,
-  setToastInstance: vi.fn(),
-  setActiveReadContext: mocks.setActiveReadContext,
+  setToastInstance: vi.fn(() => vi.fn()),
+  setActiveReadContext: vi.fn((...args) => {
+    mocks.setActiveReadContext(...args)
+    return vi.fn()
+  }),
   evaluateActiveRead: mocks.evaluateActiveRead,
   getNotificationClientId: () => 'client-stable',
   mintNotificationRequestId: mocks.mintNotificationRequestId,
+  disposeNotificationPresentationScheduler: vi.fn(),
 }))
+vi.mock('../composables/useNotificationPresentation', async () => {
+  const { reactive } = await import('vue')
+  mocks.presentationSettings = reactive({ channels: { tab_indicator: true } })
+  return {
+    useNotificationPresentation: () => ({ settings: mocks.presentationSettings }),
+  }
+})
 vi.mock('../composables/useAppForeground', () => ({
   getIsAppForeground: () => true,
   onAppForegroundGain: vi.fn(() => mocks.stopForegroundGainSubscription),
@@ -247,12 +261,16 @@ const SplitContainerStub = defineComponent({
 
 const TabBarStub = defineComponent({
   name: 'TabBar',
-  setup(_, { slots, expose }) {
+  props: { indicators: { type: Object, default: () => ({}) } },
+  setup(props, { slots, expose }) {
     expose({
       hasTab: () => true,
       scrollTabIntoView: vi.fn(),
     })
-    return () => h('div', { class: 'tab-bar-stub' }, slots.right?.())
+    return () => h('div', {
+      class: 'tab-bar-stub',
+      'data-indicators': JSON.stringify(props.indicators),
+    }, slots.right?.())
   },
 })
 
@@ -319,6 +337,9 @@ afterEach(() => {
   mocks.clearForPaneIds.mockReset()
   mocks.notificationItems.value = []
   mocks.unreadAttentionCount.value = 0
+  for (const paneId of Object.keys(mocks.unreadByPane)) delete mocks.unreadByPane[paneId]
+  mocks.authoritativeSeverity = null
+  mocks.presentationSettings.channels.tab_indicator = true
   mocks.authFetch.mockReset()
   mocks.authFetch.mockResolvedValue({
     ok: true,
@@ -1031,5 +1052,28 @@ describe('App.vue - Cmd+W routes through confirmation gate in split-pane mode', 
     expect(mocks.apiCloseTab).not.toHaveBeenCalled()
     const confirmDialog = wrapper.findComponent(ConfirmCloseDialogStub)
     expect(confirmDialog.attributes('data-visible')).toBe('false')
+  })
+})
+
+describe('App.vue - notification tab indicator display filter', () => {
+  it('hides and shows the rendered indicator without mutating authoritative unread state', async () => {
+    mocks.authoritativeSeverity = 'warning'
+    mocks.unreadByPane['pane-1'] = 'warning'
+    mocks.presentationSettings.channels.tab_indicator = true
+    const wrapper = await mountWithTabs()
+    const tabBar = wrapper.findComponent(TabBarStub)
+
+    expect(tabBar.attributes('data-indicators')).toContain('warning')
+    expect(mocks.unreadByPane['pane-1']).toBe('warning')
+
+    mocks.presentationSettings.channels.tab_indicator = false
+    await nextTick()
+    expect(tabBar.attributes('data-indicators')).toBe('{}')
+    expect(mocks.unreadByPane['pane-1']).toBe('warning')
+
+    mocks.presentationSettings.channels.tab_indicator = true
+    await nextTick()
+    expect(tabBar.attributes('data-indicators')).toContain('warning')
+    expect(mocks.unreadByPane['pane-1']).toBe('warning')
   })
 })

@@ -43,40 +43,92 @@
     <div class="settings-group">
       <h3 class="settings-group-title">{{ t('notification.channels') }}</h3>
       <div class="settings-row">
+        <label>Local presentation</label>
+        <label class="toggle">
+          <input type="checkbox" v-model="presentation.presentation_enabled" />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
+      <div class="settings-row">
         <label>{{ t('notification.sound') }}</label>
         <label class="toggle">
-          <input type="checkbox" v-model="cfg.channels.sound" @change="saveSettings()" />
+          <input type="checkbox" v-model="presentation.channels.sound" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
       <div class="settings-row">
         <label>{{ t('notification.vibration') }}</label>
         <label class="toggle">
-          <input type="checkbox" v-model="cfg.channels.vibration" @change="saveSettings()" />
+          <input type="checkbox" v-model="presentation.channels.vibration" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
       <div class="settings-row">
         <label>{{ t('notification.panel') }}</label>
         <label class="toggle">
-          <input type="checkbox" v-model="cfg.channels.panel" @change="saveSettings()" />
+          <input type="checkbox" v-model="presentation.channels.panel" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
       <div class="settings-row">
         <label>{{ t('notification.tabIndicator') }}</label>
         <label class="toggle">
-          <input type="checkbox" v-model="cfg.channels.tab_indicator" @change="saveSettings()" />
+          <input type="checkbox" v-model="presentation.channels.tab_indicator" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
     </div>
 
     <div class="settings-group">
+      <h3 class="settings-group-title">Presentation behavior</h3>
+      <div class="settings-row">
+        <label>DND level</label>
+        <div class="segmented-control">
+          <button
+            v-for="level in dndLevels"
+            :key="level.value"
+            :class="{ active: presentation.dnd_level === level.value }"
+            @click="presentation.dnd_level = level.value"
+          >
+            {{ level.label }}
+          </button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <label>Ignore current tab popup</label>
+        <label class="toggle">
+          <input type="checkbox" v-model="presentation.ignore_current_tab" />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
+      <div class="settings-row quiet-hours-row">
+        <label>Quiet hours</label>
+        <input type="time" v-model="presentation.quiet_hours.start" />
+        <span>–</span>
+        <input type="time" v-model="presentation.quiet_hours.end" />
+      </div>
+      <div class="settings-row">
+        <label>Coalesce window</label>
+        <input
+          type="number"
+          class="num-input coalesce-input"
+          v-model.number="presentation.coalesce_window_ms"
+          min="0"
+          max="10000"
+          step="50"
+        />
+        ms
+      </div>
+      <p v-if="isEphemeral" class="ephemeral-note">
+        Local presentation settings cannot be persisted and will reset after reload.
+      </p>
+    </div>
+
+    <div class="settings-group">
       <h3 class="settings-group-title">{{ t('notification.sounds') }}</h3>
       <div v-for="key in soundTypes" :key="key" class="settings-row sound-row">
         <label class="sound-label">{{ t(`notification.type.${key}`) }}</label>
-        <select class="sound-select" v-model="cfg.sounds[key].value" @change="saveSettings()">
+        <select class="sound-select" v-model="presentation.sounds[key].value">
           <option v-for="name in builtinNames" :key="name" :value="name">{{ name }}</option>
         </select>
         <input
@@ -84,10 +136,10 @@
           class="vol-slider"
           min="0"
           max="100"
-          :value="Math.round(cfg.sounds[key].volume * 100)"
+          :value="Math.round(presentation.sounds[key].volume * 100)"
           @input="
             (e: Event) =>
-              (cfg.sounds[key].volume = (e.target as HTMLInputElement).valueAsNumber / 100)
+              (presentation.sounds[key].volume = (e.target as HTMLInputElement).valueAsNumber / 100)
           "
         />
         <button class="preview-btn" @click="previewSound(key)">▶</button>
@@ -187,14 +239,24 @@ import {
   type NotificationType,
 } from '../../composables/useNotification'
 import { getApiBase, authFetch } from '../../composables/apiBase'
+import {
+  useNotificationPresentation,
+  type DndLevel,
+} from '../../composables/useNotificationPresentation'
 
 const { settings, saveSettings } = useSettings()
 const { t } = useI18n()
 
 const cfg = computed(() => settings.notification)
+const { settings: presentation, isEphemeral } = useNotificationPresentation()
 const builtinNames = getBuiltinSoundNames()
 const soundTypes: NotificationType[] = ['info', 'success', 'warning', 'error', 'urgent']
 const notifTypes = ['info', 'success', 'warning', 'error', 'urgent']
+const dndLevels: Array<{ value: DndLevel; label: string }> = [
+  { value: 'normal', label: 'Normal' },
+  { value: 'dot_sound', label: 'Dot + sound' },
+  { value: 'silent', label: 'Silent' },
+]
 
 const testMode = ref<'form' | 'raw'>('form')
 const testForm = reactive({
@@ -251,7 +313,7 @@ const canSend = computed(() => {
 })
 
 function previewSound(type: NotificationType) {
-  playSound(cfg.value.sounds[type])
+  playSound(presentation.sounds[type])
 }
 
 async function sendTest() {
@@ -303,6 +365,48 @@ async function sendTest() {
   background: var(--bg);
   color: var(--fg);
   font-size: 12px;
+}
+.coalesce-input {
+  margin-left: auto;
+}
+.segmented-control {
+  display: flex;
+  margin-left: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.segmented-control button {
+  border: 0;
+  border-right: 1px solid var(--border);
+  padding: 3px 8px;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 11px;
+}
+.segmented-control button:last-child {
+  border-right: 0;
+}
+.segmented-control button.active {
+  background: var(--fg-muted);
+  color: var(--bg);
+}
+.quiet-hours-row input[type='time'] {
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+}
+.quiet-hours-row input:first-of-type {
+  margin-left: auto;
+}
+.ephemeral-note {
+  margin: 6px 0 0;
+  color: var(--warning, #d9a441);
+  font-size: 11px;
 }
 .sound-row {
   display: flex;

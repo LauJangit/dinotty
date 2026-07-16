@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Stub WebSocket - useNotification() triggers connectWs() on first call.
 vi.stubGlobal(
@@ -38,6 +38,7 @@ import {
   setToastInstance,
   type NotificationItem,
 } from '../composables/useNotification'
+import { useNotificationPresentation } from '../composables/useNotificationPresentation'
 
 const toastSpy = vi.fn()
 
@@ -46,7 +47,7 @@ function setConfig(overrides: Record<string, unknown> = {}) {
     enabled: true,
     osc_notify: true,
     bell: { enabled: true },
-    channels: { sound: false, vibration: false, panel: false },
+    channels: { sound: false, vibration: false, panel: true, tab_indicator: false },
     sounds: {},
     ...overrides,
   }
@@ -62,10 +63,20 @@ function unreadByPane(): Record<string, string> {
 
 describe('pushNotification - plugin notify path', () => {
   beforeEach(() => {
+    vi.useFakeTimers()
     __resetForTest()
     setConfig()
+    const presentation = useNotificationPresentation().settings
+    presentation.coalesce_window_ms = 0
+    presentation.channels.sound = false
+    presentation.channels.vibration = false
     toastSpy.mockClear()
     setToastInstance(toastSpy)
+  })
+
+  afterEach(() => {
+    __resetForTest()
+    vi.useRealTimers()
   })
 
   it('appends item to notifications array', () => {
@@ -132,11 +143,12 @@ describe('pushNotification - plugin notify path', () => {
     expect(listNotifications()).toHaveLength(100)
   })
 
-  it('shows toast even when channels.panel is false (plugin notify not gated by panel)', () => {
+  it('routes plugin fallback popup through the local panel channel', () => {
     toastSpy.mockClear()
-    setConfig({ channels: { sound: false, vibration: false, panel: false } })
+    useNotificationPresentation().settings.channels.panel = false
     pushNotification({ type: 'info', body: 'should still toast', source: 'plugin' })
-    expect(toastSpy).toHaveBeenCalled()
+    vi.runAllTimers()
+    expect(toastSpy).not.toHaveBeenCalled()
   })
 
   it('does NOT show toast when master enabled=false', () => {

@@ -293,7 +293,9 @@ import {
   aggregateSeverity,
   getNotificationClientId,
   mintNotificationRequestId,
+  disposeNotificationPresentationScheduler,
 } from './composables/useNotification'
+import { useNotificationPresentation } from './composables/useNotificationPresentation'
 import { getIsAppForeground, onAppForegroundGain } from './composables/useAppForeground'
 import { usePluginLoader } from './composables/usePluginLoader'
 import PluginView from './components/plugin/PluginView.vue'
@@ -354,11 +356,19 @@ const sshAuthPrompts = ref<Array<{ prompt: string; echo: boolean }>>([])
 const { t } = useI18n()
 const { getBinding, formatBinding } = useKeybindings()
 const notif = useNotification()
-setToastInstance(useToast())
-setActiveReadContext({
+const presentationSettings = useNotificationPresentation().settings
+const clearToastInstance = setToastInstance(useToast())
+const clearActiveReadContext = setActiveReadContext({
   getActiveFocusedPaneId: () =>
     activeTab.value?.type === 'terminal' ? activeTab.value.activePaneId : null,
   isAppForeground: getIsAppForeground,
+  getActiveTabPaneIds: () => {
+    const tab = activeTab.value
+    if (!tab) return []
+    return tab.type === 'terminal'
+      ? [tab.paneId, ...getAllLeaves(tab.layout).map((leaf) => leaf.paneId)]
+      : [tab.paneId]
+  },
 })
 const stopForegroundGainSubscription = onAppForegroundGain(evaluateActiveRead)
 const { loadedPlugins, loadAll, getPluginContext, pluginList, allCommands } = usePluginLoader()
@@ -391,6 +401,7 @@ const visibleTabList = computed(() => {
 /** Aggregated per-tab unread notification severity (rolls up all leaves of a split tab). */
 const tabIndicators = computed(() => {
   const result: Record<string, string> = {}
+  if (!presentationSettings.channels.tab_indicator) return result
   for (const tab of tabs.value) {
     const paneIds = tab.type === 'terminal'
       ? [tab.paneId, ...getAllLeaves(tab.layout).map((l) => l.paneId)]
@@ -1918,6 +1929,9 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   stopForegroundGainSubscription()
   disposePluginNotifyBridge()
+  disposeNotificationPresentationScheduler()
+  clearActiveReadContext()
+  clearToastInstance()
   unlistenWindowClose?.()
   document.removeEventListener('keydown', onGlobalKeydown)
   document.removeEventListener('terminal-scroll', onTerminalScroll)

@@ -147,7 +147,7 @@ beforeEach(() => {
     enabled: true,
     osc_notify: true,
     bell: { enabled: true },
-    channels: { sound: false, vibration: false, panel: false },
+    channels: { sound: false, vibration: false, panel: true, tab_indicator: false },
     sounds: {},
   }
 })
