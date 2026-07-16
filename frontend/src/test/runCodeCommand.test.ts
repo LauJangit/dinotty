@@ -56,6 +56,26 @@ describe('run code commands', function runCodeCommandSuite() {
     expect(buildRunCodeCommand('/home/user/app.tsx', 'ssh')).toBe('npx tsx /home/user/app.tsx')
     expect(buildRunCodeCommand('/home/user/data.csv', 'bash')).toBeNull()
   })
+
+  it('normalizes Windows extended paths before running code', function normalizesExtendedPaths() {
+    // 步骤1：移除本地扩展路径前缀，并把混用的正斜杠统一为反斜杠。
+    const extendedLocalPath =
+      '\\\\?\\D:\\BaiduSyncdisk\\obsidian笔记AI版/知识网络/教程/教程配套代码/analyzer.py'
+    expect(buildRunCodeCommand(extendedLocalPath, 'powershell')).toBe(
+      "python 'D:\\BaiduSyncdisk\\obsidian笔记AI版\\知识网络\\教程\\教程配套代码\\analyzer.py'"
+    )
+
+    // 步骤2：扩展 UNC 路径恢复为普通网络共享路径。
+    const extendedNetworkPath = '\\\\?\\UNC\\server\\share/scripts/report.py'
+    expect(buildRunCodeCommand(extendedNetworkPath, 'cmd')).toBe(
+      'python "\\\\server\\share\\scripts\\report.py"'
+    )
+
+    // 步骤3：Unix 路径保持原样，不应用 Windows 规则。
+    expect(buildRunCodeCommand('/home/user/scripts/report.py', 'bash')).toBe(
+      'python3 /home/user/scripts/report.py'
+    )
+  })
 })
 
 describe('tree run code action', function treeRunCodeActionSuite() {

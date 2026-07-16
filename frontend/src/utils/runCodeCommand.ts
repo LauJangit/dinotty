@@ -55,6 +55,26 @@ function quoteCmdPath(filePath: string): string {
   return `"${filePath}"`
 }
 
+function normalizeWindowsRunPath(filePath: string): string {
+  // 步骤1：Windows 命令参数统一使用反斜杠，避免扩展路径混用分隔符。
+  const normalizedPath = filePath.replace(/\//g, '\\')
+
+  // 步骤2：扩展 UNC 路径恢复为普通网络共享路径。
+  const extendedNetworkPrefix = '\\\\?\\UNC\\'
+  if (normalizedPath.startsWith(extendedNetworkPrefix)) {
+    return `\\\\${normalizedPath.slice(extendedNetworkPrefix.length)}`
+  }
+
+  // 步骤3：本地扩展路径移除 Windows API 专用前缀。
+  const extendedLocalPrefix = '\\\\?\\'
+  if (normalizedPath.startsWith(extendedLocalPrefix)) {
+    return normalizedPath.slice(extendedLocalPrefix.length)
+  }
+
+  // 步骤4：普通 Windows 路径只保留分隔符规范化结果。
+  return normalizedPath
+}
+
 function quotedPathForShell(filePath: string, shellType: string): string {
   // 步骤1：根据活动终端的 shell 使用对应路径引用方式。
   if (shellType === 'powershell') return quotePowerShellPath(filePath)
@@ -67,9 +87,10 @@ export function buildRunCodeCommand(filePath: string, shellType: string): string
   const extension = fileExtension(filePath)
   if (!isRunnableCodeFile(filePath)) return null
 
-  // 步骤2：先生成适用于活动 shell 的安全路径参数。
-  const quotedPath = quotedPathForShell(filePath, shellType)
+  // 步骤2：Windows shell 先移除扩展路径前缀，再生成安全路径参数。
   const windowsShell = shellType === 'powershell' || shellType === 'cmd'
+  const commandPath = windowsShell ? normalizeWindowsRunPath(filePath) : filePath
+  const quotedPath = quotedPathForShell(commandPath, shellType)
 
   // 步骤3：脚本类文件使用对应解释器直接运行。
   switch (extension) {
