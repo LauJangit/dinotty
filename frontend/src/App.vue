@@ -66,7 +66,7 @@
           <Settings :size="16" />
         </button>
         <button
-          v-if="notif.notifications.value.length > 0"
+          v-if="notif.notifications.value.length > 0 || notif.unreadAttentionCount.value > 0"
           type="button"
           class="tab-bar-icon-btn notif-btn"
           :title="t('notification.title')"
@@ -74,8 +74,8 @@
           @touchend.prevent="notif.togglePanel()"
         >
           <Bell :size="16" />
-          <span v-if="notif.unreadCount.value > 0" class="notif-badge">{{
-            notif.unreadCount.value > 9 ? '9+' : notif.unreadCount.value
+          <span v-if="notif.unreadAttentionCount.value > 0" class="notif-badge">{{
+            notif.unreadAttentionCount.value > 9 ? '9+' : notif.unreadAttentionCount.value
           }}</span>
         </button>
       </template>
@@ -786,12 +786,12 @@ function resolveTabWorkspace(tab: Tab) {
     : tab.workspaceId ? workspaces.value.find((w) => w.id === tab.workspaceId) ?? null : null
 }
 
-function clearResolvedTabNotifications(tab: Tab) {
+function clearResolvedTabNotifications(tab: Tab, reason: 'tab_activate' | 'goto' = 'tab_activate') {
   // Clear notifications for this tab on activation (terminal: tab-level + all leaves; plugin: tab-level)
   const activatedPaneIds = tab.type === 'terminal'
     ? [tab.paneId, ...getAllLeaves(tab.layout).map((l) => l.paneId)]
     : [tab.paneId]
-  notif.clearForPaneIds(activatedPaneIds)
+  notif.clearForPaneIds(activatedPaneIds, reason)
 }
 
 let revealNavGen = 0
@@ -904,7 +904,7 @@ async function revealPane(paneId: string): Promise<boolean> {
   if (!tab) return false
 
   activePaneId.value = tab.paneId
-  clearResolvedTabNotifications(tab)
+  clearResolvedTabNotifications(tab, 'goto')
   persist()
   nextTick(() => focusActive())
 
@@ -989,8 +989,6 @@ async function closeTab(tabId: string) {
   const closedPaneIds = tab.type === 'terminal'
     ? [tab.paneId, ...getAllLeaves(tab.layout).map((l) => l.paneId)]
     : [tab.paneId]
-  notif.clearForPaneIds(closedPaneIds)
-
   // Invalidate plugin preview cache when closing a plugin tab
   if (tab.type === 'plugin') {
     invalidatePluginPreview(tab.paneId)
@@ -1009,6 +1007,8 @@ async function closeTab(tabId: string) {
       return
     }
   }
+
+  notif.clearForPaneIds(closedPaneIds, 'tab_close')
 
   // Remove tab from local array
   const idx = tabs.value.findIndex((t) => t.paneId === tabId)

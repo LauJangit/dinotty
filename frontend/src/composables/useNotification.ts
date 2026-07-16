@@ -1,9 +1,15 @@
-import { ref, shallowReactive, computed, h, watch } from 'vue'
+import { ref, shallowReactive, computed, h } from 'vue'
 import { TYPE } from 'vue-toastification'
 import { getApiBase, wsUrlWithToken } from './apiBase'
 import { isTauri } from './useTransport'
 import { settings } from './useSettings'
 import { useI18n } from './useI18n'
+import {
+  createAttentionStore,
+  type AttentionStateEnvelope,
+  type MarkReadResultWire,
+  type OverlayTarget,
+} from './attentionReconcile'
 
 // ── Sound ──────────────────────────────────────────────
 
@@ -87,17 +93,118 @@ export interface NotificationItem {
   body: string
   timestamp: number
   source?: 'terminal' | 'plugin'
+  eventSeq?: string
+  notifId?: string
+  epoch?: string
 }
+
+type MarkReadReason =
+  | 'focus'
+  | 'terminal_input'
+  | 'tab_activate'
+  | 'tab_close'
+  | 'pane_close'
+  | 'goto'
+  | 'active_observed'
+  | 'dismiss'
+  | 'clear_all'
+
+interface LegacyEvent {
+  type: 'bell' | 'notify'
+  v: number
+  pane_id: string
+  title: string | null
+  body: string
+  notification_type: string
+  eventSeq: string
+  occurredAt: number
+  severity: NotificationType
+  notifId?: string
+}
+
+interface MarkReadPayload {
+  type: 'notification.mark_read'
+  v: 1
+  epoch: string
+  clientId: string
+  requestId: string
+  reason: MarkReadReason
+  panes: Array<{ paneId: string; throughEventSeq: string }>
+  notifs: Array<{ notifId: string }>
+}
+
+interface PendingRequest {
+  requestId: string
+  payload: MarkReadPayload
+  attempts: number
+  timer: ReturnType<typeof setTimeout> | null
+}
+
+const ACK_TIMEOUT_MS = 5000
+const MAX_SEND_ATTEMPTS = 4
+const PENDING_CAP = 64
+const HISTORY_DEDUP_CAP = 512
+const CLIENT_ID_KEY = 'dinotty.notifClientId'
+const PROTO_RELOAD_KEY = 'dinotty.protoReloadAt'
 
 const notifications = ref<NotificationItem[]>([])
 const panelVisible = ref(false)
 const unreadByPane = shallowReactive<Record<string, NotificationType>>({})
-const unreadCount = computed(() => notifications.value.length)
+const firstUnreadAtByPane = shallowReactive<Record<string, number | null>>({})
+const projectionVersion = ref(0)
+const historyCount = computed(() => notifications.value.length)
+const unreadAttentionCount = computed(() => {
+  projectionVersion.value
+  return attentionStore.unreadAttentionCount()
+})
 
+let attentionStore = createAttentionStore()
 let ws: WebSocket | null = null
 let idCounter = 0
 let initialized = false
 let reconnectDelay = 3000
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+let connectionNeedsSnapshot = false
+let protocolUpgradeStopped = false
+let suppressClose = false
+let connectGeneration = 0
+let requestCounter = 0
+let cachedClientId: string | null = null
+const pendingRequests = new Map<string, PendingRequest>()
+const historyDedup = new Set<string>()
+
+function randomToken(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID()
+    }
+    if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+      const bytes = new Uint32Array(4)
+      crypto.getRandomValues(bytes)
+      return [...bytes].map((value) => value.toString(36)).join('-')
+    }
+  } catch {}
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+}
+
+const tabNonce = randomToken()
+
+function getClientId(): string {
+  if (cachedClientId) return cachedClientId
+  try {
+    const stored = localStorage.getItem(CLIENT_ID_KEY)
+    if (stored) {
+      cachedClientId = stored
+      return stored
+    }
+    cachedClientId = randomToken()
+    localStorage.setItem(CLIENT_ID_KEY, cachedClientId)
+    return cachedClientId
+  } catch {
+    cachedClientId = randomToken()
+    return cachedClientId
+  }
+}
 
 function genId(): string {
   return `notif-${++idCounter}-${Date.now()}`
@@ -121,27 +228,54 @@ export function aggregateSeverity(paneIds: string[]): NotificationType | null {
   for (const pid of paneIds) {
     const sev = unreadByPane[pid]
     if (sev) {
-      const r = severityRank(sev)
-      if (r > highestRank) {
+      const rank = severityRank(sev)
+      if (rank > highestRank) {
         highest = sev
-        highestRank = r
+        highestRank = rank
       }
     }
   }
   return highest
 }
 
+function refreshProjection() {
+  const next = attentionStore.unreadPaneSeverities()
+  for (const paneId of Object.keys(unreadByPane)) {
+    if (!(paneId in next)) delete unreadByPane[paneId]
+  }
+  for (const [paneId, severity] of Object.entries(next)) {
+    unreadByPane[paneId] = severity as NotificationType
+  }
+  const nextFirstUnreadAt = attentionStore.firstUnreadAtByPane()
+  for (const paneId of Object.keys(firstUnreadAtByPane)) {
+    if (!(paneId in nextFirstUnreadAt)) delete firstUnreadAtByPane[paneId]
+  }
+  for (const [paneId, firstUnreadAt] of Object.entries(nextFirstUnreadAt)) {
+    firstUnreadAtByPane[paneId] = firstUnreadAt
+  }
+  projectionVersion.value++
+}
+
 function getNotifConfig() {
   return settings.notification
 }
 
-function handleEvent(event: {
-  type: string
-  pane_id: string
-  title?: string | null
-  body?: string
-  notification_type?: string
-}) {
+function rememberHistoryKey(key: string): boolean {
+  if (historyDedup.has(key)) return false
+  historyDedup.add(key)
+  if (historyDedup.size > HISTORY_DEDUP_CAP) {
+    const oldest = historyDedup.values().next().value
+    if (oldest !== undefined) historyDedup.delete(oldest)
+  }
+  return true
+}
+
+function insertHistory(item: NotificationItem) {
+  notifications.value.unshift(item)
+  if (notifications.value.length > 100) notifications.value.length = 100
+}
+
+function handleEvent(event: LegacyEvent) {
   const cfg = getNotifConfig()
   if (!cfg || !cfg.enabled) return
 
@@ -161,25 +295,24 @@ function handleEvent(event: {
     return
   }
 
+  const dedupKey = event.pane_id
+    ? `${attentionStore.epoch ?? ''}|${event.pane_id}|${event.eventSeq}`
+    : `${attentionStore.epoch ?? ''}|notif|${event.notifId ?? ''}`
+  if (!rememberHistoryKey(dedupKey)) return
+
   const item: NotificationItem = {
     id: genId(),
     type: notifType,
-    paneId: event.pane_id,
+    paneId: event.pane_id || undefined,
     title,
     body,
     timestamp: Date.now(),
     source: 'terminal',
+    eventSeq: event.eventSeq,
+    notifId: event.notifId,
+    epoch: attentionStore.epoch ?? undefined,
   }
-  notifications.value.unshift(item)
-  if (notifications.value.length > 100) {
-    notifications.value.length = 100
-  }
-
-  // Track unread per pane (highest severity)
-  const current = unreadByPane[event.pane_id]
-  if (!current || severityRank(notifType) > severityRank(current)) {
-    unreadByPane[event.pane_id] = notifType
-  }
+  insertHistory(item)
 
   // Sound
   if (cfg.channels?.sound) {
@@ -220,18 +353,9 @@ export function pushNotification(opts: {
     body: opts.body,
     timestamp: Date.now(),
     source: opts.source ?? 'terminal',
+    epoch: attentionStore.epoch ?? undefined,
   }
-  notifications.value.unshift(item)
-  if (notifications.value.length > 100) {
-    notifications.value.length = 100
-  }
-
-  if (item.paneId) {
-    const current = unreadByPane[item.paneId]
-    if (!current || severityRank(item.type) > severityRank(current)) {
-      unreadByPane[item.paneId] = item.type
-    }
-  }
+  insertHistory(item)
 
   if (cfg.channels?.sound) {
     const soundCfg: SoundConfig | undefined = cfg.sounds?.[item.type]
@@ -270,7 +394,9 @@ export function setGoToPaneHandler(handler: (paneId: string) => void) {
 
 function showToast(item: NotificationItem) {
   if (!toastInstance) {
-    console.warn('[notification] toast instance not set; call setToastInstance() from App.vue setup')
+    console.warn(
+      '[notification] toast instance not set; call setToastInstance() from App.vue setup'
+    )
     return
   }
   const { t } = useI18n()
@@ -312,34 +438,281 @@ function showToast(item: NotificationItem) {
   })
 }
 
+function isSocketOpen(): boolean {
+  return ws !== null && ws.readyState === WebSocket.OPEN
+}
+
+function cancelPending(requestId: string) {
+  const pending = pendingRequests.get(requestId)
+  if (!pending) return
+  if (pending.timer !== null) clearTimeout(pending.timer)
+  pendingRequests.delete(requestId)
+}
+
+function dropPending(requestId: string) {
+  cancelPending(requestId)
+  attentionStore.dropOverlay(requestId)
+}
+
+function cancelAllPending() {
+  for (const pending of pendingRequests.values()) {
+    if (pending.timer !== null) clearTimeout(pending.timer)
+  }
+  pendingRequests.clear()
+}
+
+function prunePendingWithoutOverlay() {
+  for (const requestId of pendingRequests.keys()) {
+    if (!attentionStore.overlays.has(requestId)) cancelPending(requestId)
+  }
+}
+
+function scheduleAckTimeout(pending: PendingRequest) {
+  if (pending.timer !== null) clearTimeout(pending.timer)
+  pending.timer = setTimeout(() => {
+    pending.timer = null
+    if (!pendingRequests.has(pending.requestId)) return
+    if (pending.attempts >= MAX_SEND_ATTEMPTS) {
+      pendingRequests.delete(pending.requestId)
+      attentionStore.dropOverlay(pending.requestId)
+      refreshProjection()
+      return
+    }
+    sendPending(pending)
+  }, ACK_TIMEOUT_MS)
+}
+
+function sendPending(pending: PendingRequest) {
+  if (pending.attempts >= MAX_SEND_ATTEMPTS) {
+    pendingRequests.delete(pending.requestId)
+    attentionStore.dropOverlay(pending.requestId)
+    refreshProjection()
+    return
+  }
+  pending.attempts++
+  if (isSocketOpen() && !connectionNeedsSnapshot && pending.payload.epoch) {
+    ws!.send(JSON.stringify(pending.payload))
+  }
+  scheduleAckTimeout(pending)
+}
+
+function createPending(
+  targets: OverlayTarget[],
+  reason: MarkReadReason,
+  panes: MarkReadPayload['panes'],
+  notifs: MarkReadPayload['notifs']
+) {
+  if (targets.length === 0) return
+  const requestId = `${tabNonce}-${++requestCounter}`
+  const payload: MarkReadPayload = {
+    type: 'notification.mark_read',
+    v: 1,
+    epoch: attentionStore.epoch ?? '',
+    clientId: getClientId(),
+    requestId,
+    reason,
+    panes,
+    notifs,
+  }
+  const pending: PendingRequest = { requestId, payload, attempts: 0, timer: null }
+  if (pendingRequests.size >= PENDING_CAP) {
+    const oldestRequestId = pendingRequests.keys().next().value
+    if (oldestRequestId !== undefined) dropPending(oldestRequestId)
+  }
+  attentionStore.addOverlay(requestId, targets)
+  pendingRequests.set(requestId, pending)
+  refreshProjection()
+  sendPending(pending)
+}
+
+export function markPanesRead(
+  panes: Array<{ paneId: string; throughEventSeq?: string }>,
+  reason: MarkReadReason
+) {
+  const wirePanes: MarkReadPayload['panes'] = []
+  const targets: OverlayTarget[] = []
+  for (const requested of panes) {
+    const pane = attentionStore.panes.get(requested.paneId)
+    if (!pane) continue
+    const throughEventSeq = requested.throughEventSeq ?? pane.latestEventSeq.toString()
+    wirePanes.push({ paneId: requested.paneId, throughEventSeq })
+    targets.push({ paneId: requested.paneId, throughEventSeq: BigInt(throughEventSeq) })
+  }
+  createPending(targets, reason, wirePanes, [])
+}
+
+export function markNotifsRead(notifIds: string[], reason: MarkReadReason) {
+  const ids = [...new Set(notifIds)].filter((notifId) => attentionStore.notifs.has(notifId))
+  createPending(
+    ids.map((notifId) => ({ notifId })),
+    reason,
+    [],
+    ids.map((notifId) => ({ notifId }))
+  )
+}
+
+function resendPendingAfterSnapshot() {
+  for (const pending of [...pendingRequests.values()]) {
+    if (!attentionStore.overlays.has(pending.requestId)) {
+      cancelPending(pending.requestId)
+      continue
+    }
+    if (pending.timer !== null) clearTimeout(pending.timer)
+    pending.timer = null
+    pending.payload.epoch = attentionStore.epoch ?? ''
+    sendPending(pending)
+  }
+}
+
+function handleProtocolUpgradeRequired() {
+  protocolUpgradeStopped = true
+  if (reconnectTimer !== null) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+  if (isTauri()) {
+    console.error('[notification] protocol update required; update the desktop application')
+    if (toastInstance)
+      toastInstance('Notification update required', { type: TYPE.ERROR, timeout: false })
+    return
+  }
+
+  let lastReload = 0
+  try {
+    lastReload = Number(sessionStorage.getItem(PROTO_RELOAD_KEY) ?? '0')
+  } catch {}
+  const now = Date.now()
+  if (!Number.isFinite(lastReload) || now - lastReload > 60_000) {
+    try {
+      sessionStorage.setItem(PROTO_RELOAD_KEY, String(now))
+    } catch {}
+    location.reload()
+  } else {
+    console.error('[notification] protocol update required; automatic reload already attempted')
+  }
+}
+
+function handleClose(event: CloseEvent) {
+  ws = null
+  connectionNeedsSnapshot = false
+  if (suppressClose) return
+  if (event.code === 4001) {
+    cancelAllPending()
+    attentionStore.overlays.clear()
+    refreshProjection()
+    handleProtocolUpgradeRequired()
+    return
+  }
+  if (protocolUpgradeStopped) return
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null
+    connectWs()
+  }, reconnectDelay)
+  reconnectDelay = Math.min(reconnectDelay * 2, 30000)
+}
+
+export function __dispatchServerMessageForTest(msg: unknown) {
+  if (!msg || typeof msg !== 'object' || !('type' in msg)) return
+  const envelope = msg as { type: string }
+  switch (envelope.type) {
+    case 'state_delta':
+      attentionStore.applyDelta(msg as unknown as AttentionStateEnvelope)
+      prunePendingWithoutOverlay()
+      refreshProjection()
+      break
+    case 'snapshot': {
+      const snapshot = msg as unknown as AttentionStateEnvelope
+      attentionStore.applySnapshot(snapshot)
+      prunePendingWithoutOverlay()
+      refreshProjection()
+      if (connectionNeedsSnapshot) {
+        connectionNeedsSnapshot = false
+        resendPendingAfterSnapshot()
+      }
+      break
+    }
+    case 'mark_read_result': {
+      const result = msg as MarkReadResultWire & { type: string }
+      const staleEpoch = result.results.some(({ status }) => status === 'stale_epoch')
+      if (staleEpoch) cancelAllPending()
+      else cancelPending(result.requestId)
+      attentionStore.applyMarkReadResult(result)
+      refreshProjection()
+      break
+    }
+    case 'resync_required':
+      attentionStore.noteResyncRequired()
+      refreshProjection()
+      break
+    case 'bell':
+    case 'notify':
+      handleEvent(msg as LegacyEvent)
+      break
+  }
+}
+
+export function __pendingRequestCountForTest(): number {
+  return pendingRequests.size
+}
+
 function connectWs() {
-  if (ws) return
+  if (ws || protocolUpgradeStopped) return
+  const generation = connectGeneration
   const connect = async () => {
     let url: string
     if (isTauri()) {
       const origin = await getApiBase()
-      url = `${origin.replace(/^http/, 'ws')}/ws/notify`
+      url = `${origin.replace(/^http/, 'ws')}/ws/notify?v=1`
     } else {
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-      url = `${proto}//${location.host}/ws/notify`
+      url = `${proto}//${location.host}/ws/notify?v=1`
     }
-    ws = new WebSocket(wsUrlWithToken(url))
-    ws.onopen = () => {
+    if (generation !== connectGeneration || protocolUpgradeStopped || ws) return
+    const socket = new WebSocket(wsUrlWithToken(url))
+    ws = socket
+    connectionNeedsSnapshot = true
+    socket.onopen = () => {
       reconnectDelay = 3000
     }
-    ws.onmessage = (e) => {
+    socket.onmessage = (event) => {
       try {
-        handleEvent(JSON.parse(e.data))
+        __dispatchServerMessageForTest(JSON.parse(event.data))
       } catch {}
     }
-    ws.onclose = () => {
-      ws = null
-      setTimeout(connect, reconnectDelay)
-      reconnectDelay = Math.min(reconnectDelay * 2, 30000)
-    }
-    ws.onerror = () => {}
+    socket.onclose = handleClose
+    socket.onerror = () => {}
   }
-  connect()
+  void connect()
+}
+
+export function __resetForTest() {
+  connectGeneration++
+  if (reconnectTimer !== null) clearTimeout(reconnectTimer)
+  reconnectTimer = null
+  cancelAllPending()
+  suppressClose = true
+  if (ws) {
+    ws.onclose = null
+    ws.close()
+  }
+  suppressClose = false
+  ws = null
+  notifications.value = []
+  panelVisible.value = false
+  for (const paneId of Object.keys(unreadByPane)) delete unreadByPane[paneId]
+  for (const paneId of Object.keys(firstUnreadAtByPane)) delete firstUnreadAtByPane[paneId]
+  attentionStore = createAttentionStore()
+  projectionVersion.value++
+  historyDedup.clear()
+  idCounter = 0
+  requestCounter = 0
+  cachedClientId = null
+  initialized = false
+  reconnectDelay = 3000
+  connectionNeedsSnapshot = false
+  protocolUpgradeStopped = false
+  toastInstance = null
+  goToHandler = null
 }
 
 export function useNotification() {
@@ -351,32 +724,57 @@ export function useNotification() {
     notifications,
     panelVisible,
     unreadByPane,
-    unreadCount,
+    firstUnreadAtByPane,
+    unreadAttentionCount,
+    historyCount,
     setGoToPaneHandler,
+    markPanesRead,
+    markNotifsRead,
     dismissOne(id: string) {
-      const item = notifications.value.find((n) => n.id === id)
-      notifications.value = notifications.value.filter((n) => n.id !== id)
-      const paneId = item?.paneId
-      if (paneId && !notifications.value.some((n) => n.paneId === paneId)) {
-        delete unreadByPane[paneId]
+      const item = notifications.value.find((notification) => notification.id === id)
+      notifications.value = notifications.value.filter((notification) => notification.id !== id)
+      if (!item || item.epoch !== attentionStore.epoch) return
+      if (item?.paneId && item.eventSeq) {
+        markPanesRead([{ paneId: item.paneId, throughEventSeq: item.eventSeq }], 'dismiss')
+      } else if (item?.notifId) {
+        markNotifsRead([item.notifId], 'dismiss')
       }
     },
     clearAll() {
       notifications.value = []
-      for (const k of Object.keys(unreadByPane)) delete unreadByPane[k]
       panelVisible.value = false
+      const panes = [...attentionStore.panes.entries()]
+        .filter(([, pane]) => pane.latestEventSeq > pane.readThroughSeq)
+        .map(([paneId, pane]) => ({ paneId, throughEventSeq: pane.latestEventSeq.toString() }))
+      const notifIds = [...attentionStore.notifs.entries()]
+        .filter(([, notif]) => !notif.read)
+        .map(([notifId]) => notifId)
+      const targets: OverlayTarget[] = [
+        ...panes.map(({ paneId, throughEventSeq }) => ({
+          paneId,
+          throughEventSeq: BigInt(throughEventSeq),
+        })),
+        ...notifIds.map((notifId) => ({ notifId })),
+      ]
+      createPending(
+        targets,
+        'clear_all',
+        panes,
+        notifIds.map((notifId) => ({ notifId }))
+      )
     },
     clearPaneUnread(paneId: string) {
-      delete unreadByPane[paneId]
+      markPanesRead([{ paneId }], 'pane_close')
     },
-    clearForPaneIds(paneIds: string[]) {
+    clearForPaneIds(paneIds: string[], reason: MarkReadReason = 'tab_activate') {
       const idSet = new Set(paneIds)
       notifications.value = notifications.value.filter(
-        (n) => !n.paneId || !idSet.has(n.paneId),
+        (notification) => !notification.paneId || !idSet.has(notification.paneId)
       )
-      for (const pid of paneIds) {
-        delete unreadByPane[pid]
-      }
+      markPanesRead(
+        paneIds.map((paneId) => ({ paneId })),
+        reason
+      )
     },
     togglePanel() {
       panelVisible.value = !panelVisible.value

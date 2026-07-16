@@ -31,6 +31,8 @@ vi.mock('../composables/apiBase', () => ({
 
 import { settings } from '../composables/useSettings'
 import {
+  __dispatchServerMessageForTest,
+  __resetForTest,
   useNotification,
   pushNotification,
   setToastInstance,
@@ -60,9 +62,7 @@ function unreadByPane(): Record<string, string> {
 
 describe('pushNotification - plugin notify path', () => {
   beforeEach(() => {
-    // Clear module-level state between tests.
-    const notif = useNotification()
-    notif.clearAll()
+    __resetForTest()
     setConfig()
     toastSpy.mockClear()
     setToastInstance(toastSpy)
@@ -82,8 +82,25 @@ describe('pushNotification - plugin notify path', () => {
     expect(Object.keys(unreadByPane())).toHaveLength(0)
   })
 
-  it('DOES set unreadByPane when paneId is present (terminal-style)', () => {
+  it('keeps unreadByPane authoritative even when a local push carries paneId', () => {
     pushNotification({ type: 'error', body: 'with pane', paneId: 'pane-1' })
+    expect(unreadByPane()['pane-1']).toBeUndefined()
+
+    __dispatchServerMessageForTest({
+      type: 'snapshot',
+      epoch: 'test-epoch',
+      revision: '1',
+      panes: [
+        {
+          paneId: 'pane-1',
+          latestEventSeq: '1',
+          readThroughSeq: '0',
+          firstUnreadAt: 1,
+          severity: 'error',
+        },
+      ],
+      notifs: [],
+    })
     expect(unreadByPane()['pane-1']).toBe('error')
   })
 

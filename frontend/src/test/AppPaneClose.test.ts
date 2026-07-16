@@ -58,6 +58,9 @@ const mocks = vi.hoisted(() => ({
     layout: { type: 'leaf', paneId: 'p-new', title: 'Terminal', ratio: 1, zoomed: false },
   })),
   apiCloseTab: vi.fn(async () => {}),
+  clearForPaneIds: vi.fn(),
+  notificationItems: { value: [] as unknown[] },
+  unreadAttentionCount: { value: 0 },
 }))
 
 vi.mock('../composables/apiBase', () => ({
@@ -111,12 +114,13 @@ vi.mock('../composables/useKeybindings', () => ({
 vi.mock('../composables/useMonitor', () => ({ initMonitorHistory: () => {} }))
 vi.mock('../composables/useNotification', () => ({
   useNotification: () => ({
-    notifications: { value: [] },
-    unreadCount: { value: 0 },
+    notifications: mocks.notificationItems,
+    unreadAttentionCount: mocks.unreadAttentionCount,
+    historyCount: { value: 0 },
     unreadByPane: {},
     togglePanel: vi.fn(),
     clearPaneUnread: vi.fn(),
-    clearForPaneIds: vi.fn(),
+    clearForPaneIds: mocks.clearForPaneIds,
     setGoToPaneHandler: vi.fn(),
   }),
   aggregateSeverity: vi.fn(() => null),
@@ -217,6 +221,17 @@ const SplitContainerStub = defineComponent({
   },
 })
 
+const TabBarStub = defineComponent({
+  name: 'TabBar',
+  setup(_, { slots, expose }) {
+    expose({
+      hasTab: () => true,
+      scrollTabIntoView: vi.fn(),
+    })
+    return () => h('div', { class: 'tab-bar-stub' }, slots.right?.())
+  },
+})
+
 const ConfirmModalStub = defineComponent({
   name: 'ConfirmModal',
   props: ['visible', 'title', 'message', 'confirmText', 'cancelText'],
@@ -254,6 +269,7 @@ async function mountWithTabs() {
       plugins: [createPinia()],
       stubs: {
         SplitContainer: SplitContainerStub,
+        TabBar: TabBarStub,
         ConfirmCloseDialog: ConfirmCloseDialogStub,
         ConfirmModal: ConfirmModalStub,
       },
@@ -276,6 +292,9 @@ afterEach(() => {
   mountedWrapper = undefined
   vi.useRealTimers()
   localStorageMock.clear()
+  mocks.clearForPaneIds.mockReset()
+  mocks.notificationItems.value = []
+  mocks.unreadAttentionCount.value = 0
 })
 
 afterAll(() => {
@@ -394,6 +413,76 @@ describe('App.vue - onClosePane routes through confirmation gate', () => {
 
     expect(mocks.closePane).toHaveBeenCalledWith('pane-1')
     expect(mocks.apiCloseTab).not.toHaveBeenCalled()
+  })
+
+  it('marks a closed tab read only after the backend close succeeds', async () => {
+    settings.confirm_before_close_tab = false
+    mocks.closePane.mockResolvedValue(false)
+    let resolveClose!: () => void
+    mocks.apiCloseTab.mockImplementationOnce(
+      () => new Promise<void>((resolve) => (resolveClose = resolve))
+    )
+
+    const wrapper = await mountWithTabs()
+    mocks.clearForPaneIds.mockClear()
+    const splitContainer = wrapper.findComponent(SplitContainerStub)
+    splitContainer.vm.$emit('close', 'pane-1')
+    await nextTick()
+
+    expect(mocks.apiCloseTab).toHaveBeenCalledWith('tab-1')
+    expect(mocks.clearForPaneIds).not.toHaveBeenCalled()
+
+    resolveClose()
+    await Promise.resolve()
+    await nextTick()
+    expect(mocks.clearForPaneIds).toHaveBeenCalledWith(
+      expect.arrayContaining(['tab-1', 'pane-1', 'pane-2']),
+      'tab_close'
+    )
+  })
+
+  it('does not mark a tab read when the backend close fails', async () => {
+    settings.confirm_before_close_tab = false
+    mocks.closePane.mockResolvedValue(false)
+    mocks.apiCloseTab.mockRejectedValueOnce(new Error('close failed'))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const wrapper = await mountWithTabs()
+    mocks.clearForPaneIds.mockClear()
+    const splitContainer = wrapper.findComponent(SplitContainerStub)
+    splitContainer.vm.$emit('close', 'pane-1')
+    await Promise.resolve()
+    await nextTick()
+
+    expect(mocks.clearForPaneIds).not.toHaveBeenCalled()
+  })
+})
+
+describe('App.vue - notification badge visibility', () => {
+  it('keeps the bell visible for authoritative unread attention with empty history', async () => {
+    mocks.notificationItems.value = []
+    mocks.unreadAttentionCount.value = 1
+
+    const wrapper = await mountWithTabs()
+
+    expect(wrapper.find('button.notif-btn').exists()).toBe(true)
+    expect(wrapper.find('.notif-badge').text()).toBe('1')
+  })
+})
+
+describe('App.vue - notification goto flow', () => {
+  it('passes the goto reason from the real NotificationPanel reveal path', async () => {
+    const wrapper = await mountWithTabs()
+    mocks.clearForPaneIds.mockClear()
+
+    await wrapper.findComponent({ name: 'NotificationPanel' }).vm.$emit('goto-pane', 'pane-1')
+    await Promise.resolve()
+    await nextTick()
+
+    expect(mocks.clearForPaneIds).toHaveBeenCalledWith(
+      expect.arrayContaining(['tab-1', 'pane-1', 'pane-2']),
+      'goto'
+    )
   })
 })
 

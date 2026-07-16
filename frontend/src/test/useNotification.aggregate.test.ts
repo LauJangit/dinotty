@@ -29,6 +29,8 @@ vi.mock('../composables/apiBase', () => ({
 
 import { settings } from '../composables/useSettings'
 import {
+  __dispatchServerMessageForTest,
+  __resetForTest,
   useNotification,
   pushNotification,
   aggregateSeverity,
@@ -57,10 +59,25 @@ function unreadByPane(): Record<string, string> {
   return (useNotification() as any).unreadByPane as Record<string, string>
 }
 
+function seedUnread(entries: Array<[string, string, string]>) {
+  __dispatchServerMessageForTest({
+    type: 'snapshot',
+    epoch: 'test-epoch',
+    revision: '1',
+    panes: entries.map(([paneId, latestEventSeq, severity]) => ({
+      paneId,
+      latestEventSeq,
+      readThroughSeq: '0',
+      firstUnreadAt: 1,
+      severity,
+    })),
+    notifs: [],
+  })
+}
+
 describe('aggregateSeverity', () => {
   beforeEach(() => {
-    const notif = useNotification()
-    notif.clearAll()
+    __resetForTest()
     setConfig()
     toastSpy.mockClear()
     setToastInstance(toastSpy)
@@ -71,31 +88,37 @@ describe('aggregateSeverity', () => {
   })
 
   it('returns null when no pane has unread', () => {
-    pushNotification({ type: 'error', body: 'x', paneId: 'pane-a' })
+    seedUnread([['pane-a', '1', 'error']])
     expect(aggregateSeverity(['pane-b', 'pane-c'])).toBeNull()
   })
 
   it('returns the severity when single pane has unread', () => {
-    pushNotification({ type: 'warning', body: 'x', paneId: 'pane-a' })
+    seedUnread([['pane-a', '1', 'warning']])
     expect(aggregateSeverity(['pane-a'])).toBe('warning')
   })
 
   it('returns highest severity across multiple panes', () => {
-    pushNotification({ type: 'info', body: 'x', paneId: 'leaf-1' })
-    pushNotification({ type: 'error', body: 'x', paneId: 'leaf-2' })
-    pushNotification({ type: 'warning', body: 'x', paneId: 'leaf-3' })
+    seedUnread([
+      ['leaf-1', '1', 'info'],
+      ['leaf-2', '2', 'error'],
+      ['leaf-3', '3', 'warning'],
+    ])
     expect(aggregateSeverity(['leaf-1', 'leaf-2', 'leaf-3'])).toBe('error')
   })
 
   it('urgent beats error', () => {
-    pushNotification({ type: 'error', body: 'x', paneId: 'leaf-1' })
-    pushNotification({ type: 'urgent', body: 'x', paneId: 'leaf-2' })
+    seedUnread([
+      ['leaf-1', '1', 'error'],
+      ['leaf-2', '2', 'urgent'],
+    ])
     expect(aggregateSeverity(['leaf-1', 'leaf-2'])).toBe('urgent')
   })
 
   it('aggregates tab-level paneId together with leaf paneIds (split-pane scenario)', () => {
-    pushNotification({ type: 'info', body: 'x', paneId: 'tab-1' })
-    pushNotification({ type: 'error', body: 'x', paneId: 'leaf-2' })
+    seedUnread([
+      ['tab-1', '1', 'info'],
+      ['leaf-2', '2', 'error'],
+    ])
     const sev = aggregateSeverity(['tab-1', 'leaf-1', 'leaf-2'])
     expect(sev).toBe('error')
   })
@@ -103,14 +126,17 @@ describe('aggregateSeverity', () => {
 
 describe('clearForPaneIds', () => {
   beforeEach(() => {
-    const notif = useNotification()
-    notif.clearAll()
+    __resetForTest()
     setConfig()
     toastSpy.mockClear()
     setToastInstance(toastSpy)
   })
 
   it('removes unreadByPane entries for given paneIds', () => {
+    seedUnread([
+      ['pane-a', '1', 'error'],
+      ['pane-b', '2', 'info'],
+    ])
     pushNotification({ type: 'error', body: 'x', paneId: 'pane-a' })
     pushNotification({ type: 'info', body: 'x', paneId: 'pane-b' })
     expect(Object.keys(unreadByPane())).toHaveLength(2)
@@ -121,6 +147,10 @@ describe('clearForPaneIds', () => {
   })
 
   it('removes notifications whose paneId is in the set', () => {
+    seedUnread([
+      ['pane-a', '1', 'error'],
+      ['pane-b', '2', 'info'],
+    ])
     pushNotification({ type: 'error', body: 'x', paneId: 'pane-a' })
     pushNotification({ type: 'info', body: 'x', paneId: 'pane-b' })
 
@@ -131,6 +161,11 @@ describe('clearForPaneIds', () => {
   })
 
   it('clears both tab-level and leaf paneIds in one call (closeTab scenario)', () => {
+    seedUnread([
+      ['leaf-1', '1', 'error'],
+      ['leaf-2', '2', 'warning'],
+      ['pane-x', '3', 'info'],
+    ])
     pushNotification({ type: 'error', body: 'leaf1', paneId: 'leaf-1' })
     pushNotification({ type: 'warning', body: 'leaf2', paneId: 'leaf-2' })
     pushNotification({ type: 'info', body: 'other', paneId: 'pane-x' })
@@ -144,6 +179,7 @@ describe('clearForPaneIds', () => {
   })
 
   it('preserves notifications with no paneId (broadcast notifications)', () => {
+    seedUnread([['pane-a', '1', 'error']])
     pushNotification({ type: 'info', body: 'no pane', source: 'plugin' })
     pushNotification({ type: 'error', body: 'with pane', paneId: 'pane-a' })
 
@@ -154,6 +190,7 @@ describe('clearForPaneIds', () => {
   })
 
   it('is a no-op for unknown paneIds', () => {
+    seedUnread([['pane-a', '1', 'error']])
     pushNotification({ type: 'error', body: 'x', paneId: 'pane-a' })
     useNotification().clearForPaneIds(['nonexistent'])
     expect(unreadByPane()['pane-a']).toBe('error')
