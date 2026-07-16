@@ -65,7 +65,7 @@ beforeEach(() => {
     command_complete: { enabled: false, threshold_seconds: 10 },
     keyword_match: [],
     hooks: [],
-    channels: { sound: true, vibration: true, panel: true, tab_indicator: true },
+    channels: { sound: true, vibration: true, popup: true, panel: true, tab_indicator: true },
     sounds: cloneSettings().sounds,
   }
 })
@@ -78,7 +78,7 @@ afterEach(() => {
 
 describe('presentationGate output vector', () => {
   it('composes base, E1, active-leaf, D2, and E5 across a Cartesian sweep', () => {
-    for (let channelMask = 0; channelMask < 16; channelMask++) {
+    for (let channelMask = 0; channelMask < 32; channelMask++) {
       for (const presentationEnabled of [false, true]) {
         for (const dndLevel of ['normal', 'dot_sound', 'silent'] as const) {
           for (const focusedPane of [false, true]) {
@@ -91,8 +91,9 @@ describe('presentationGate output vector', () => {
                 settings.channels = {
                   sound: !!(channelMask & 1),
                   vibration: !!(channelMask & 2),
-                  panel: !!(channelMask & 4),
-                  tab_indicator: !!(channelMask & 8),
+                  popup: !!(channelMask & 4),
+                  panel: !!(channelMask & 8),
+                  tab_indicator: !!(channelMask & 16),
                 }
                 settings.dnd_level = dndLevel
                 settings.ignore_current_tab = ignoreCurrentTab
@@ -103,7 +104,7 @@ describe('presentationGate output vector', () => {
                 const expected = presentationEnabled ? {
                   storeHistory: settings.channels.panel,
                   showTabIndicator: settings.channels.tab_indicator,
-                  showPopup: settings.channels.panel,
+                  showPopup: settings.channels.popup,
                   playSound: settings.channels.sound,
                   vibrate: settings.channels.vibration,
                 } : {
@@ -149,21 +150,22 @@ describe('presentationGate output vector', () => {
   })
 
   it('seeds every base channel for every toggle combination and disables all when presentation is off', () => {
-    for (let mask = 0; mask < 16; mask++) {
+    for (let mask = 0; mask < 32; mask++) {
       for (const enabled of [false, true]) {
         const settings = cloneSettings()
         settings.presentation_enabled = enabled
         settings.channels = {
           sound: !!(mask & 1),
           vibration: !!(mask & 2),
-          panel: !!(mask & 4),
-          tab_indicator: !!(mask & 8),
+          popup: !!(mask & 4),
+          panel: !!(mask & 8),
+          tab_indicator: !!(mask & 16),
         }
         const output = gate(settings)
         expect(output).toEqual(enabled ? {
           storeHistory: settings.channels.panel,
           showTabIndicator: settings.channels.tab_indicator,
-          showPopup: settings.channels.panel,
+          showPopup: settings.channels.popup,
           playSound: settings.channels.sound,
           vibrate: settings.channels.vibration,
         } : {
@@ -176,6 +178,20 @@ describe('presentationGate output vector', () => {
       }
     }
   })
+
+  it.each([
+    [false, true, false, true],
+    [true, false, true, false],
+  ])(
+    'keeps popup=%s independent from panel=%s',
+    (popup, panel, showPopup, storeHistory) => {
+      const settings = cloneSettings()
+      settings.channels.popup = popup
+      settings.channels.panel = panel
+
+      expect(gate(settings)).toMatchObject({ showPopup, storeHistory })
+    },
+  )
 
   it.each([
     ['normal', { showPopup: true, playSound: true, vibrate: true }],
@@ -585,6 +601,43 @@ describe('guarded local presentation store', () => {
     expect(removeSpy).toHaveBeenCalledWith(NOTIFICATION_PRESENTATION_STORAGE_KEY)
   })
 
+  it('upgrades stored settings missing channels.popup to true without losing other values', () => {
+    const stored = cloneSettings() as any
+    delete stored.channels.popup
+    stored.channels.sound = false
+    stored.channels.vibration = false
+    stored.channels.panel = false
+    stored.channels.tab_indicator = false
+    stored.dnd_level = 'silent'
+    localStorage.setItem(NOTIFICATION_PRESENTATION_MIGRATION_KEY, '1')
+    localStorage.setItem(
+      NOTIFICATION_PRESENTATION_STORAGE_KEY,
+      JSON.stringify({ version: 1, settings: stored }),
+    )
+
+    const loaded = useNotificationPresentation().settings
+
+    expect(loaded.channels).toEqual({
+      sound: false, vibration: false, popup: true, panel: false, tab_indicator: false,
+    })
+    expect(loaded.dnd_level).toBe('silent')
+  })
+
+  it('rejects stored settings with a non-boolean channels.popup', () => {
+    const stored = cloneSettings() as any
+    stored.channels.popup = 'yes'
+    localStorage.setItem(NOTIFICATION_PRESENTATION_MIGRATION_KEY, '1')
+    localStorage.setItem(
+      NOTIFICATION_PRESENTATION_STORAGE_KEY,
+      JSON.stringify({ version: 1, settings: stored }),
+    )
+    const removeSpy = vi.spyOn(localStorage, 'removeItem')
+
+    useNotificationPresentation()
+
+    expect(removeSpy).toHaveBeenCalledWith(NOTIFICATION_PRESENTATION_STORAGE_KEY)
+  })
+
   it('exposes ephemeral mode when the migration marker cannot be written', () => {
     const values = new Map<string, string>()
     vi.stubGlobal('localStorage', {
@@ -609,7 +662,7 @@ describe('guarded local presentation store', () => {
     }
     let store = useNotificationPresentation()
     expect(store.settings.channels).toEqual({
-      sound: false, vibration: true, panel: false, tab_indicator: true,
+      sound: false, vibration: true, popup: false, panel: false, tab_indicator: true,
     })
     expect(localStorage.getItem(NOTIFICATION_PRESENTATION_MIGRATION_KEY)).toBe('1')
 
@@ -621,9 +674,30 @@ describe('guarded local presentation store', () => {
     __resetNotificationPresentationForTest()
     store = useNotificationPresentation()
     expect(store.settings.channels).toEqual({
-      sound: false, vibration: true, panel: false, tab_indicator: true,
+      sound: false, vibration: true, popup: false, panel: false, tab_indicator: true,
     })
   })
+
+  it.each([
+    { legacyPopup: false, legacyPanel: true, expectedPopup: false },
+    { legacyPopup: true, legacyPanel: false, expectedPopup: true },
+    { legacyPopup: undefined, legacyPanel: false, expectedPopup: false },
+    { legacyPopup: undefined, legacyPanel: true, expectedPopup: true },
+    { legacyPopup: undefined, legacyPanel: undefined, expectedPopup: true },
+  ])(
+    'migrates legacy popup=$legacyPopup panel=$legacyPanel to popup=$expectedPopup',
+    ({ legacyPopup, legacyPanel, expectedPopup }) => {
+      ;(serverSettings.notification as any).channels = {
+        sound: true,
+        vibration: true,
+        tab_indicator: true,
+        ...(legacyPopup === undefined ? {} : { popup: legacyPopup }),
+        ...(legacyPanel === undefined ? {} : { panel: legacyPanel }),
+      }
+
+      expect(useNotificationPresentation().settings.channels.popup).toBe(expectedPopup)
+    },
+  )
 
   it('waits for successful settings load before seeding real server values', () => {
     __setSettingsLoadedForTest(false)
@@ -639,7 +713,7 @@ describe('guarded local presentation store', () => {
     __setSettingsLoadedForTest(true)
 
     expect(store.settings.channels).toEqual({
-      sound: false, vibration: false, panel: true, tab_indicator: false,
+      sound: false, vibration: false, popup: true, panel: true, tab_indicator: false,
     })
     expect(localStorage.getItem(NOTIFICATION_PRESENTATION_MIGRATION_KEY)).toBe('1')
   })

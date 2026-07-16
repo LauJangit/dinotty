@@ -65,7 +65,9 @@ describe('notification presentation server save boundary', () => {
 
   it('echoes pristine server channels/sounds while excluding all other local-only fields', async () => {
     const local = useNotificationPresentation()
-    local.settings.channels = { sound: false, vibration: true, panel: false, tab_indicator: true }
+    local.settings.channels = {
+      sound: false, vibration: true, popup: true, panel: false, tab_indicator: true,
+    }
     local.settings.sounds.info = { source: 'custom', value: 'local-only', volume: 0.1 }
     local.settings.dnd_level = 'silent'
     local.settings.ignore_current_tab = false
@@ -83,6 +85,8 @@ describe('notification presentation server save boundary', () => {
       channels: loadedChannels,
       sounds: loadedSounds,
     })
+    expect(payload.notification.channels).toEqual(loadedChannels)
+    expect(payload.notification.channels).not.toHaveProperty('popup')
     for (const key of [
       'presentation_enabled', 'dnd_level',
       'ignore_current_tab', 'quiet_hours', 'coalesce_window_ms',

@@ -64,6 +64,13 @@
         </label>
       </div>
       <div class="settings-row">
+        <label>{{ t('notification.popup') }}</label>
+        <label class="toggle">
+          <input type="checkbox" v-model="presentation.channels.popup" />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
+      <div class="settings-row">
         <label>{{ t('notification.panel') }}</label>
         <label class="toggle">
           <input type="checkbox" v-model="presentation.channels.panel" />

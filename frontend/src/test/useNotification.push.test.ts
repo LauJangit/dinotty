@@ -143,12 +143,26 @@ describe('pushNotification - plugin notify path', () => {
     expect(listNotifications()).toHaveLength(100)
   })
 
-  it('routes plugin fallback popup through the local panel channel', () => {
+  it('stores plugin history without showing a toast when popup=false and panel=true', () => {
     toastSpy.mockClear()
-    useNotificationPresentation().settings.channels.panel = false
-    pushNotification({ type: 'info', body: 'should still toast', source: 'plugin' })
+    const channels = useNotificationPresentation().settings.channels
+    channels.popup = false
+    channels.panel = true
+    pushNotification({ type: 'info', body: 'history only', source: 'plugin' })
     vi.runAllTimers()
     expect(toastSpy).not.toHaveBeenCalled()
+    expect(listNotifications()).toHaveLength(1)
+  })
+
+  it('shows a plugin toast without storing history when popup=true and panel=false', () => {
+    toastSpy.mockClear()
+    const channels = useNotificationPresentation().settings.channels
+    channels.popup = true
+    channels.panel = false
+    pushNotification({ type: 'info', body: 'toast only', source: 'plugin' })
+    vi.runAllTimers()
+    expect(toastSpy).toHaveBeenCalledOnce()
+    expect(listNotifications()).toHaveLength(0)
   })
 
   it('does NOT show toast when master enabled=false', () => {

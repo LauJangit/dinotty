@@ -10,6 +10,7 @@ export interface NotificationPresentationSettings {
   channels: {
     sound: boolean
     vibration: boolean
+    popup: boolean
     panel: boolean
     tab_indicator: boolean
   }
@@ -60,7 +61,7 @@ const DEFAULT_SOUNDS: Record<NotificationType, SoundConfig> = {
 
 export const DEFAULT_NOTIFICATION_PRESENTATION_SETTINGS: NotificationPresentationSettings = {
   presentation_enabled: true,
-  channels: { sound: true, vibration: true, panel: true, tab_indicator: true },
+  channels: { sound: true, vibration: true, popup: true, panel: true, tab_indicator: true },
   sounds: DEFAULT_SOUNDS,
   dnd_level: 'normal',
   ignore_current_tab: true,
@@ -137,9 +138,14 @@ function isTime(value: unknown): value is string {
   return hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59
 }
 
-function validateSettings(value: unknown): value is NotificationPresentationSettings {
+function normalizeSettings(value: unknown): NotificationPresentationSettings | null {
   if (!isRecord(value) || !isRecord(value.channels) || !isRecord(value.sounds) ||
-      !isRecord(value.quiet_hours)) return false
+      !isRecord(value.quiet_hours)) return null
+  let popup = true
+  if (Object.prototype.hasOwnProperty.call(value.channels, 'popup')) {
+    if (typeof value.channels.popup !== 'boolean') return null
+    popup = value.channels.popup
+  }
   if (typeof value.presentation_enabled !== 'boolean' ||
       typeof value.channels.sound !== 'boolean' ||
       typeof value.channels.vibration !== 'boolean' ||
@@ -149,10 +155,14 @@ function validateSettings(value: unknown): value is NotificationPresentationSett
       typeof value.ignore_current_tab !== 'boolean' ||
       !isTime(value.quiet_hours.start) || !isTime(value.quiet_hours.end) ||
       typeof value.coalesce_window_ms !== 'number' ||
-      !Number.isFinite(value.coalesce_window_ms) || value.coalesce_window_ms < 0) return false
+      !Number.isFinite(value.coalesce_window_ms) || value.coalesce_window_ms < 0) return null
   const sounds = value.sounds as Record<string, unknown>
-  return (['info', 'success', 'warning', 'error', 'urgent'] as const)
-    .every((severity) => isSoundConfig(sounds[severity]))
+  if (!(['info', 'success', 'warning', 'error', 'urgent'] as const)
+    .every((severity) => isSoundConfig(sounds[severity]))) return null
+  return {
+    ...value,
+    channels: { ...value.channels, popup },
+  } as unknown as NotificationPresentationSettings
 }
 
 function assignSettings(value: NotificationPresentationSettings) {
@@ -208,6 +218,11 @@ function legacyMigrationSeed(): NotificationPresentationSettings {
     for (const key of ['sound', 'vibration', 'panel', 'tab_indicator'] as const) {
       if (typeof legacy.channels[key] === 'boolean') seed.channels[key] = legacy.channels[key]
     }
+    seed.channels.popup = typeof legacy.channels.popup === 'boolean'
+      ? legacy.channels.popup
+      : typeof legacy.channels.panel === 'boolean'
+        ? legacy.channels.panel
+        : true
   }
   if (isRecord(legacy.sounds)) {
     for (const severity of ['info', 'success', 'warning', 'error', 'urgent'] as const) {
@@ -259,8 +274,11 @@ function load() {
   if (raw !== null && raw !== undefined) {
     try {
       const parsed: unknown = JSON.parse(raw)
-      if (isRecord(parsed) && parsed.version === VERSION && validateSettings(parsed.settings)) {
-        assignSettings(parsed.settings)
+      const normalized = isRecord(parsed) && parsed.version === VERSION
+        ? normalizeSettings(parsed.settings)
+        : null
+      if (normalized) {
+        assignSettings(normalized)
         validLocal = true
         persistenceEnabled = true
       } else {
@@ -352,7 +370,7 @@ export function presentationGate(
     ? {
         storeHistory: settings.channels.panel,
         showTabIndicator: settings.channels.tab_indicator,
-        showPopup: settings.channels.panel,
+        showPopup: settings.channels.popup,
         playSound: settings.channels.sound,
         vibrate: settings.channels.vibration,
       }
