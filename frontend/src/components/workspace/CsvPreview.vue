@@ -5,7 +5,11 @@
         <TableProperties :size="15" aria-hidden="true" />
         <span>{{ filteredRows.length }} {{ t('csvPreview.rows') }}</span>
         <span class="csv-preview-separator">·</span>
-        <span>{{ columnCount }} {{ t('csvPreview.columns') }}</span>
+        <span>
+          {{ visibleColumnIndexes.length
+          }}<template v-if="hiddenColumnIndexes.length > 0"> / {{ columnCount }}</template>
+          {{ t('csvPreview.columns') }}
+        </span>
       </div>
 
       <label class="csv-preview-search">
@@ -18,6 +22,34 @@
           @input="resetPage"
         />
       </label>
+
+      <button
+        type="button"
+        class="csv-preview-icon-button"
+        :class="{ active: activeControlPanel === 'filter' || filterIsActive }"
+        data-testid="csv-filter-toggle"
+        :title="t('csvPreview.filter')"
+        :aria-label="t('csvPreview.filter')"
+        :aria-pressed="activeControlPanel === 'filter'"
+        aria-controls="csv-preview-filter-panel"
+        @click="toggleControlPanel('filter')"
+      >
+        <ListFilter :size="16" aria-hidden="true" />
+      </button>
+
+      <button
+        type="button"
+        class="csv-preview-icon-button"
+        :class="{ active: activeControlPanel === 'columns' || hiddenColumnIndexes.length > 0 }"
+        data-testid="csv-columns-toggle"
+        :title="t('csvPreview.chooseColumns')"
+        :aria-label="t('csvPreview.chooseColumns')"
+        :aria-pressed="activeControlPanel === 'columns'"
+        aria-controls="csv-preview-columns-panel"
+        @click="toggleControlPanel('columns')"
+      >
+        <Columns3 :size="16" aria-hidden="true" />
+      </button>
 
       <label class="csv-preview-header-toggle">
         <input v-model="firstRowIsHeader" type="checkbox" @change="resetPage" />
@@ -51,6 +83,100 @@
       </button>
     </div>
 
+    <div
+      v-if="activeControlPanel === 'filter'"
+      id="csv-preview-filter-panel"
+      class="csv-preview-control-panel csv-preview-filter-panel"
+      data-testid="csv-filter-panel"
+    >
+      <ListFilter :size="14" aria-hidden="true" />
+      <label>
+        <span class="sr-only">{{ t('csvPreview.filterColumn') }}</span>
+        <select
+          v-model.number="filterColumnIndex"
+          data-testid="csv-filter-column"
+          :aria-label="t('csvPreview.filterColumn')"
+          @change="resetPage"
+        >
+          <option :value="-1">{{ t('csvPreview.allColumns') }}</option>
+          <option v-for="columnIndex in columnCount" :key="columnIndex" :value="columnIndex - 1">
+            {{ headerText(columnIndex - 1) }}
+          </option>
+        </select>
+      </label>
+
+      <label>
+        <span class="sr-only">{{ t('csvPreview.filterOperator') }}</span>
+        <select
+          v-model="filterOperator"
+          data-testid="csv-filter-operator"
+          :aria-label="t('csvPreview.filterOperator')"
+          @change="resetPage"
+        >
+          <option value="contains">{{ t('csvPreview.contains') }}</option>
+          <option value="equals">{{ t('csvPreview.equals') }}</option>
+          <option value="notEquals">{{ t('csvPreview.notEquals') }}</option>
+          <option value="startsWith">{{ t('csvPreview.startsWith') }}</option>
+          <option value="endsWith">{{ t('csvPreview.endsWith') }}</option>
+          <option value="isEmpty">{{ t('csvPreview.isEmpty') }}</option>
+          <option value="isNotEmpty">{{ t('csvPreview.isNotEmpty') }}</option>
+        </select>
+      </label>
+
+      <label v-if="filterOperatorNeedsValue" class="csv-preview-filter-value">
+        <span class="sr-only">{{ t('csvPreview.filterValue') }}</span>
+        <input
+          v-model="filterValue"
+          data-testid="csv-filter-value"
+          type="text"
+          :placeholder="t('csvPreview.filterValue')"
+          @input="resetPage"
+        />
+      </label>
+
+      <button
+        type="button"
+        class="csv-preview-icon-button"
+        data-testid="csv-filter-clear"
+        :disabled="!filterIsActive"
+        :title="t('csvPreview.clearFilter')"
+        :aria-label="t('csvPreview.clearFilter')"
+        @click="clearFilter"
+      >
+        <X :size="15" aria-hidden="true" />
+      </button>
+    </div>
+
+    <div
+      v-if="activeControlPanel === 'columns'"
+      id="csv-preview-columns-panel"
+      class="csv-preview-control-panel csv-preview-columns-panel"
+      data-testid="csv-columns-panel"
+    >
+      <Columns3 :size="14" aria-hidden="true" />
+      <button
+        type="button"
+        class="csv-preview-text-button"
+        data-testid="csv-columns-show-all"
+        :disabled="hiddenColumnIndexes.length === 0"
+        @click="showAllColumns"
+      >
+        {{ t('csvPreview.showAllColumns') }}
+      </button>
+      <div class="csv-preview-column-options">
+        <label v-for="columnIndex in columnCount" :key="columnIndex">
+          <input
+            type="checkbox"
+            :checked="isColumnVisible(columnIndex - 1)"
+            :disabled="visibleColumnIndexes.length === 1 && isColumnVisible(columnIndex - 1)"
+            :data-testid="`csv-column-option-${columnIndex - 1}`"
+            @change="changeColumnVisibility(columnIndex - 1, $event)"
+          />
+          <span :title="headerText(columnIndex - 1)">{{ headerText(columnIndex - 1) }}</span>
+        </label>
+      </div>
+    </div>
+
     <div v-if="truncated" class="csv-preview-notice" role="status">
       {{ t('csvPreview.truncated') }}
     </div>
@@ -76,8 +202,8 @@
         <thead>
           <tr>
             <th class="csv-preview-row-number" scope="col">#</th>
-            <th v-for="columnIndex in columnCount" :key="columnIndex" scope="col">
-              {{ headerText(columnIndex - 1) }}
+            <th v-for="columnIndex in visibleColumnIndexes" :key="columnIndex" scope="col">
+              {{ headerText(columnIndex) }}
             </th>
           </tr>
         </thead>
@@ -87,11 +213,11 @@
               {{ visibleRow.sourceIndex + 1 }}
             </th>
             <td
-              v-for="columnIndex in columnCount"
+              v-for="columnIndex in visibleColumnIndexes"
               :key="columnIndex"
-              :title="cellText(visibleRow.cells, columnIndex - 1)"
+              :title="cellText(visibleRow.cells, columnIndex)"
             >
-              {{ cellText(visibleRow.cells, columnIndex - 1) }}
+              {{ cellText(visibleRow.cells, columnIndex) }}
             </td>
           </tr>
         </tbody>
@@ -129,7 +255,16 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { ChevronLeft, ChevronRight, Code2, Search, TableProperties } from 'lucide-vue-next'
+import {
+  ChevronLeft,
+  ChevronRight,
+  Code2,
+  Columns3,
+  ListFilter,
+  Search,
+  TableProperties,
+  X,
+} from 'lucide-vue-next'
 import { useI18n } from '../../composables/useI18n'
 import { detectCsvDelimiter, parseCsvText, type CsvRow } from '../../utils/csvPreview'
 
@@ -137,6 +272,16 @@ interface VisibleCsvRow {
   cells: CsvRow
   sourceIndex: number
 }
+
+type CsvControlPanel = '' | 'filter' | 'columns'
+type CsvFilterOperator =
+  | 'contains'
+  | 'equals'
+  | 'notEquals'
+  | 'startsWith'
+  | 'endsWith'
+  | 'isEmpty'
+  | 'isNotEmpty'
 
 const props = withDefaults(
   defineProps<{
@@ -167,6 +312,11 @@ const displayedContent = ref(props.content)
 const rawBytes = ref<ArrayBuffer | null>(null)
 const encodingLoading = ref(false)
 const encodingError = ref('')
+const activeControlPanel = ref<CsvControlPanel>('')
+const filterColumnIndex = ref(-1)
+const filterOperator = ref<CsvFilterOperator>('contains')
+const filterValue = ref('')
+const hiddenColumnIndexes = ref<number[]>([])
 
 const parsedRows = computed(function computeParsedRows() {
   // 步骤1：检测当前文件的分隔符。
@@ -184,6 +334,28 @@ const columnCount = computed(function computeColumnCount() {
     if (currentLength > longestRowLength) longestRowLength = currentLength
   }
   return longestRowLength
+})
+
+const visibleColumnIndexes = computed(function computeVisibleColumnIndexes() {
+  // 步骤1：按文件中的原始顺序收集未隐藏的列。
+  const columnIndexes: number[] = []
+  for (let columnIndex = 0; columnIndex < columnCount.value; columnIndex += 1) {
+    if (!hiddenColumnIndexes.value.includes(columnIndex)) columnIndexes.push(columnIndex)
+  }
+  return columnIndexes
+})
+
+const filterOperatorNeedsValue = computed(function computeFilterOperatorNeedsValue() {
+  // 步骤1：为空和非空条件不需要额外输入值。
+  return filterOperator.value !== 'isEmpty' && filterOperator.value !== 'isNotEmpty'
+})
+
+const filterIsActive = computed(function computeFilterIsActive() {
+  // 步骤1：为空和非空条件在选中后立即生效。
+  if (!filterOperatorNeedsValue.value) return true
+
+  // 步骤2：其他匹配方式只在输入了条件值后生效。
+  return filterValue.value.trim() !== ''
 })
 
 const filteredRows = computed(function computeFilteredRows() {
@@ -207,7 +379,9 @@ const filteredRows = computed(function computeFilteredRows() {
       }
     }
 
-    if (rowMatches) matchingRows.push({ cells: currentRow, sourceIndex: rowIndex })
+    if (rowMatches && rowMatchesFilter(currentRow)) {
+      matchingRows.push({ cells: currentRow, sourceIndex: rowIndex })
+    }
   }
 
   return matchingRows
@@ -250,6 +424,97 @@ function headerText(columnIndex: number): string {
 function cellText(row: CsvRow, columnIndex: number): string {
   // 步骤1：缺失字段显示为空字符串。
   return row[columnIndex] ?? ''
+}
+
+function cellMatchesFilter(cellValue: string): boolean {
+  // 步骤1：统一使用不区分大小写的文本进行匹配。
+  const normalizedCellValue = cellValue.toLocaleLowerCase()
+  const normalizedFilterValue = filterValue.value.trim().toLocaleLowerCase()
+
+  // 步骤2：按当前匹配方式判断单元格。
+  switch (filterOperator.value) {
+    case 'equals':
+      return normalizedCellValue === normalizedFilterValue
+    case 'notEquals':
+      return normalizedCellValue !== normalizedFilterValue
+    case 'startsWith':
+      return normalizedCellValue.startsWith(normalizedFilterValue)
+    case 'endsWith':
+      return normalizedCellValue.endsWith(normalizedFilterValue)
+    case 'isEmpty':
+      return cellValue.trim() === ''
+    case 'isNotEmpty':
+      return cellValue.trim() !== ''
+    default:
+      return normalizedCellValue.includes(normalizedFilterValue)
+  }
+}
+
+function rowMatchesFilter(row: CsvRow): boolean {
+  // 步骤1：没有完整条件时保留当前行。
+  if (!filterIsActive.value) return true
+
+  // 步骤2：选择了具体列时只判断该列。
+  if (filterColumnIndex.value >= 0) {
+    return cellMatchesFilter(cellText(row, filterColumnIndex.value))
+  }
+
+  // 步骤3：选择全部列时，任意一列满足条件即可保留该行。
+  for (let columnIndex = 0; columnIndex < columnCount.value; columnIndex += 1) {
+    if (cellMatchesFilter(cellText(row, columnIndex))) return true
+  }
+  return false
+}
+
+function toggleControlPanel(panel: CsvControlPanel): void {
+  // 步骤1：再次点击当前按钮时收起面板，否则切换到目标面板。
+  if (activeControlPanel.value === panel) {
+    activeControlPanel.value = ''
+    return
+  }
+  activeControlPanel.value = panel
+}
+
+function clearFilter(): void {
+  // 步骤1：恢复默认条件并回到第一页。
+  filterColumnIndex.value = -1
+  filterOperator.value = 'contains'
+  filterValue.value = ''
+  resetPage()
+}
+
+function isColumnVisible(columnIndex: number): boolean {
+  // 步骤1：未记录在隐藏列表中的列即为可见列。
+  return !hiddenColumnIndexes.value.includes(columnIndex)
+}
+
+function changeColumnVisibility(columnIndex: number, event: Event): void {
+  // 步骤1：读取复选框的新状态。
+  const checkbox = event.target as HTMLInputElement
+  const updatedHiddenIndexes: number[] = []
+
+  // 步骤2：显示列时从隐藏列表中移除该列。
+  if (checkbox.checked) {
+    for (let index = 0; index < hiddenColumnIndexes.value.length; index += 1) {
+      const hiddenColumnIndex = hiddenColumnIndexes.value[index]
+      if (hiddenColumnIndex !== columnIndex) updatedHiddenIndexes.push(hiddenColumnIndex)
+    }
+    hiddenColumnIndexes.value = updatedHiddenIndexes
+    return
+  }
+
+  // 步骤3：隐藏列时至少保留一列可见。
+  if (visibleColumnIndexes.value.length <= 1) return
+  for (let index = 0; index < hiddenColumnIndexes.value.length; index += 1) {
+    updatedHiddenIndexes.push(hiddenColumnIndexes.value[index])
+  }
+  updatedHiddenIndexes.push(columnIndex)
+  hiddenColumnIndexes.value = updatedHiddenIndexes
+}
+
+function showAllColumns(): void {
+  // 步骤1：清空隐藏列表以恢复全部列。
+  hiddenColumnIndexes.value = []
 }
 
 function resetPage(): void {
@@ -343,6 +608,11 @@ watch([currentContent, currentFilePath], function synchronizeSelectedFile(values
   currentPage.value = 1
   selectedEncoding.value = 'utf-8'
   encodingError.value = ''
+  activeControlPanel.value = ''
+  filterColumnIndex.value = -1
+  filterOperator.value = 'contains'
+  filterValue.value = ''
+  hiddenColumnIndexes.value = []
 
   // 步骤3：后端没有文本时重新读取当前文件原始字节。
   if (newContent === '') void loadMissingContent()
@@ -495,6 +765,12 @@ function emitShowSource(): void {
   color: var(--fg-bright, #eeeeee);
 }
 
+.csv-preview-icon-button.active {
+  border-color: var(--accent, #89b4fa);
+  background: color-mix(in srgb, var(--accent, #89b4fa) 12%, var(--bg, #1a1a1a));
+  color: var(--accent, #89b4fa);
+}
+
 .csv-preview-icon-button:focus-visible,
 .csv-preview-header-toggle input:focus-visible {
   outline: 2px solid var(--accent, #89b4fa);
@@ -504,6 +780,124 @@ function emitShowSource(): void {
 .csv-preview-icon-button:disabled {
   cursor: default;
   opacity: 0.35;
+}
+
+.csv-preview-control-panel {
+  display: flex;
+  min-width: 0;
+  min-height: 38px;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border, #333333);
+  background: var(--bg, #1a1a1a);
+  color: var(--fg-muted, #888888);
+  font-family: var(--font-sans, sans-serif);
+  font-size: 12px;
+}
+
+.csv-preview-control-panel > svg {
+  flex: 0 0 auto;
+  color: var(--accent, #89b4fa);
+}
+
+.csv-preview-control-panel select,
+.csv-preview-filter-value input {
+  box-sizing: border-box;
+  height: 28px;
+  border: 1px solid var(--border, #3c3c3c);
+  border-radius: 4px;
+  outline: 0;
+  background: var(--bg-surface, #141414);
+  color: var(--fg, #cccccc);
+  font: inherit;
+}
+
+.csv-preview-control-panel select {
+  max-width: 180px;
+  padding: 0 24px 0 8px;
+}
+
+.csv-preview-filter-value {
+  min-width: 120px;
+  max-width: 280px;
+  flex: 1 1 180px;
+}
+
+.csv-preview-filter-value input {
+  width: 100%;
+  padding: 0 8px;
+}
+
+.csv-preview-control-panel select:focus-visible,
+.csv-preview-filter-value input:focus-visible,
+.csv-preview-text-button:focus-visible,
+.csv-preview-column-options input:focus-visible {
+  outline: 2px solid var(--accent, #89b4fa);
+  outline-offset: 2px;
+}
+
+.csv-preview-text-button {
+  height: 28px;
+  flex: 0 0 auto;
+  padding: 0 8px;
+  border: 1px solid var(--border, #3c3c3c);
+  border-radius: 4px;
+  background: var(--bg-surface, #141414);
+  color: var(--fg, #cccccc);
+  font: inherit;
+  cursor: pointer;
+}
+
+.csv-preview-text-button:hover:not(:disabled) {
+  border-color: var(--accent, #89b4fa);
+}
+
+.csv-preview-text-button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.csv-preview-column-options {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 0;
+  align-items: center;
+  gap: 5px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.csv-preview-column-options label {
+  display: flex;
+  max-width: 180px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  border: 1px solid var(--border, #3c3c3c);
+  border-radius: 4px;
+  color: var(--fg-muted, #888888);
+  cursor: pointer;
+}
+
+.csv-preview-column-options label:has(input:checked) {
+  color: var(--fg, #cccccc);
+}
+
+.csv-preview-column-options input {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  margin: 0;
+  accent-color: var(--accent, #89b4fa);
+}
+
+.csv-preview-column-options span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .csv-preview-notice {
@@ -647,6 +1041,24 @@ function emitShowSource(): void {
   .csv-preview-encoding,
   .csv-preview-icon-button {
     flex-shrink: 0;
+  }
+
+  .csv-preview-control-panel {
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  .csv-preview-filter-panel label,
+  .csv-preview-filter-value {
+    flex: 0 0 auto;
+  }
+
+  .csv-preview-filter-value {
+    width: 160px;
+  }
+
+  .csv-preview-column-options {
+    overflow: visible;
   }
 }
 </style>

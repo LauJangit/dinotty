@@ -66,6 +66,56 @@ describe('CsvPreview', function csvPreviewComponentSuite() {
     expect(wrapper.find('tbody').text()).not.toContain('Alice')
   })
 
+  it('filters rows with a condition on the selected column', async function filtersSelectedColumn() {
+    // 步骤1：挂载包含城市和状态字段的 CSV 表格。
+    const wrapper = mount(CsvPreview, {
+      props: {
+        content:
+          'name,city,status\nAlice,Shanghai,active\nBob,Shanghai,inactive\nCarol,Beijing,active',
+        filePath: 'people.csv',
+        truncated: false,
+      },
+    })
+
+    // 步骤2：打开条件筛选并指定城市列等于 Shanghai。
+    await wrapper.get('[data-testid="csv-filter-toggle"]').trigger('click')
+    await wrapper.get('[data-testid="csv-filter-column"]').setValue('1')
+    await wrapper.get('[data-testid="csv-filter-operator"]').setValue('equals')
+    await wrapper.get('[data-testid="csv-filter-value"]').setValue('Shanghai')
+
+    // 步骤3：确认仅保留城市完全匹配的两行。
+    expect(wrapper.findAll('tbody tr')).toHaveLength(2)
+    expect(wrapper.find('tbody').text()).toContain('Alice')
+    expect(wrapper.find('tbody').text()).toContain('Bob')
+    expect(wrapper.find('tbody').text()).not.toContain('Carol')
+  })
+
+  it('shows selected columns and can restore all columns', async function selectsVisibleColumns() {
+    // 步骤1：挂载包含三列的 CSV 表格并打开列显示设置。
+    const wrapper = mount(CsvPreview, {
+      props: {
+        content: 'name,city,status\nAlice,Shanghai,active',
+        filePath: 'people.csv',
+        truncated: false,
+      },
+    })
+    await wrapper.get('[data-testid="csv-columns-toggle"]').trigger('click')
+
+    // 步骤2：隐藏城市和状态列，只保留姓名列。
+    await wrapper.get('[data-testid="csv-column-option-1"]').setValue(false)
+    await wrapper.get('[data-testid="csv-column-option-2"]').setValue(false)
+    expect(wrapper.findAll('thead th')).toHaveLength(2)
+    expect(wrapper.find('thead').text()).toContain('name')
+    expect(wrapper.find('thead').text()).not.toContain('city')
+    expect(wrapper.findAll('tbody td')).toHaveLength(1)
+
+    // 步骤3：一键恢复后重新显示全部三列。
+    await wrapper.get('[data-testid="csv-columns-show-all"]').trigger('click')
+    expect(wrapper.findAll('thead th')).toHaveLength(4)
+    expect(wrapper.find('thead').text()).toContain('city')
+    expect(wrapper.find('thead').text()).toContain('status')
+  })
+
   it('emits a source request from the toolbar', async function emitsSourceRequest() {
     // 步骤1：挂载最小 CSV 内容。
     const wrapper = mount(CsvPreview, {
