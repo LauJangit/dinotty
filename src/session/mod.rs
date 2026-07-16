@@ -343,6 +343,23 @@ impl Session {
     }
 
     pub fn apply_and_broadcast_resize(&self, origin_id: u64, cols: u16, rows: u16) {
+        // ghostty pattern (src/terminal/c/terminal.zig:483-485): resize breaks
+        // synchronized output mode. The DEC 2026 spec explicitly allows the
+        // terminal to end sync mode on resize, and doing so prevents the
+        // buffer-stuck bug where a PTY that goes silent mid-sync (e.g. Claude
+        // Code waiting on an API response during a window resize) leaves
+        // sync_active=true forever and the client sees a frozen screen.
+        //
+        // We flush BEFORE resizing so clients receive the pre-resize buffered
+        // output at the old dimensions, then the resize event, then
+        // post-resize output at the new dimensions — coherent ordering.
+        if self.sync_active.load(Ordering::Relaxed) {
+            tracing::debug!(
+                "apply_and_broadcast_resize: breaking sync mode for resize, pane=?"
+            );
+            self.set_sync_mode(false);
+        }
+
         {
             let mut clients =
                 self.clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);

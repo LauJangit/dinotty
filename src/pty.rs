@@ -24,75 +24,118 @@ pub async fn broadcast_task(session: Arc<Session>, pane_id: String, manager: Arc
     let mut sync_started_at: Option<std::time::Instant> = None;
     let mut utf8_tail: Vec<u8> = Vec::new();
 
-    while let Some(first) = output_rx.recv().await {
-        if session.is_exited() {
-            break;
-        }
+    // Watchdog timer: force-flush the sync buffer if the PTY goes silent
+    // mid-sync-mode. Without this, the timeout check below only fires when
+    // output_rx.recv() returns a new message — a silent PTY (e.g. Claude
+    // Code waiting on an API response mid-redraw) leaves sync_active=true
+    // forever, buffering all subsequent output and freezing the client
+    // until a manual refresh. Polling every 100ms is cheap and well below
+    // the 500ms timeout threshold.
+    let mut sync_watch = tokio::time::interval(std::time::Duration::from_millis(100));
+    sync_watch.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // Discard the immediate first tick so we don't check before any PTY
+    // output has had a chance to arrive.
+    let _ = sync_watch.tick().await;
 
-        let mut batch = first;
-        while let Ok(data) = output_rx.try_recv() {
-            batch.extend_from_slice(&data);
-        }
+    loop {
+        tokio::select! {
+            msg = output_rx.recv() => {
+                let Some(first) = msg else { break };
+                if session.is_exited() {
+                    break;
+                }
 
-        if session.sync_active.load(std::sync::atomic::Ordering::Relaxed) {
-            if let Some(started) = sync_started_at {
-                if started.elapsed() > sync_timeout {
-                    tracing::warn!(
-                        "Sync mode timeout ({}ms), force-flushing, pane={}",
-                        started.elapsed().as_millis(),
-                        pane_id
-                    );
-                    session.set_sync_mode(false);
+                let mut batch = first;
+                while let Ok(data) = output_rx.try_recv() {
+                    batch.extend_from_slice(&data);
+                }
+
+                if session.sync_active.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Some(started) = sync_started_at {
+                        if started.elapsed() > sync_timeout {
+                            tracing::warn!(
+                                "Sync mode timeout ({}ms), force-flushing, pane={}",
+                                started.elapsed().as_millis(),
+                                pane_id
+                            );
+                            session.set_sync_mode(false);
+                            sync_started_at = None;
+                        }
+                    } else {
+                        sync_started_at = Some(std::time::Instant::now());
+                    }
+                } else {
                     sync_started_at = None;
                 }
-            } else {
-                sync_started_at = Some(std::time::Instant::now());
-            }
-        } else {
-            sync_started_at = None;
-        }
 
-        let results: Vec<crate::session::PendingCommandResult> = {
-            let mut pending =
-                session.pending_results.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            std::mem::take(&mut *pending)
-        };
-        for result in results {
-            manager.event_bus.publish(BusEvent::CommandFinished {
-                pane_id: pane_id.clone(),
-                command: String::new(),
-                exit_code: result.exit_code,
-                duration_ms: result.duration_ms,
-                stdout: result.stdout,
-                method: result.method.clone(),
-            });
-            manager.broadcast_sync(&SyncMsg::CommandFinished {
-                pane_id: pane_id.clone(),
-                command: String::new(),
-                exit_code: result.exit_code,
-                duration_ms: result.duration_ms,
-                stdout: String::new(),
-                method: result.method,
-            });
-        }
+                let results: Vec<crate::session::PendingCommandResult> = {
+                    let mut pending = session
+                        .pending_results
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    std::mem::take(&mut *pending)
+                };
+                for result in results {
+                    manager.event_bus.publish(BusEvent::CommandFinished {
+                        pane_id: pane_id.clone(),
+                        command: String::new(),
+                        exit_code: result.exit_code,
+                        duration_ms: result.duration_ms,
+                        stdout: result.stdout,
+                        method: result.method.clone(),
+                    });
+                    manager.broadcast_sync(&SyncMsg::CommandFinished {
+                        pane_id: pane_id.clone(),
+                        command: String::new(),
+                        exit_code: result.exit_code,
+                        duration_ms: result.duration_ms,
+                        stdout: String::new(),
+                        method: result.method,
+                    });
+                }
 
-        utf8_tail.extend_from_slice(&batch);
-        let valid_up_to = match std::str::from_utf8(&utf8_tail) {
-            Ok(s) => {
-                session.broadcast(s);
-                utf8_tail.clear();
-                continue;
+                utf8_tail.extend_from_slice(&batch);
+                let valid_up_to = match std::str::from_utf8(&utf8_tail) {
+                    Ok(s) => {
+                        session.broadcast(s);
+                        utf8_tail.clear();
+                        continue;
+                    }
+                    Err(e) => e.valid_up_to(),
+                };
+                if valid_up_to > 0 {
+                    let s = unsafe { std::str::from_utf8_unchecked(&utf8_tail[..valid_up_to]) };
+                    session.broadcast(s);
+                }
+                utf8_tail.drain(..valid_up_to);
+                if utf8_tail.len() > 3 {
+                    session.broadcast("\u{FFFD}");
+                    utf8_tail.clear();
+                }
             }
-            Err(e) => e.valid_up_to(),
-        };
-        if valid_up_to > 0 {
-            let s = unsafe { std::str::from_utf8_unchecked(&utf8_tail[..valid_up_to]) };
-            session.broadcast(s);
-        }
-        utf8_tail.drain(..valid_up_to);
-        if utf8_tail.len() > 3 {
-            session.broadcast("\u{FFFD}");
-            utf8_tail.clear();
+            _ = sync_watch.tick() => {
+                if session.is_exited() {
+                    break;
+                }
+                // PTY-silent watchdog: if sync mode is still active past the
+                // timeout with no new output, force-flush so the client
+                // unblocks. This is the path that was missing before.
+                if session.sync_active.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Some(started) = sync_started_at {
+                        if started.elapsed() > sync_timeout {
+                            tracing::warn!(
+                                "Sync mode timeout ({}ms, PTY silent), force-flushing, pane={}",
+                                started.elapsed().as_millis(),
+                                pane_id
+                            );
+                            session.set_sync_mode(false);
+                            sync_started_at = None;
+                        }
+                    }
+                } else {
+                    sync_started_at = None;
+                }
+            }
         }
     }
     info!("Broadcast task exited, pane={}", pane_id);
