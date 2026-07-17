@@ -278,9 +278,11 @@ import { isTouchDevice, setActivePaneId } from './composables/useTerminal'
 import { useI18n } from './composables/useI18n'
 import { keyEventMatchesBinding, useKeybindings } from './composables/useKeybindings'
 import { useSplitPane } from './composables/useSplitPane'
+import { useSuperviseTabs } from './composables/useSuperviseTabs'
 import { useSyncWebSocket } from './composables/useSyncWebSocket'
 import { isWebPreviewInput } from './utils/previewRouting'
 import { isWindowsClient } from './utils/clientPlatform'
+import { nextRevealNavGen, currentRevealNavGen } from './utils/navGen'
 import { initMonitorHistory } from './composables/useMonitor'
 import NotificationPanel from './components/notification/NotificationPanel.vue'
 import { useToast } from 'vue-toastification'
@@ -357,6 +359,7 @@ const { t } = useI18n()
 const { getBinding, formatBinding } = useKeybindings()
 const notif = useNotification()
 const presentationSettings = useNotificationPresentation().settings
+const { supervise } = useSuperviseTabs()
 const clearToastInstance = setToastInstance(useToast())
 const clearActiveReadContext = setActiveReadContext({
   getActiveFocusedPaneId: () =>
@@ -823,12 +826,11 @@ function clearResolvedTabNotifications(tab: Tab, reason: 'tab_activate' | 'goto'
   notif.clearForPaneIds(activatedPaneIds, reason)
 }
 
-let revealNavGen = 0
-
-async function activateTab(tabId: string) {
-  const gen = ++revealNavGen
+async function activateTab(tabId: string, opts?: { defer?: boolean }): Promise<boolean> {
+  const gen = nextRevealNavGen()
+  const defer = opts?.defer === true
   let tab = resolveTab(tabId)
-  if (!tab) return
+  if (!tab) return false
 
   // Switch workspace if the tab belongs to a different one. Terminal tabs
   // force a switch when filtered out of the current view; plugin tabs stay
@@ -840,34 +842,46 @@ async function activateTab(tabId: string) {
   if (needsSwitch) {
     try {
       const committed = await activateWorkspace(targetWs?.id ?? null)
-      if (!committed) return
+      if (!committed) return false
     } catch {
-      return
+      return false
     }
-    if (gen !== revealNavGen) return
+    if (gen !== currentRevealNavGen()) return false
     tab = resolveTab(tabId)
-    if (!tab) return
+    if (!tab) return false
   } else {
     cancelPendingWorkspaceActivation()
   }
 
-  activePaneId.value = tab.paneId
-  clearResolvedTabNotifications(tab)
+  if (!defer) {
+    activePaneId.value = tab.paneId
+    clearResolvedTabNotifications(tab)
+  }
 
   if (tab.type === 'terminal') {
     try {
       await apiActivatePane(tab.paneId, tab.activePaneId)
     } catch (e) {
+      if (defer) return false
       console.error('Failed to activate pane:', e)
     }
-    if (gen !== revealNavGen) return
+    if (gen !== currentRevealNavGen()) return false
   }
+
+  if (gen !== currentRevealNavGen()) return false
+
+  if (defer) {
+    activePaneId.value = tab.paneId
+    clearResolvedTabNotifications(tab)
+  }
+
   persist()
   nextTick(() => focusActive())
+  return true
 }
 
 async function revealPane(paneId: string): Promise<boolean> {
-  const gen = ++revealNavGen
+  const gen = nextRevealNavGen()
   let tab = resolveTab(paneId)
   if (!tab) return false
 
@@ -885,7 +899,7 @@ async function revealPane(paneId: string): Promise<boolean> {
     } catch {
       return false
     }
-    if (gen !== revealNavGen) return false
+    if (gen !== currentRevealNavGen()) return false
     tab = resolveTab(paneId)
     if (!tab) return false
   } else {
@@ -893,7 +907,7 @@ async function revealPane(paneId: string): Promise<boolean> {
   }
 
   await nextTick()
-  if (gen !== revealNavGen) return false
+  if (gen !== currentRevealNavGen()) return false
   tab = resolveTab(paneId)
   if (!tab) return false
 
@@ -910,11 +924,11 @@ async function revealPane(paneId: string): Promise<boolean> {
       }
       if (attempt < 4) {
         await new Promise((resolve) => setTimeout(resolve, 50))
-        if (gen !== revealNavGen) return false
+        if (gen !== currentRevealNavGen()) return false
       }
     }
     if (!tabElementFound) return false
-    if (gen !== revealNavGen) return false
+    if (gen !== currentRevealNavGen()) return false
     tab = resolveTab(paneId)
     if (!tab) return false
   }
@@ -926,7 +940,7 @@ async function revealPane(paneId: string): Promise<boolean> {
       return false
     }
     // The backend pointer may transiently lag a newer navigation, like rapid activateTab clicks.
-    if (gen !== revealNavGen) return false
+    if (gen !== currentRevealNavGen()) return false
   }
 
   tab = resolveTab(paneId)
@@ -1706,6 +1720,7 @@ function onGlobalKeydown(e: KeyboardEvent) {
       termRefs[tab.activePaneId]?.toggleSearch()
     },
     missionControl: () => openOverview(),
+    superviseTabs: () => void supervise((id) => activateTab(id, { defer: true })),
     sshConnect: () => sshPanelRef.value?.open(),
     fontSizeUp: () => adjustActiveTerminalFontSize(1),
     fontSizeDown: () => adjustActiveTerminalFontSize(-1),
