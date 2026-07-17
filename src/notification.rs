@@ -20,7 +20,6 @@ pub enum NotificationEvent {
 pub struct NotificationBroadcast {
     tx: broadcast::Sender<NotificationEvent>,
     bell_debounce: Mutex<HashMap<String, Instant>>,
-    debounce_ms: Mutex<u32>,
     settings: Mutex<Option<SettingsState>>,
 }
 
@@ -34,20 +33,11 @@ impl NotificationBroadcast {
     #[must_use]
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(256);
-        Self {
-            tx,
-            bell_debounce: Mutex::new(HashMap::new()),
-            debounce_ms: Mutex::new(300),
-            settings: Mutex::new(None),
-        }
+        Self { tx, bell_debounce: Mutex::new(HashMap::new()), settings: Mutex::new(None) }
     }
 
     pub fn set_settings(&self, state: SettingsState) {
         *self.settings.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(state);
-    }
-
-    pub fn set_debounce_ms(&self, ms: u32) {
-        *self.debounce_ms.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = ms;
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<NotificationEvent> {
@@ -55,8 +45,15 @@ impl NotificationBroadcast {
     }
 
     pub fn send_bell(&self, pane_id: &str) {
-        let debounce_ms =
-            *self.debounce_ms.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let debounce_ms = {
+            let guard = self.settings.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            match guard.as_ref() {
+                Some(state) => {
+                    state.try_read().map_or(300, |settings| settings.notification.bell.debounce_ms)
+                }
+                None => 300,
+            }
+        };
         let mut map = self.bell_debounce.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let now = Instant::now();
         if let Some(last) = map.get(pane_id) {
