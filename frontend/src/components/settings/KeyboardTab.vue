@@ -58,25 +58,28 @@
         </CollapsibleSection>
 
         <CollapsibleSection :title="t('keybinding.group.nav')" level="section" default-open>
-          <div
-            v-for="def in navDefs"
-            :key="def.id"
-            class="settings-row kb-shortcut-row"
-            :data-kb-id="def.id"
-          >
-            <label><span class="kb-icon">{{ def.icon }}</span> {{ t(def.titleKey) }}</label>
-            <div class="kb-shortcut-ctrl">
-              <span v-if="kbRecording !== def.id" class="kb-keys">
-                <kbd v-for="(k, i) in formatBinding(getBinding(def.id), def.kind ?? 'app')" :key="i">{{ k }}</kbd>
-              </span>
-              <span v-else class="kb-keys recording">{{ t('keybinding.pressKeys') }}</span>
-              <template v-if="!isReadOnly(def.id)">
-                <button v-if="kbRecording !== def.id" class="shortcut-add" data-kb-action="record" @click="startKbRecord(def.id)">{{ t('settings.record') }}</button>
-                <button v-else class="shortcut-add kb-stop" data-kb-action="stop" @click="stopKbRecord()">{{ t('settings.stop') }}</button>
-                <button v-if="settings.keybindings[def.id]" class="shortcut-del" data-kb-action="reset" @click="resetKbBinding(def.id)">{{ t('keybinding.reset') }}</button>
-              </template>
+          <template v-for="def in navDefs" :key="def.id">
+            <div
+              class="settings-row kb-shortcut-row"
+              :data-kb-id="def.id"
+            >
+              <label><span class="kb-icon">{{ def.icon }}</span> {{ t(def.titleKey) }}</label>
+              <div class="kb-shortcut-ctrl">
+                <span v-if="kbRecording !== def.id" class="kb-keys">
+                  <kbd v-for="(k, i) in formatBinding(getBinding(def.id), def.kind ?? 'app')" :key="i">{{ k }}</kbd>
+                </span>
+                <span v-else class="kb-keys recording">{{ t('keybinding.pressKeys') }}</span>
+                <template v-if="!isReadOnly(def.id)">
+                  <button v-if="kbRecording !== def.id" class="shortcut-add" data-kb-action="record" @click="startKbRecord(def.id)">{{ t('settings.record') }}</button>
+                  <button v-else class="shortcut-add kb-stop" data-kb-action="stop" @click="stopKbRecord()">{{ t('settings.stop') }}</button>
+                  <button v-if="settings.keybindings[def.id]" class="shortcut-del" data-kb-action="reset" @click="resetKbBinding(def.id)">{{ t('keybinding.reset') }}</button>
+                </template>
+              </div>
             </div>
-          </div>
+            <p v-if="def.id === 'superviseTabs' && isWindowsClient" class="settings-hint">
+              {{ t('keybinding.superviseTabsHint') }}
+            </p>
+          </template>
         </CollapsibleSection>
 
         <CollapsibleSection :title="t('keybinding.group.font')" level="section" default-open>
@@ -419,7 +422,7 @@ const terminalDefs = computed(() => defs.filter((def) => def.kind === 'terminal'
 
 const tabGroupIds = ['newTab', 'closeTab', 'switchTab']
 const paneGroupIds = ['splitHorizontal', 'splitVertical', 'toggleBroadcast', 'toggleZoom', 'equalizePanes', 'focusNextPane', 'focusPrevPane']
-const navGroupIds = ['togglePalette', 'openBookmarks', 'searchTerminal', 'missionControl', 'sshConnect']
+const navGroupIds = ['togglePalette', 'openBookmarks', 'searchTerminal', 'missionControl', 'superviseTabs', 'sshConnect']
 const fontGroupIds = ['fontSizeUp', 'fontSizeDown', 'fontSizeReset']
 
 const tabDefs = computed(() => appDefs.value.filter(d => tabGroupIds.includes(d.id)))

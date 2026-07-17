@@ -105,6 +105,12 @@ const defs: KeyBindingDef[] = [
     titleKey: 'keybinding.missionControl',
   },
   {
+    id: 'superviseTabs',
+    defaultBinding: { key: '`', shift: false },
+    icon: '🔔',
+    titleKey: 'keybinding.superviseTabs',
+  },
+  {
     id: 'sshConnect',
     defaultBinding: { key: 'n', shift: true },
     icon: '🔗',

@@ -33,6 +33,7 @@ const APP_DEFAULTS = [
   ['searchTerminal', 'f', false, false],
   ['switchTab', '1', false, true],
   ['missionControl', 'm', true, false],
+  ['superviseTabs', '`', false, false],
   ['sshConnect', 'n', true, false],
   ['fontSizeUp', '=', true, false],
   ['fontSizeDown', '-', false, false],
@@ -79,10 +80,10 @@ describe('unified keybindings', () => {
     vi.restoreAllMocks()
   })
 
-  it('keeps the 18 app defaults and persisted shape unchanged', () => {
+  it('keeps the 19 app defaults and persisted shape unchanged', () => {
     const appDefs = keyBindingDefs.filter((def) => (def.kind ?? 'app') === 'app')
 
-    expect(appDefs).toHaveLength(18)
+    expect(appDefs).toHaveLength(19)
     expect(
       appDefs.map((def) => [
         def.id,
@@ -185,6 +186,18 @@ describe('unified keybindings', () => {
     )
     expect(
       keyEventMatchesBinding(keyEvent('+', { code: 'NumpadAdd', shiftKey: true }), binding)
+    ).toBe(false)
+  })
+
+  it('maps Backquote to the unshifted supervise-tabs binding with app modifiers', () => {
+    const binding = useKeybindings().getBinding('superviseTabs')
+
+    expect(binding).toEqual({ key: '`', shift: false })
+    expect(
+      keyEventMatchesBinding(keyEvent('Dead', { code: 'Backquote', metaKey: true }), binding)
+    ).toBe(true)
+    expect(
+      keyEventMatchesBinding(keyEvent('~', { code: 'Backquote', metaKey: true, shiftKey: true }), binding)
     ).toBe(false)
   })
 
