@@ -640,10 +640,13 @@ fn main() {
                     tauri::async_runtime::spawn(embedded_server::run_server(listener, mgr));
                     tracing::info!("Desktop mode: embedded server on port {}", actual);
                 }
-                Err(e) => panic!(
-                    "failed to bind embedded server on port {port}: {e}; \
-                     the port is likely already in use by another Dinotty instance"
-                ),
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to bind embedded server on port {}: {}; notifications disabled",
+                        port,
+                        e
+                    );
+                }
             }
 
             // Register global shortcut for Quake-mode toggle (Ctrl+Shift+`)
