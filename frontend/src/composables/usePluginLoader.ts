@@ -85,7 +85,7 @@ export interface PluginContext {
   }
 
   ui: {
-    notify(message: string, level?: 'info' | 'warn' | 'error'): void
+    notify(message: string, level?: 'info' | 'warn' | 'error', title?: string): void
     confirm(message: string): Promise<boolean>
   }
 
@@ -153,6 +153,9 @@ declare global {
     __dinotty_ui_confirm?: PluginContext['ui']['confirm']
     __dinotty_open_plugin?: (pluginId: string) => void
     __dinotty_settings_listener?: PluginContext['settings']['onDidChange']
+    // Test hooks for P3 verification (focusActive + isComposing guard).
+    __dinotty_test_focus_active?: () => void
+    __dinotty_test_is_composing?: (paneId: string) => boolean
   }
 }
 

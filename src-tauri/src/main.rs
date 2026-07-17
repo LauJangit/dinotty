@@ -37,6 +37,14 @@ struct PtyExit {
     pane_id: String,
 }
 
+/// DEC mode 2026 transaction boundary marker. `active: true` = SyncBegin,
+/// `active: false` = SyncEnd. Emitted to the frontend as `pty-sync` event.
+#[derive(Clone, Serialize)]
+struct PtySyncControl {
+    pane_id: String,
+    active: bool,
+}
+
 fn spawn_tauri_output_forwarder(
     app: AppHandle,
     pane_id: String,
@@ -57,7 +65,14 @@ fn spawn_tauri_output_forwarder(
                     loop {
                         match rx.try_recv() {
                             Ok(SessionClientEvent::Output(data)) => batch.push_str(&data),
-                            Ok(event @ SessionClientEvent::Resize { .. }) => {
+                            Ok(
+                                event @ (SessionClientEvent::Resize { .. }
+                                | SessionClientEvent::SessionExit { .. }
+                                | SessionClientEvent::SyncBegin
+                                | SessionClientEvent::SyncEnd
+                                | SessionClientEvent::ReplayBegin { .. }
+                                | SessionClientEvent::ReplayEnd),
+                            ) => {
                                 pending = Some(event);
                                 break;
                             }
@@ -78,6 +93,31 @@ fn spawn_tauri_output_forwarder(
                     {
                         break;
                     }
+                }
+                SessionClientEvent::SessionExit { pane_id: exit_pane_id } => {
+                    let _ = app.emit("pty-exit", PtyExit { pane_id: exit_pane_id });
+                    break;
+                }
+                SessionClientEvent::SyncBegin => {
+                    let _ = app.emit(
+                        "pty-sync",
+                        PtySyncControl { pane_id: pane_id.clone(), active: true },
+                    );
+                }
+                SessionClientEvent::SyncEnd => {
+                    let _ = app.emit(
+                        "pty-sync",
+                        PtySyncControl { pane_id: pane_id.clone(), active: false },
+                    );
+                }
+                SessionClientEvent::ReplayBegin { cols, rows } => {
+                    let _ = app.emit(
+                        "pty-replay-begin",
+                        serde_json::json!({ "pane_id": pane_id, "cols": cols, "rows": rows }),
+                    );
+                }
+                SessionClientEvent::ReplayEnd => {
+                    let _ = app.emit("pty-replay-end", serde_json::json!({ "pane_id": pane_id }));
                 }
             }
         }
@@ -132,17 +172,21 @@ fn spawn_tauri_write_task(session: Arc<dinotty_server::session::Session>, pane_i
     });
 }
 
-fn emit_join_sync(app: &AppHandle, pane_id: &str, session: &Arc<dinotty_server::session::Session>) {
+/// Emit `pty-reconnected` only — does NOT push a snapshot. The frontend will
+/// converge its layout, fit once, then invoke `pty_snapshot_request` to get
+/// the scrollback+snapshot via the replay transaction (pty-replay-begin →
+/// pty-output chunks → pty-replay-end). This is the Tauri side of the
+/// fit-then-snapshot handshake (proposal 3), mirroring ws/mod.rs.
+fn emit_reconnected(
+    app: &AppHandle,
+    pane_id: &str,
+    session: &Arc<dinotty_server::session::Session>,
+) {
     let (cols, rows) = *session.size.lock().unwrap_or_else(|e| e.into_inner());
     let _ = app.emit(
         "pty-reconnected",
         serde_json::json!({ "pane_id": pane_id, "cols": cols, "rows": rows }),
     );
-    let snapshot = {
-        let screen = session.screen.lock().unwrap_or_else(|e| e.into_inner());
-        screen.snapshot()
-    };
-    let _ = app.emit("pty-output", PtyOutput { pane_id: pane_id.to_string(), data: snapshot });
 }
 
 #[tauri::command]
@@ -172,8 +216,13 @@ fn pty_spawn(
         {
             session.remove_client(client_id);
         }
-        emit_join_sync(&app, &pane_id, &session);
+        // Spawn forwarder BEFORE emit_reconnected so the new client
+        // (snapshot_pending=true via add_client) is registered before the
+        // frontend receives pty-reconnected and (after converging) calls
+        // pty_snapshot_request. The snapshot_pending flag drops live Output
+        // for this client until ReplayEnd is enqueued.
         spawn_tauri_output_forwarder(app.clone(), pane_id.clone(), Arc::clone(&session));
+        emit_reconnected(&app, &pane_id, &session);
         // Set up channel-based write task (replaces old input channel, if any)
         spawn_tauri_write_task(Arc::clone(&session), pane_id.clone());
         return Ok(session.shell_type.clone());
@@ -227,6 +276,40 @@ fn pty_resize(
         .unwrap_or_else(|e| e.into_inner())
         .ok_or("tauri client not connected")?;
     session.resize_debounced(origin_id, cols, rows);
+    Ok(())
+}
+
+/// Fit-then-snapshot handshake (proposal 3): client converged its local layout,
+/// fit once, and is now asking the server to resize PTY+screen to (cols, rows)
+/// and emit the scrollback+snapshot as a replay transaction. Server runs the
+/// atomic resize+snapshot in one critical section and emits pty-replay-begin
+/// → pty-output (scrollback+snapshot chunks via SessionClientEvent::Output) →
+/// pty-replay-end, then clears the client's snapshot_pending so future live
+/// Output is delivered normally. Mirrors the WS path in ws/mod.rs.
+#[tauri::command]
+async fn pty_snapshot_request(
+    pane_id: String,
+    cols: u16,
+    rows: u16,
+    app: AppHandle,
+    state: State<'_, Arc<SessionManager>>,
+) -> Result<(), String> {
+    let session = state.sessions.get(&pane_id).ok_or("session not found")?.value().clone();
+    let origin_id = session
+        .tauri_client_id
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .ok_or("tauri client not connected")?;
+    // atomic_resize_and_snapshot_for_client enqueues ReplayBegin/End via the
+    // session's per-client mpsc channel; the Tauri output forwarder task
+    // (spawn_tauri_output_forwarder) consumes the channel and emits the
+    // corresponding pty-* events. So we just call it and let the forwarder
+    // handle the wire events.
+    session.atomic_resize_and_snapshot_for_client(origin_id, cols, rows).await.map_err(|e| {
+        tracing::warn!("pty_snapshot_request failed: {e}, pane={pane_id}");
+        e
+    })?;
+    let _ = app; // app not needed — forwarder emits events
     Ok(())
 }
 
@@ -351,6 +434,15 @@ async fn tauri_download(
 }
 
 #[tauri::command]
+async fn tauri_save_text(filename: String, content: String) -> Result<(), String> {
+    let dialog =
+        rfd::AsyncFileDialog::new().set_title("Save File").set_file_name(&filename).save_file();
+    let file = dialog.await.ok_or("cancelled")?;
+    tokio::fs::write(file.path(), content.as_bytes()).await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 async fn pick_upload_dir() -> Option<String> {
     rfd::AsyncFileDialog::new()
         .pick_folder()
@@ -387,14 +479,19 @@ async fn tauri_upload(
     pane_id: String,
     dir: String,
     files: Vec<UploadFile>,
+    cwd: Option<String>,
     token: Option<String>,
 ) -> Result<FetchResponse, String> {
     let port = EMBEDDED_HTTP_PORT.get().copied().unwrap_or(8999);
-    let url = format!(
+    let mut url = format!(
         "http://127.0.0.1:{port}/api/workspace/upload?pane_id={}&dir={}",
         urlencoding::encode(&pane_id),
         urlencoding::encode(&dir),
     );
+    if let Some(c) = cwd.as_deref().filter(|c| !c.is_empty()) {
+        url.push_str("&cwd=");
+        url.push_str(&urlencoding::encode(c));
+    }
 
     let client = reqwest::Client::new();
     let mut form = reqwest::multipart::Form::new();
@@ -407,8 +504,10 @@ async fn tauri_upload(
             .file_name(f.name.clone())
             .mime_str("application/octet-stream")
             .map_err(|e| e.to_string())?;
-        form = form.part("file", part);
+        // path must precede file: backend reads fields in order and pairs
+        // each path with the next file field.
         form = form.text("path", f.path.clone());
+        form = form.part("file", part);
     }
 
     let mut req = client.post(&url).multipart(form);
@@ -424,6 +523,11 @@ async fn tauri_upload(
         .collect();
     let body = resp.text().await.map_err(|e| e.to_string())?;
     Ok(FetchResponse { status, headers, body })
+}
+
+#[tauri::command]
+fn set_window_title(title: String, window: tauri::Window) -> Result<(), String> {
+    window.set_title(&title).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -482,11 +586,7 @@ fn close_window(app: AppHandle, state: State<'_, Arc<SessionManager>>) {
 }
 
 fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::new(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into()),
-        ))
-        .init();
+    let _log_guard = dinotty_server::settings::init_logging();
 
     let args: Vec<String> = std::env::args().collect();
     let port = parse_port(&args);
@@ -498,8 +598,10 @@ fn main() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let mgr = Arc::clone(&manager);
         rt.block_on(async move {
+            let listener = embedded_server::bind_listener(port)
+                .unwrap_or_else(|e| panic!("failed to bind embedded server on port {port}: {e}"));
             mgr.start_cleanup_task();
-            embedded_server::run_server(port, mgr).await
+            embedded_server::run_server(listener, mgr).await
         });
         return;
     }
@@ -519,12 +621,29 @@ fn main() {
         }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .plugin(tauri_plugin_clipboard::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(manager.clone())
         .setup(move |app| {
             let mgr = Arc::clone(&manager);
-            tauri::async_runtime::spawn(embedded_server::run_server(port, mgr));
-            tracing::info!("Desktop mode: embedded server on port {}", port);
+            match embedded_server::bind_listener(port) {
+                Ok(listener) => {
+                    let actual = listener.local_addr().expect("bound listener").port();
+                    // Redundant-by-design: run_server() also sets notify_port from its own
+                    // local_addr once its future is first polled. We set it here too — synchronously,
+                    // before spawn — so a Tauri `pty_spawn` IPC that fires before the spawned task's
+                    // first poll still reads the real port (not 0). Do NOT remove either set.
+                    mgr.set_notify_port(actual);
+                    tauri::async_runtime::spawn(embedded_server::run_server(listener, mgr));
+                    tracing::info!("Desktop mode: embedded server on port {}", actual);
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to bind embedded server on port {}: {}; notifications disabled",
+                        port,
+                        e
+                    );
+                }
+            }
 
             // Register global shortcut for Quake-mode toggle (Ctrl+Shift+`)
             let win = app.get_webview_window("main").expect("no main window");
@@ -607,6 +726,7 @@ fn main() {
             pty_spawn,
             pty_write,
             pty_resize,
+            pty_snapshot_request,
             pty_kill,
             pty_detach,
             embedded_http_origin,
@@ -614,10 +734,12 @@ fn main() {
             tauri_upload,
             tauri_read_file,
             tauri_download,
+            tauri_save_text,
             pick_upload_dir,
             pick_workspace_dir,
             close_window,
             toggle_window,
+            set_window_title,
         ])
         .build(tauri::generate_context!())
         .expect("error building tauri application")

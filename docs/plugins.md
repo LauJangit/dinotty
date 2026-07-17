@@ -71,7 +71,7 @@ curl.exe -X POST http://127.0.0.1:8999/api/plugins/dev-link `
 | **命令** | `commands.register(id, handler)` | 注册命令面板命令，返回 `Disposable` |
 | **CLI 执行** | `exec.run(args, options?)` | 调用插件附带的 CLI 二进制（同步，返回 `{code, stdout, stderr}`） |
 | | `exec.spawn(args)` | 流式调用 CLI（WebSocket，返回 `ReadableStream`） |
-| **UI** | `ui.notify(message, level?)` | 显示通知（info / warn / error） |
+| **UI** | `ui.notify(message, level?, title?)` | 显示通知（info / warn / error），可选自定义标题 |
 | | `ui.confirm(message)` | 显示确认对话框，返回 `Promise<boolean>` |
 | **设置** | `settings.get()` | 读取应用设置 |
 | | `settings.onDidChange(cb)` | 监听设置变更 |

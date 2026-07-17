@@ -116,7 +116,12 @@ vi.mock('../composables/useNotification', () => ({
     unreadByPane: {},
     togglePanel: vi.fn(),
     clearPaneUnread: vi.fn(),
+    clearForPaneIds: vi.fn(),
+    setGoToPaneHandler: vi.fn(),
   }),
+  aggregateSeverity: vi.fn(() => null),
+  pushNotification: vi.fn(),
+  setToastInstance: vi.fn(),
 }))
 vi.mock('../composables/usePluginLoader', () => ({
   usePluginLoader: () => ({

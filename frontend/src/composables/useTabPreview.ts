@@ -24,7 +24,6 @@ export interface TabCard {
   htmlContent: string | PanePreviewNode
   pluginIcon?: string
   splitCount: number
-  hasNotification: boolean
 }
 
 // P2: canvas screenshot disabled by default
@@ -306,7 +305,6 @@ export function useTabPreview() {
   function captureAll(
     tabs: Tab[],
     termRefs: Record<string, InstanceType<typeof TerminalPane>>,
-    indicators?: Record<string, any>,
   ): TabCard[] {
     return tabs.map((tab, index) => {
       if (tab.type === 'plugin') {
@@ -319,7 +317,6 @@ export function useTabPreview() {
           textContent: '',
           htmlContent: '',
           splitCount: 0,
-          hasNotification: !!(indicators?.[tab.paneId]),
         }
       }
 
@@ -342,7 +339,6 @@ export function useTabPreview() {
         textContent: '',
         htmlContent,
         splitCount: leaves.length,
-        hasNotification: !!(indicators?.[tab.paneId]),
       }
     })
   }

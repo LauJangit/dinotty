@@ -213,9 +213,13 @@ export function useFileOperations(opts: {
           paneId: opts.paneId(),
           dir,
           files: encoded,
+          cwd: opts.cwdLabel.value || undefined,
           token: token || undefined,
         })) as { status: number; body: string }
-        if (resp.status >= 400) console.error('[upload] server error:', resp.status)
+        if (resp.status >= 400) {
+          console.error('[upload] server error:', resp.status, resp.body)
+          alert(`Upload failed: HTTP ${resp.status}\n${resp.body}`)
+        }
       } else {
         const q = new URLSearchParams({ pane_id: opts.paneId(), dir })
         if (opts.cwdLabel.value) q.set('cwd', opts.cwdLabel.value)
@@ -228,10 +232,15 @@ export function useFileOperations(opts: {
           method: 'POST',
           body: fd,
         })
-        if (!res.ok) console.error('[upload] server error:', res.status)
+        if (!res.ok) {
+          const body = await res.text().catch(() => '')
+          console.error('[upload] server error:', res.status, body)
+          alert(`Upload failed: HTTP ${res.status}\n${body}`)
+        }
       }
     } catch (e) {
       console.error('[upload] request failed:', e)
+      alert(`Upload failed: ${e}`)
     }
     const next = { ...opts.childCache.value }
     delete next[dir]
@@ -330,11 +339,19 @@ export function useFileOperations(opts: {
       if (token) headers.push(['Authorization', `Bearer ${token}`])
       try {
         await tauriInvoke('tauri_download', { url, filename: name, headers })
-      } catch {}
+      } catch (e) {
+        console.error('[download] tauri_download failed:', url, e)
+        alert(`Download failed: ${e}`)
+      }
       return
     }
     const res = await authFetch(url)
-    if (!res.ok) return
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      console.error('[download] server error:', res.status, url, body)
+      alert(`Download failed: HTTP ${res.status}\n${body}`)
+      return
+    }
     const blob = await res.blob()
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)

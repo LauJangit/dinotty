@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::{error, info};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use zeroize::Zeroize;
 
 use crate::session::SessionManager;
@@ -45,6 +46,8 @@ pub struct Settings {
     pub upload_dir: String,
     #[serde(default)]
     pub default_base_dir: Option<String>,
+    #[serde(default)]
+    pub default_workspace_root: Option<String>,
     #[serde(default = "default_upload_cap_mb")]
     pub upload_cap_mb: u64,
     #[serde(default = "default_upload_cap_count")]
@@ -87,6 +90,10 @@ pub struct Settings {
     pub auth: AuthConfig,
     #[serde(default)]
     pub preview: PreviewConfig,
+    #[serde(default)]
+    pub custom_themes: Vec<SavedTheme>,
+    #[serde(default)]
+    pub hidden_builtins: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -150,8 +157,12 @@ fn default_global_lockout_secs() -> u64 {
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct PreviewConfig {
-    #[serde(default)]
+    #[serde(default = "default_preview_allow_external")]
     pub allow_external: bool,
+}
+
+fn default_preview_allow_external() -> bool {
+    true
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -467,6 +478,21 @@ pub struct CustomColors {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ThemeColors {
+    pub foreground: String,
+    pub background: String,
+    pub cursor: String,
+    pub ansi: [String; 16],
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SavedTheme {
+    pub uuid: String,
+    pub name: String,
+    pub colors: ThemeColors,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BackgroundConfig {
     #[serde(default = "default_mode")]
     pub mode: String,
@@ -606,6 +632,104 @@ fn clamp_custom_fonts(v: &mut Vec<String>) -> bool {
     changed
 }
 
+const BASE_THEME_NAMES: [&str; 3] = ["dark", "light", "dracula"];
+const THEME_CUSTOM_CAP: usize = 15;
+
+/// Normalize a single hex color IN PLACE to lowercase `#rrggbb`.
+/// Accepts `#rgb` (expands) and `#rrggbb` (case-normalizes). Unrepairable -> replace with `fallback`
+/// (never errors, never deletes the owning theme). Returns true if the value changed.
+fn normalize_hex_color(c: &mut String, fallback: &str) -> bool {
+    let orig = c.clone();
+    let s = c.trim();
+    let normalized = if let Some(hex) = s.strip_prefix('#') {
+        let hex_lower = hex.to_ascii_lowercase();
+        let is_hex = |t: &str| t.chars().all(|ch| ch.is_ascii_hexdigit());
+        if hex_lower.len() == 6 && is_hex(&hex_lower) {
+            format!("#{hex_lower}")
+        } else if hex_lower.len() == 3 && is_hex(&hex_lower) {
+            let mut expanded = String::from("#");
+            for ch in hex_lower.chars() {
+                expanded.push(ch);
+                expanded.push(ch);
+            }
+            expanded
+        } else {
+            fallback.to_string()
+        }
+    } else {
+        fallback.to_string()
+    };
+    *c = normalized;
+    *c != orig
+}
+
+fn normalize_theme_colors(colors: &mut ThemeColors) -> bool {
+    let mut changed = false;
+    changed |= normalize_hex_color(&mut colors.foreground, "#ffffff");
+    changed |= normalize_hex_color(&mut colors.background, "#000000");
+    changed |= normalize_hex_color(&mut colors.cursor, "#ffffff");
+    for a in &mut colors.ansi {
+        changed |= normalize_hex_color(a, "#000000");
+    }
+    changed
+}
+
+/// PUT-only theme-library clamp.
+/// - normalize every theme's colors
+/// - drop duplicate uuids keeping first (corruption cleanup)
+/// - remove the 3 base names from `hidden_builtins` + dedup `hidden_builtins`
+/// - truncate `custom_themes` to `THEME_CUSTOM_CAP` (frontend already blocks over-cap adds; this is the
+///   backend-owned independent hard bound)
+///
+/// Returns true if anything changed.
+fn clamp_theme_library(
+    custom_themes: &mut Vec<SavedTheme>,
+    hidden_builtins: &mut Vec<String>,
+) -> bool {
+    let mut changed = false;
+
+    let mut seen_uuids: Vec<String> = Vec::new();
+    let mut kept: Vec<SavedTheme> = Vec::new();
+    for mut t in custom_themes.drain(..) {
+        if seen_uuids.contains(&t.uuid) {
+            changed = true;
+            continue;
+        }
+        seen_uuids.push(t.uuid.clone());
+        if normalize_theme_colors(&mut t.colors) {
+            changed = true;
+        }
+        kept.push(t);
+    }
+    *custom_themes = kept;
+
+    let mut seen_hidden: Vec<String> = Vec::new();
+    let mut hidden_kept: Vec<String> = Vec::new();
+    for name in hidden_builtins.drain(..) {
+        if BASE_THEME_NAMES.contains(&name.as_str()) {
+            changed = true;
+            continue;
+        }
+        if seen_hidden.contains(&name) {
+            changed = true;
+            continue;
+        }
+        seen_hidden.push(name.clone());
+        hidden_kept.push(name);
+    }
+    *hidden_builtins = hidden_kept;
+
+    if custom_themes.len() > THEME_CUSTOM_CAP {
+        custom_themes.truncate(THEME_CUSTOM_CAP);
+        changed = true;
+    }
+    changed
+}
+
+fn clamp_theme_on_put(settings: &mut Settings) -> bool {
+    clamp_theme_library(&mut settings.custom_themes, &mut settings.hidden_builtins)
+}
+
 // Legit CSS font stacks contain only letters/digits/space/comma/quotes.
 // Anything with control chars or < > ; { } is a CSS-injection vector -> neutralise.
 fn font_family_is_unsafe(s: &str) -> bool {
@@ -719,6 +843,19 @@ pub struct ActionKeyboardConfig {
     pub rows: Vec<Vec<ActionKey>>,
 }
 
+impl Settings {
+    /// Resolve `default_workspace_root`, returning `None` when unset, empty,
+    /// whitespace-only, or not a directory.
+    pub fn resolved_default_workspace_root(&self) -> Option<std::path::PathBuf> {
+        self.default_workspace_root
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .map(std::path::PathBuf::from)
+            .filter(|p| p.is_dir())
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -734,6 +871,7 @@ impl Default for Settings {
             action_keyboard: None,
             upload_dir: default_upload_dir(),
             default_base_dir: None,
+            default_workspace_root: None,
             upload_cap_mb: default_upload_cap_mb(),
             upload_cap_count: default_upload_cap_count(),
             upload_file_cap_mb: 0,
@@ -755,6 +893,8 @@ impl Default for Settings {
             active_workspace_id: None,
             auth: AuthConfig::default(),
             preview: PreviewConfig::default(),
+            custom_themes: vec![],
+            hidden_builtins: vec![],
         }
     }
 }
@@ -968,6 +1108,7 @@ pub async fn put_settings(
 ) -> impl IntoResponse {
     new_settings.settings_version = CURRENT_SETTINGS_VERSION;
     let _ = clamp_text_config(&mut new_settings.text);
+    let _ = clamp_theme_on_put(&mut new_settings);
     match save_settings(&new_settings) {
         Ok(()) => {
             *state.1.write().await = new_settings;
@@ -1064,6 +1205,81 @@ pub fn log_dir() -> PathBuf {
 #[must_use]
 pub fn log_file_path() -> PathBuf {
     log_dir().join("dinotty.log")
+}
+
+/// Initialize the global tracing subscriber based on `settings.log`.
+///
+/// When `log.enabled` is true, mounts both a stderr layer and a non-blocking
+/// file appender writing to `log.path` (or `log_file_path()` if unset), and
+/// returns a `WorkerGuard` the caller must keep alive for the process
+/// lifetime to ensure buffered writes are flushed. When disabled, mounts a
+/// stderr-only subscriber and returns `None`.
+///
+/// Shared by the `dinotty serve` CLI (`src/main.rs`) and the Tauri desktop /
+/// embedded server (`src-tauri/src/main.rs`) so every entry point honors
+/// `settings.log.*` uniformly.
+///
+/// # Panics
+///
+/// Panics on failure to create the log directory or open the log file,
+/// matching prior inline behavior - a misconfigured `log.path` should
+/// surface loudly rather than silently swallow logs.
+#[must_use]
+pub fn init_logging() -> Option<tracing_appender::non_blocking::WorkerGuard> {
+    let settings = load_settings();
+
+    let env_filter = || {
+        tracing_subscriber::EnvFilter::new(
+            std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into()),
+        )
+    };
+
+    if !settings.log.enabled {
+        tracing_subscriber::registry()
+            .with(env_filter())
+            .with(tracing_subscriber::fmt::layer())
+            .init();
+        return None;
+    }
+
+    let log_path = if settings.log.path.is_empty() {
+        let dir = log_dir();
+        std::fs::create_dir_all(&dir).expect("failed to create log directory");
+        log_file_path()
+    } else {
+        let path = PathBuf::from(&settings.log.path);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("failed to create log directory");
+        }
+        path
+    };
+
+    let max_bytes = settings.log.max_size_mb * 1024 * 1024;
+    if log_path.exists() {
+        if let Ok(metadata) = std::fs::metadata(&log_path) {
+            if metadata.len() > max_bytes {
+                let backup_path = log_path.with_extension("log.1");
+                let _ = std::fs::rename(&log_path, &backup_path);
+            }
+        }
+    }
+
+    let file = std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(&log_path)
+        .expect("failed to create log file");
+
+    let (non_blocking, guard) = tracing_appender::non_blocking(file);
+
+    tracing_subscriber::registry()
+        .with(env_filter())
+        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+        .with(tracing_subscriber::fmt::layer().with_writer(non_blocking))
+        .init();
+
+    tracing::info!("File logging enabled: {:?}", log_path);
+    Some(guard)
 }
 
 #[allow(clippy::unused_async, clippy::missing_panics_doc)]

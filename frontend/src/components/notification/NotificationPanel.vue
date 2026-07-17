@@ -12,9 +12,10 @@
         :title="n.title"
         :body="n.body"
         :timestamp="n.timestamp"
-        :pane-label="paneLabels[n.paneId]"
+        :pane-label="n.paneId ? paneLabels[n.paneId] : undefined"
+        :source="n.source"
         @dismiss="dismissOne(n.id)"
-        @goto="$emit('goto-pane', n.paneId)"
+        @goto="n.paneId && $emit('goto-pane', n.paneId)"
       />
       <div v-if="notifications.length === 0" class="panel-empty">{{ t('notification.empty') }}</div>
     </div>

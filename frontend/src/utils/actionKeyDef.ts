@@ -60,7 +60,8 @@ export function actionKeyToKeyDef(ak: ActionKey, opts?: { bottomIdx?: number }):
   }
 
   let sendNorm = normalizeCaretSend(ak.send ?? '')
-  if (ak.auto_enter && sendNorm !== '') sendNorm += '\r'
+  const isControlChar = sendNorm.length === 1 && sendNorm.charCodeAt(0) < 32
+  if (ak.auto_enter && sendNorm !== '' && !isControlChar) sendNorm += '\r'
   if (sendNorm !== '') {
     def.s = sendNorm
   }

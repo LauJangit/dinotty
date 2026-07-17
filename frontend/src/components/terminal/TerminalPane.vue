@@ -294,6 +294,10 @@ function fit() {
   terminal?.fit()
 }
 
+function isComposing(): boolean {
+  return terminal?.isComposing ?? false
+}
+
 function sendData(data: string, force?: boolean) {
   terminal?.sendData(data, force)
 }
@@ -1050,7 +1054,7 @@ onBeforeUnmount(() => {
   terminal = null
 })
 
-defineExpose({ getTerminal, focus, blur, fit, sendData, setOutputListener, toggleSearch, adjustFontSize, resetFontSize })
+defineExpose({ getTerminal, focus, blur, fit, sendData, setOutputListener, toggleSearch, adjustFontSize, resetFontSize, isComposing })
 </script>
 
 <style scoped>

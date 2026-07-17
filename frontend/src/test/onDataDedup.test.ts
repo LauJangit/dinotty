@@ -1,4 +1,13 @@
-import { describe, it, expect, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const transportMocks = vi.hoisted(() => ({ tauri: false }))
+
+vi.mock('../composables/useTransport', () => ({
+  isTauri: () => transportMocks.tauri,
+  createTransport: vi.fn(),
+  tauriInvoke: vi.fn(),
+}))
+
 import {
   isDuplicateOnData,
   DEDUP_WINDOW_MS,
@@ -37,6 +46,10 @@ describe('onData dedup helper (useTerminal)', () => {
 describe('wheel bypass skips dedup (regression)', () => {
   const mouseReport = '\x1b[<64;10;10M'
 
+  beforeEach(() => {
+    transportMocks.tauri = false
+  })
+
   it('emits byte-identical SGR reports sent back-to-back during bypass', () => {
     const instance = Object.create(TerminalInstance.prototype) as any
     instance._wheelBypass = true
@@ -65,7 +78,8 @@ describe('wheel bypass skips dedup (regression)', () => {
     expect(instance._lastInputTime).toBe(1234)
   })
 
-  it('drops the second identical input when bypass is disabled', () => {
+  it('drops the second identical input when bypass is disabled (Tauri)', () => {
+    transportMocks.tauri = true
     const instance = Object.create(TerminalInstance.prototype) as any
     instance._wheelBypass = false
     instance._lastInputData = ''
@@ -82,5 +96,26 @@ describe('wheel bypass skips dedup (regression)', () => {
 
     expect(instance._emitInput).toHaveBeenCalledOnce()
     expect(instance._emitInput).toHaveBeenCalledWith(mouseReport)
+  })
+
+  it('keeps both identical inputs on web (dedup gated to Tauri only)', () => {
+    transportMocks.tauri = false
+    const instance = Object.create(TerminalInstance.prototype) as any
+    instance._wheelBypass = false
+    instance._lastInputData = ''
+    instance._lastInputTime = 0
+    instance._emitInput = vi.fn()
+    const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(2000)
+
+    try {
+      instance._handleXtermData(mouseReport)
+      instance._handleXtermData(mouseReport)
+    } finally {
+      nowSpy.mockRestore()
+    }
+
+    expect(instance._emitInput).toHaveBeenCalledTimes(2)
+    expect(instance._emitInput).toHaveBeenNthCalledWith(1, mouseReport)
+    expect(instance._emitInput).toHaveBeenNthCalledWith(2, mouseReport)
   })
 })

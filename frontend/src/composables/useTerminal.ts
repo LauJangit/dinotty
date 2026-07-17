@@ -5,7 +5,15 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import { SearchAddon } from '@xterm/addon-search'
 import type { ClientMsg, ServerMsg } from '../types/protocol'
 import { isTauri, createTransport, type Transport } from './useTransport'
-import { onThemeChange, saveSettings, settings, onTextChange } from './useSettings'
+import { onThemeChange, settings } from './useSettings'
+import {
+  FONT_SIZE_MAX,
+  FONT_SIZE_MIN,
+  getEffectiveText,
+  onEffectiveTextChange,
+  resetOverride,
+  setOverride,
+} from './useDeviceTextSettings'
 import {
   computeWheelPlan,
   type TrackingWheelState,
@@ -214,7 +222,6 @@ export class TerminalInstance {
   private _refitRaf: number = 0
   private _lastCols = 0
   private _lastRows = 0
-  private _resizeDebounce: number = 0
   private _lastInputData = ''
   private _lastInputTime = 0
   private _wheelBypass = false
@@ -222,8 +229,56 @@ export class TerminalInstance {
   private _trackingWheelState: TrackingWheelState | null = null
   private _wheelRowHeightWarned = false
   private _symCredits: Array<{ data: string; src: 0 | 1; at: number }> = []
+  // IME composition state. Tracked via compositionstart/compositionend on the
+  // xterm textarea so focusActive() can avoid .focus()/.blur()/.fit() during
+  // composition - those calls interrupt the IME session and cause xterm's
+  // diff-fallback to leak preedit text as raw input.
+  private _composing = false
   private _writeQueue: string[] = []
   private _writing = false
+  // Output transaction buffer shared by DEC mode 2026 (sync_begin/sync_end)
+  // and the fit-then-snapshot replay handshake (replay_begin/replay_end). A
+  // depth counter supports nesting: a sync_end arriving mid-replay defers the
+  // flush until replay_end closes the outer transaction. While depth > 0,
+  // server-side Output is held here instead of entering the write pump; on
+  // the outermost end the joined buffer is enqueued as a single write so
+  // xterm sees a coherent stream and doesn't repaint per 32 KiB / per rAF
+  // chunk mid-redraw — and settle-ladder / ResizeObserver cannot interrupt
+  // mid-write (which was the root cause of refresh-misalign P2).
+  //
+  // The 8 MiB cap is a safety net against pathological bursts (an app that
+  // emits a huge sync burst and never sends DECRST, or a snapshot that grows
+  // beyond reason). The server watchdog + SYNC_BUFFER_LIMIT also bound it,
+  // but defense-in-depth on the client is cheap.
+  private _transactionDepth = 0
+  private _transactionBuffer: string[] = []
+  private _transactionBytes = 0
+  private static readonly MAX_TRANSACTION_BYTES = 8 * 1024 * 1024
+  // Snapshot of the (cols, rows) the client requested in its last
+  // SnapshotRequest. Used at replay_end to detect whether the wrapper size
+  // changed mid-replay — if so, the snapshot is encoded at the wrong size and
+  // we should re-request. Null before the first SnapshotRequest is sent.
+  private _snapshotRequestedSize: { cols: number; rows: number } | null = null
+  // True between Reconnected and replay_end. While set, _sendResize is
+  // suppressed: the server's atomic_resize_and_snapshot does the PTY resize
+  // in the same critical section as the snapshot, so a client-sent resize
+  // during this window would race it and re-introduce the refresh-misalign.
+  // Cleared on replay_end (or _resetTransaction, defensively).
+  private _snapshotPending = false
+  // Watchdog for silent xterm.write() callback loss. xterm.js can drop the
+  // write callback without throwing (observed when resize interleaves with a
+  // pending write under high output), which strands _writing=true forever.
+  // The watchdog force-advances the pump if the callback hasn't fired within
+  // WRITE_WATCHDOG_MS, recovering output without a full page reload.
+  private _writeWatchdog: ReturnType<typeof setTimeout> | null = null
+  private _writeWatchdogFires = 0
+  // Cross-batch viewport pin: survives rAF yields between write batches so
+  // trackpad inertia / sub-pixel wheel noise doesn't flip isUserScrolling and
+  // drop the viewport above ybase mid-stream. Only a deliberate upward scroll
+  // (accumulated |deltaY| past NOISE_THRESHOLD within ACCUM_RESET_MS) un-pins.
+  private _writePinnedToBottom = true
+  private _wheelUpAccumulated = 0
+  private _wheelUpResetTimer: ReturnType<typeof setTimeout> | null = null
   touchMoved = false
   inTouchSelection = false
   selStartRow = 0
@@ -233,9 +288,23 @@ export class TerminalInstance {
   private _settleTimeouts: ReturnType<typeof setTimeout>[] = []
   private _settleRaf: number = 0
   private _settleGeneration: number = 0
+  // Zero-size watchdog: when the wrapper collapses to 0×0 (cold reload flex
+  // chain collapse, hidden tab becoming visible, mobile keyboard
+  // dismissing) the settle-ladder [50,120,250,450,700]ms can sample 0×0 at
+  // every tick and give up. ResizeObserver should fire when the wrapper
+  // recovers, but browsers occasionally fail to recompute an active
+  // percent-based flex chain, leaving the terminal permanently 0×0 until
+  // an external reflow (drag/refresh). This retry polls every 250ms for up
+  // to 30s as a safety net — _refit is idempotent so the cost is trivial
+  // when the wrapper is already non-zero.
+  private _zeroSizeRetryTimer: ReturnType<typeof setTimeout> | null = null
+  private _zeroSizeRetries = 0
+  private static readonly ZERO_SIZE_RETRY_MS = 250
+  private static readonly ZERO_SIZE_MAX_RETRIES = 120
   private _transportConnected = false
   private _lastSentCols = 0
   private _lastSentRows = 0
+  private _resizeCooldownUntil = 0
   private _followingPeer = false
   private _peerFollowGen = 0
   private _peerFollowTimer: ReturnType<typeof setTimeout> | null = null
@@ -265,16 +334,17 @@ export class TerminalInstance {
     const s = getComputedStyle(document.documentElement)
     const v = (name: string) => s.getPropertyValue(name).trim()
 
-    const fontFamily = settings.text.font_family || v('--font-mono')
+    const text = getEffectiveText()
+    const fontFamily = text.font_family || v('--font-mono')
 
     this.xterm = new XTerm({
-      cursorBlink: settings.text.cursor_blink,
-      cursorStyle: settings.text.cursor_style as any,
-      scrollback: settings.text.scrollback,
-      fontSize: settings.text.font_size,
+      cursorBlink: text.cursor_blink,
+      cursorStyle: text.cursor_style as any,
+      scrollback: text.scrollback,
+      fontSize: text.font_size,
       fontFamily,
-      lineHeight: settings.text.line_height,
-      letterSpacing: settings.text.letter_spacing,
+      lineHeight: text.line_height,
+      letterSpacing: text.letter_spacing,
       allowProposedApi: true,
       linkHandler: {
         activate: (_event, text) => {
@@ -422,7 +492,14 @@ export class TerminalInstance {
 
     try {
       const webgl = new WebglAddon()
-      webgl.onContextLoss(() => webgl.dispose())
+      webgl.onContextLoss(() => {
+        webgl.dispose()
+        // Disposing restores the canvas renderer but doesn't trigger a
+        // redraw. Without refresh, the terminal appears frozen until the
+        // next resize (e.g. dragging the window) kicks the render service.
+        const rows = this.xterm?.rows ?? 1
+        this.xterm?.refresh(0, Math.max(0, rows - 1))
+      })
       this.xterm.loadAddon(webgl)
     } catch {
       /* DOM renderer fallback */
@@ -436,6 +513,23 @@ export class TerminalInstance {
       textarea.inputMode = 'none'
       textarea.setAttribute('virtualkeyboardpolicy', 'manual')
     }
+    // Track IME composition state on all platforms so focusActive() can
+    // defer .focus()/.blur()/.fit() during composition. Interrupting an
+    // in-flight composition causes xterm's diff-fallback to leak preedit
+    // text as raw input (P3).
+    if (textarea) {
+      const onStart = () => { this._composing = true }
+      const onEnd = () => { this._composing = false }
+      textarea.addEventListener('compositionstart', onStart)
+      textarea.addEventListener('compositionend', onEnd)
+      const prevCleanup = this._compositionCleanup
+      this._compositionCleanup = () => {
+        textarea.removeEventListener('compositionstart', onStart)
+        textarea.removeEventListener('compositionend', onEnd)
+        this._composing = false
+        prevCleanup?.()
+      }
+    }
     if (textarea && isTauri()) {
       const onImeInput = (e: InputEvent) => {
         if (e.inputType !== 'insertText') return
@@ -444,9 +538,11 @@ export class TerminalInstance {
         if (this._resolveSym(data, 0, performance.now())) this._emitInput(data)
       }
       textarea.addEventListener('input', onImeInput as EventListener)
+      const prevCleanup = this._compositionCleanup
       this._compositionCleanup = () => {
         textarea.removeEventListener('input', onImeInput as EventListener)
         this._symCredits = []
+        prevCleanup?.()
       }
     }
 
@@ -545,6 +641,17 @@ export class TerminalInstance {
     this._resizeObserver = new ResizeObserver(() => this._refit())
     this._resizeObserver.observe(wrapper)
 
+    // Web fonts load asynchronously; if the terminal is fitted before the
+    // font is ready, cellWidth is based on the fallback font (usually
+    // narrower), so cols is overestimated and long lines overflow the
+    // canvas. Refit once after fonts settle to correct cellWidth -> cols.
+    if (typeof document !== 'undefined' && document.fonts) {
+      document.fonts.ready.then(() => {
+        if (this._destroyed || !this.xterm) return
+        this._refit()
+      })
+    }
+
     this._visibilityHandler = () => {
       if (!document.hidden) this._doFitAndResize(true)
     }
@@ -554,8 +661,21 @@ export class TerminalInstance {
       if (this.xterm) this.xterm.options.theme = xtermTheme
     })
 
-    this._textUnsub = onTextChange((text) => {
+    let lastLayout = {
+      font_size: text.font_size,
+      font_family: text.font_family,
+      line_height: text.line_height,
+      letter_spacing: text.letter_spacing,
+      scrollback: text.scrollback,
+    }
+    this._textUnsub = onEffectiveTextChange((text) => {
       if (!this.xterm) return
+      const layoutChanged =
+        text.font_size !== lastLayout.font_size ||
+        text.font_family !== lastLayout.font_family ||
+        text.line_height !== lastLayout.line_height ||
+        text.letter_spacing !== lastLayout.letter_spacing ||
+        text.scrollback !== lastLayout.scrollback
       this.xterm.options.fontSize = text.font_size
       this.xterm.options.fontFamily =
         text.font_family ||
@@ -565,7 +685,16 @@ export class TerminalInstance {
       this.xterm.options.cursorBlink = text.cursor_blink
       this.xterm.options.cursorStyle = text.cursor_style as any
       this.xterm.options.scrollback = text.scrollback
-      this._refit()
+      if (layoutChanged) {
+        lastLayout = {
+          font_size: text.font_size,
+          font_family: text.font_family,
+          line_height: text.line_height,
+          letter_spacing: text.letter_spacing,
+          scrollback: text.scrollback,
+        }
+        this._refit()
+      }
     })
   }
 
@@ -583,22 +712,17 @@ export class TerminalInstance {
   }
 
   adjustFontSize(delta: number) {
-    const xt = this.xterm
-    if (!xt) return
-    const newSize = Math.max(8, Math.min(72, (xt.options.fontSize ?? 14) + delta))
-    xt.options.fontSize = newSize
-    settings.text.font_size = newSize
-    saveSettings()
-    this._refit()
+    if (!this.xterm) return
+    const newSize = Math.max(
+      FONT_SIZE_MIN,
+      Math.min(FONT_SIZE_MAX, getEffectiveText().font_size + delta),
+    )
+    setOverride('font_size', newSize)
   }
 
   resetFontSize() {
     if (!this.xterm) return
-    const defaultSize = 14
-    this.xterm.options.fontSize = defaultSize
-    settings.text.font_size = defaultSize
-    saveSettings()
-    this._refit()
+    resetOverride('font_size')
   }
 
   sendData(data: string, force = false) {
@@ -636,7 +760,12 @@ export class TerminalInstance {
     const data = tauri ? stripImeConfirmSpace(rawData) : rawData
     if (!data) return
     const now = performance.now()
-    if (isDuplicateOnData(data, this._lastInputData, this._lastInputTime, now)) return
+    // Gate the WKWebView replay dedup to Tauri only. On web, browsers don't
+    // multi-fire onData for one key, so the 2ms same-char window only
+    // corrupts legitimate fast repeats (e.g. `3000000` -> `30`, held arrow
+    // keys, fast paste of repeated chars). On Tauri/WKWebView, keep the
+    // dedup to absorb the multi-focus replay (P4).
+    if (tauri && isDuplicateOnData(data, this._lastInputData, this._lastInputTime, now)) return
     this._lastInputData = data
     this._lastInputTime = now
     if (tauri && isShiftSymbolChar(data)) {
@@ -657,6 +786,10 @@ export class TerminalInstance {
     return this.xterm?.getSelection() ?? ''
   }
 
+  get isComposing(): boolean {
+    return this._composing
+  }
+
   selectAll() {
     this.xterm?.selectAll()
   }
@@ -671,6 +804,7 @@ export class TerminalInstance {
     if (this._reconnectTimer) clearTimeout(this._reconnectTimer)
     for (const h of this._settleTimeouts) clearTimeout(h)
     this._settleTimeouts = []
+    this._clearZeroSizeRetry()
     if (this._settleRaf) cancelAnimationFrame(this._settleRaf)
     if (this._peerFollowTimer) {
       clearTimeout(this._peerFollowTimer)
@@ -680,7 +814,10 @@ export class TerminalInstance {
     this._peerFollowGen++
     this._followingPeer = false
     if (this._refitRaf) cancelAnimationFrame(this._refitRaf)
-    if (this._resizeDebounce) clearTimeout(this._resizeDebounce)
+    if (this._wheelUpResetTimer) {
+      clearTimeout(this._wheelUpResetTimer)
+      this._wheelUpResetTimer = null
+    }
     this._resizeObserver?.disconnect()
     if (this._visibilityHandler) {
       document.removeEventListener('visibilitychange', this._visibilityHandler)
@@ -693,6 +830,11 @@ export class TerminalInstance {
     this._textUnsub?.()
     this._writeQueue = []
     this._writing = false
+    this._resetTransaction()
+    if (this._writeWatchdog) {
+      clearTimeout(this._writeWatchdog)
+      this._writeWatchdog = null
+    }
     if (this._transport) {
       this._transport.disconnect()
       this._transport = null
@@ -727,7 +869,11 @@ export class TerminalInstance {
     this._transport.onMessage((msg) => {
       if (this._destroyed || !this.xterm) return
       if (msg.type === 'output') {
-        this._enqueueWrite(msg.data)
+        if (this._transactionDepth > 0) {
+          this._appendToTransaction(msg.data)
+        } else {
+          this._enqueueWrite(msg.data)
+        }
         this.onRawOutput?.(msg.data)
       } else if (msg.type === 'shell_info') {
         this._shellType = msg.shell_type
@@ -738,12 +884,46 @@ export class TerminalInstance {
         this._suppressTitleChange = false
         this._writeQueue = []
         this._writing = false
+        // Reset sync transaction: the server's sync_active state is not
+        // replayed across reconnect — any in-flight SyncBegin is lost.
+        // Without this, a post-reconnect SyncEnd would flush a stale buffer.
+        this._resetTransaction()
+        // Mark that we owe the server a snapshot_request. Suppresses _sendResize
+        // until replay_end lands — the server's atomic_resize_and_snapshot
+        // owns the PTY resize during this window.
+        this._snapshotPending = true
+        if (this._writeWatchdog) {
+          clearTimeout(this._writeWatchdog)
+          this._writeWatchdog = null
+        }
+        this._writePinnedToBottom = true
         this._doFitAndResize(true)
+        // Kick off the fit-then-snapshot handshake: the zero-size retry
+        // path or settle-ladder will call _maybeSendSnapshotRequest once the
+        // wrapper converges to a stable non-zero size.
+        this._maybeSendSnapshotRequest()
         this._scheduleSettleResize()
       } else if (msg.type === 'resize') {
+        // Server breaks sync mode before broadcasting Resize (see
+        // apply_and_broadcast_resize), so SyncEnd lands before Resize in the
+        // FIFO channel. If a Resize arrives while a transaction is somehow
+        // still active (race), flush first so buffered bytes land before the
+        // resize changes xterm geometry.
+        if (this._transactionDepth > 0) {
+          this._flushTransaction()
+          this._transactionDepth = 0
+        }
         this._followPeerResize(msg.cols, msg.rows)
       } else if (msg.type === 'session_exit') {
         this._handleSessionExit()
+      } else if (msg.type === 'sync_begin') {
+        this._handleSyncBegin()
+      } else if (msg.type === 'sync_end') {
+        this._handleSyncEnd()
+      } else if (msg.type === 'replay_begin') {
+        this._handleReplayBegin(msg.cols, msg.rows)
+      } else if (msg.type === 'replay_end') {
+        this._handleReplayEnd()
       }
     })
 
@@ -790,18 +970,58 @@ export class TerminalInstance {
         this._suppressTitleChange = false
         this._reconnectAttempts = 0
         this._hideOverlay()
+        // Reset the write pump: a prior stall may have stranded _writing=true,
+        // and xterm.reset() invalidated the old buffer. Without this, output
+        // after reconnect queues forever and the terminal stays dead until a
+        // full page reload.
+        this._writeQueue = []
+        this._writing = false
+        // Reset transaction: server's sync_active state is not replayed
+        // across reconnect — any in-flight SyncBegin is lost.
+        this._resetTransaction()
+        // Owe the server a snapshot_request; suppress _sendResize until
+        // replay_end (see _snapshotPending doc comment).
+        this._snapshotPending = true
+        if (this._writeWatchdog) {
+          clearTimeout(this._writeWatchdog)
+          this._writeWatchdog = null
+        }
+        this._writePinnedToBottom = true
         this._doFitAndResize(true)
+        // Kick off fit-then-snapshot handshake — settle-ladder / zero-size
+        // retry will fire _maybeSendSnapshotRequest when the wrapper converges.
+        this._maybeSendSnapshotRequest()
         this._scheduleSettleResize()
       } else if (msg.type === 'output') {
-        this._enqueueWrite(msg.data)
+        if (this._transactionDepth > 0) {
+          this._appendToTransaction(msg.data)
+        } else {
+          this._enqueueWrite(msg.data)
+        }
         this.onRawOutput?.(msg.data)
       } else if (msg.type === 'shell_info') {
         this._shellType = msg.shell_type
         this.onShellInfo?.(msg.shell_type)
       } else if (msg.type === 'resize') {
+        // Server breaks sync mode before broadcasting Resize (see
+        // apply_and_broadcast_resize), so SyncEnd lands before Resize. Flush
+        // any residual transaction first to keep buffered bytes ahead of the
+        // resize geometry change.
+        if (this._transactionDepth > 0) {
+          this._flushTransaction()
+          this._transactionDepth = 0
+        }
         this._followPeerResize(msg.cols, msg.rows)
       } else if (msg.type === 'session_exit') {
         this._handleSessionExit()
+      } else if (msg.type === 'sync_begin') {
+        this._handleSyncBegin()
+      } else if (msg.type === 'sync_end') {
+        this._handleSyncEnd()
+      } else if (msg.type === 'replay_begin') {
+        this._handleReplayBegin(msg.cols, msg.rows)
+      } else if (msg.type === 'replay_end') {
+        this._handleReplayEnd()
       }
     }
 
@@ -834,12 +1054,176 @@ export class TerminalInstance {
     // Dropping intermediate chunks is safe: the terminal state is determined
     // by the latest output.
     const MAX_WRITE_QUEUE = 64
+    const MAX_QUEUE_BYTES = 4 * 1024 * 1024
     if (this._writeQueue.length >= MAX_WRITE_QUEUE) {
       this._writeQueue = [this._writeQueue.join('') + data]
     } else {
       this._writeQueue.push(data)
     }
+    let totalBytes = 0
+    for (const chunk of this._writeQueue) totalBytes += chunk.length
+    while (totalBytes > MAX_QUEUE_BYTES && this._writeQueue.length > 1) {
+      const dropped = this._writeQueue.shift()!
+      totalBytes -= dropped.length
+    }
     if (!this._writing) this._processWriteQueue()
+  }
+
+  // ── Output transaction handling ─────────────────────────────
+  //
+  // Two protocols share this buffer:
+  //  - DEC mode 2026 (sync_begin/sync_end): server buffers live Output
+  //    during synchronized redraw and flushes as ≤64 KiB chunks; without
+  //    batching here, xterm repaints each chunk as a separate rAF tick,
+  //    producing the intermediate frames 2026 is designed to suppress.
+  //  - Fit-then-snapshot replay (replay_begin/replay_end): server pushes
+  //    scrollback+snapshot at the client's requested size; without batching,
+  //    settle-ladder / ResizeObserver can interrupt mid-write and the
+  //    snapshot's absolute-row addressing clamps/wraps to wrong dimensions
+  //    (refresh-misalign P2 root cause).
+  //
+  // A depth counter supports nesting: a sync_end arriving mid-replay defers
+  // the flush until replay_end closes the outer transaction. Stray end
+  // events with depth == 0 are no-ops.
+
+  private _handleSyncBegin() {
+    this._beginTransaction()
+  }
+
+  private _handleSyncEnd() {
+    this._endTransaction()
+    // The transaction guard in _doFitAndResize/_settleRefit suppressed
+    // fitting while sync was active. Re-arm the ladder so any wrapper
+    // size change during the sync is applied now that the buffered bytes
+    // have landed.
+    if (this._transactionDepth === 0) {
+      this._scheduleSettleResize()
+    }
+  }
+
+  private _handleReplayBegin(cols: number, rows: number) {
+    // Record the size the server claims the snapshot was encoded at — used
+    // at replay_end to detect whether our wrapper changed mid-replay and we
+    // need to re-request.
+    this._snapshotRequestedSize = { cols, rows }
+    this._beginTransaction()
+  }
+
+  private _handleReplayEnd() {
+    this._endTransaction()
+    // Optional correctness check (MV: just log mismatch; a follow-up can
+    // re-request automatically). If the wrapper size changed during the
+    // replay, the snapshot was encoded at a stale size and may misalign.
+    if (this._snapshotRequestedSize && this.xterm && this.fitAddon && this._wrapper) {
+      const rect = this._wrapper.getBoundingClientRect()
+      if (rect.width > 0 && rect.height > 0) {
+        // Compare xterm's current cols/rows (already fit) to what the
+        // snapshot was encoded at. If they differ, the wrapper changed
+        // during replay.
+        if (this.xterm.cols !== this._snapshotRequestedSize.cols
+          || this.xterm.rows !== this._snapshotRequestedSize.rows) {
+          console.warn(
+            `[dinotty] replay_end size mismatch: snapshot ` +
+            `${this._snapshotRequestedSize.cols}x${this._snapshotRequestedSize.rows}, ` +
+            `xterm now ${this.xterm.cols}x${this.xterm.rows} — snapshot may misalign`
+          )
+        }
+      }
+    }
+    this._snapshotRequestedSize = null
+    // End of the snapshot window: _sendResize is no longer suppressed. The
+    // next settle-ladder tick will reclaim the PTY size if our wrapper has
+    // drifted from the snapshot's cols/rows.
+    this._snapshotPending = false
+    // Re-arm the ladder: the transaction guard suppressed fitting during
+    // the replay, so any wrapper change during it is now applied.
+    this._scheduleSettleResize()
+  }
+
+  private _beginTransaction() {
+    this._transactionDepth++
+  }
+
+  private _endTransaction() {
+    if (this._transactionDepth === 0) {
+      // Stray end without matching begin. Ignore.
+      return
+    }
+    this._transactionDepth--
+    if (this._transactionDepth === 0) {
+      this._flushTransaction()
+    }
+  }
+
+  private _appendToTransaction(data: string) {
+    this._transactionBuffer.push(data)
+    this._transactionBytes += data.length
+    if (this._transactionBytes >= TerminalInstance.MAX_TRANSACTION_BYTES) {
+      // Pathological burst (app emitted >8 MiB inside one transaction without
+      // an end event, or server watchdog force-flushed raw). Bound memory by
+      // flushing early; depth stays >0 so subsequent Output still diverts
+      // into a fresh buffer until the matching end arrives.
+      this._flushTransaction()
+    }
+  }
+
+  private _flushTransaction() {
+    if (this._transactionBuffer.length === 0) return
+    const merged = this._transactionBuffer.join('')
+    this._transactionBuffer = []
+    this._transactionBytes = 0
+    this._enqueueWrite(merged)
+  }
+
+  private _resetTransaction() {
+    this._transactionDepth = 0
+    this._transactionBuffer = []
+    this._transactionBytes = 0
+    this._snapshotRequestedSize = null
+    this._snapshotPending = false
+  }
+
+  /// Send a snapshot_request to the server after the wrapper has converged to
+  /// a stable non-zero size. The server will reply with replay_begin → chunks
+  /// → replay_end. We do NOT enqueue a resize to the PTY here — the server's
+  /// atomic_resize_and_snapshot does the PTY resize in the same critical
+  /// section as the snapshot, which is what makes the snapshot's dimensions
+  /// match the client's actual geometry (the root fix for refresh-misalign).
+  ///
+  /// Idempotent: if _snapshotRequestedSize is already set (a request is in
+  /// flight, waiting on replay_begin), bail. _doFitAndResize also calls this
+  /// when the wrapper recovers from a 0×0 collapse so the zero-size retry
+  /// path eventually fires the request.
+  private _maybeSendSnapshotRequest() {
+    if (this._destroyed || !this.xterm || !this.fitAddon || !this._wrapper) return
+    if (!this._snapshotPending) return
+    if (this._snapshotRequestedSize) return
+    const rect = this._wrapper.getBoundingClientRect()
+    if (rect.width === 0 || rect.height === 0) {
+      // Still collapsed — _doFitAndResize's zero-size retry will call us
+      // again when the wrapper recovers. Bail without sending.
+      return
+    }
+    let cols = this.xterm.cols
+    let rows = this.xterm.rows
+    if (cols < 2 || rows < 2) {
+      // xterm hasn't been fit yet — do one fit now to read cols/rows.
+      try {
+        this.fitAddon.fit()
+        cols = this.xterm.cols
+        rows = this.xterm.rows
+      } catch {
+        return
+      }
+    }
+    if (cols < 2 || rows < 2) return
+    this._snapshotRequestedSize = { cols, rows }
+    const msg: ClientMsg = { type: 'snapshot_request', cols, rows }
+    if (this.ws) {
+      this.ws.send(JSON.stringify(msg))
+    } else if (this._transport) {
+      this._transport.send(msg)
+    }
   }
 
   private _processWriteQueue() {
@@ -848,16 +1232,6 @@ export class TerminalInstance {
       return
     }
     this._writing = true
-
-    // Snapshot whether the viewport is at the bottom BEFORE writing this batch.
-    // During burst output, the rAF yields between batches let pending wheel events
-    // (e.g. macOS trackpad inertia) fire. Even a 1-px upward delta sets
-    // xterm.js's isUserScrolling=true, which prevents ydisp from following ybase
-    // in subsequent write() calls — the viewport gets stuck above the bottom.
-    // By recording the at-bottom state here and restoring it after the batch, we
-    // keep the viewport pinned to the bottom when the user hasn't intentionally
-    // scrolled away.
-    const wasAtBottom = this._isAtBottom()
 
     // Process up to SYNC_BATCH_LIMIT chunks per frame, then yield.
     // This prevents the xterm.write() callback chain from monopolizing
@@ -868,7 +1242,10 @@ export class TerminalInstance {
 
     const processNext = () => {
       if (!this.xterm || this._writeQueue.length === 0 || processed >= SYNC_BATCH_LIMIT) {
-        if (wasAtBottom && this.xterm) {
+        // Read _writePinnedToBottom fresh here, not at batch entry. A
+        // wheel-up mid-batch flips the flag to false; using a batch-entry
+        // snapshot would override the user's scroll with scrollToBottom.
+        if (this._writePinnedToBottom && this.xterm) {
           this.xterm.scrollToBottom()
         }
         if (this._writeQueue.length > 0) {
@@ -883,11 +1260,42 @@ export class TerminalInstance {
       const chunk = this._writeQueue.shift()!
       // Split large writes to prevent UI thread blocking.
       // A single xterm.write() with hundreds of KB synchronously blocks rendering.
-      if (chunk.length > MAX_CHUNK) {
-        this._writeQueue.unshift(chunk.slice(MAX_CHUNK))
-        this.xterm.write(chunk.slice(0, MAX_CHUNK), () => processNext())
-      } else {
-        this.xterm.write(chunk, () => processNext())
+      // Wrap in try/catch: xterm.write() can throw synchronously (e.g. its
+      // WriteBuffer "data discarded" above the 50MB watermark). Without this,
+      // the callback never fires, _writing stays true, and the write pump is
+      // stranded permanently - all subsequent output (including key echo)
+      // queues forever and the terminal appears dead until a full page reload.
+      let advanced = false
+      const advance = () => {
+        if (advanced) return
+        advanced = true
+        if (this._writeWatchdog) {
+          clearTimeout(this._writeWatchdog)
+          this._writeWatchdog = null
+        }
+        processNext()
+      }
+      // Watchdog: xterm.write() can silently drop the callback (no throw,
+      // no invocation) when resize interleaves with a pending write under
+      // high output. Without this, _writing stays true and the pump is dead.
+      // 1s is well above any legitimate write latency but short enough that
+      // users don't notice the stall before recovery.
+      this._writeWatchdog = setTimeout(() => {
+        this._writeWatchdog = null
+        this._writeWatchdogFires++
+        console.warn(`[dinotty] write pump watchdog fired (${this._writeWatchdogFires}); xterm.write callback lost, force-advancing`)
+        advance()
+      }, 1000)
+      try {
+        if (chunk.length > MAX_CHUNK) {
+          this._writeQueue.unshift(chunk.slice(MAX_CHUNK))
+          this.xterm.write(chunk.slice(0, MAX_CHUNK), advance)
+        } else {
+          this.xterm.write(chunk, advance)
+        }
+      } catch (e) {
+        console.error('[dinotty] xterm.write threw:', e)
+        advance()
       }
     }
 
@@ -993,6 +1401,11 @@ export class TerminalInstance {
   }
 
   private _sendResize(cols: number, rows: number): boolean {
+    // Suppress during the snapshot window: the server's
+    // atomic_resize_and_snapshot does the PTY resize in lockstep with the
+    // snapshot encode. A client resize here would race it and re-introduce
+    // the refresh-misalign the handshake is meant to fix.
+    if (this._snapshotPending) return false
     const resizeMsg: ClientMsg = { type: 'resize', cols, rows }
     if (this._transport) {
       if (!this._transportConnected) return false
@@ -1004,6 +1417,12 @@ export class TerminalInstance {
     }
     this._lastSentCols = cols
     this._lastSentRows = rows
+    // Cooldown: suppress the post-peer-follow reclaim send for a few
+    // seconds so two clients with different stable sizes don't ping-pong
+    // the PTY size back and forth. Only the follower (who didn't recently
+    // initiate) reclaims; the initiator stays quiet and keeps the peer's
+    // size until the user actively resizes.
+    this._resizeCooldownUntil = Date.now() + 3000
     return true
   }
 
@@ -1020,10 +1439,6 @@ export class TerminalInstance {
       cancelAnimationFrame(this._refitRaf)
       this._refitRaf = 0
     }
-    if (this._resizeDebounce) {
-      clearTimeout(this._resizeDebounce)
-      this._resizeDebounce = 0
-    }
     for (const h of this._settleTimeouts) clearTimeout(h)
     this._settleTimeouts = []
     if (this._settleRaf) {
@@ -1039,7 +1454,10 @@ export class TerminalInstance {
     const heightChanged = rows !== this._lastRows
     this._lastCols = cols
     this._lastRows = rows
-    if (heightChanged && !this.isMouseModeEnabled()) this.xterm.scrollToBottom()
+    if (heightChanged && !this.isMouseModeEnabled()) {
+      this.xterm.scrollToBottom()
+      this._writePinnedToBottom = true
+    }
     const gen = ++this._peerFollowGen
     this._followingPeer = true
     this._pendingLocalRefit = false
@@ -1054,10 +1472,15 @@ export class TerminalInstance {
       this._peerFollowTimer = null
       if (this._destroyed || gen !== this._peerFollowGen) return
       this._followingPeer = false
-      if (this._pendingLocalRefit) {
-        this._pendingLocalRefit = false
-        this._doFitAndResize(true)
-      }
+      this._pendingLocalRefit = false
+      // Refit to local wrapper and reclaim the PTY size - unless we
+      // recently initiated a resize ourselves (cooldown). Without the
+      // cooldown, two clients with different stable sizes ping-pong the
+      // PTY every 500ms: A sends -> B follows -> B reclaims -> A follows
+      // -> A reclaims -> repeat. The initiator (who just sent) stays
+      // quiet; the follower reclaims so its display matches the PTY.
+      if (Date.now() < this._resizeCooldownUntil) return
+      this._settleRefit()
     }, 500) as unknown as ReturnType<typeof setTimeout>
   }
 
@@ -1067,8 +1490,20 @@ export class TerminalInstance {
       return null
     }
     if (this._destroyed || !this.fitAddon || !this.xterm || !this._wrapper) return null
+    // Skip settling during a sync/replay transaction — buffered Output is
+    // encoded at the current xterm geometry and a mid-transaction fit would
+    // shift geometry under it. sync_end / replay_end re-arms the ladder.
+    if (this._transactionDepth > 0) return null
     const rect = this._wrapper.getBoundingClientRect()
-    if (rect.width === 0 || rect.height === 0) return null
+    if (rect.width === 0 || rect.height === 0) {
+      // Flex chain collapsed (cold reload, hidden tab, mobile keyboard).
+      // settle-ladder samples 0×0 at every tick and gives up after 700ms;
+      // poll until the wrapper recovers so we don't strand the terminal at
+      // blank until an external reflow (drag/refresh).
+      this._scheduleZeroSizeRetry()
+      return null
+    }
+    this._clearZeroSizeRetry()
     try {
       this.fitAddon.fit()
     } catch {
@@ -1082,12 +1517,9 @@ export class TerminalInstance {
     this._lastRows = rows
     if (heightChanged && !this.isMouseModeEnabled()) {
       this.xterm.scrollToBottom()
+      this._writePinnedToBottom = true
     }
     if (cols !== this._lastSentCols || rows !== this._lastSentRows) {
-      if (this._resizeDebounce) {
-        clearTimeout(this._resizeDebounce)
-        this._resizeDebounce = 0
-      }
       this._sendResize(cols, rows)
     }
     return { cols, rows }
@@ -1112,14 +1544,53 @@ export class TerminalInstance {
     }
   }
 
+  // Schedule a zero-size retry. Called when _doFitAndResize or _settleRefit
+  // see rect.width === 0 || rect.height === 0. The retry goes through
+  // _refit → _doFitAndResize, so it reuses the existing dedup rAF path
+  // and cancels itself once the wrapper becomes non-zero.
+  private _scheduleZeroSizeRetry() {
+    if (this._zeroSizeRetryTimer) return
+    if (this._zeroSizeRetries >= TerminalInstance.ZERO_SIZE_MAX_RETRIES) {
+      console.warn(
+        `[dinotty] terminal wrapper still 0×0 after ${this._zeroSizeRetries} retries (~${Math.round(this._zeroSizeRetries * TerminalInstance.ZERO_SIZE_RETRY_MS / 1000)}s); giving up, will recover on next ResizeObserver event`
+      )
+      this._zeroSizeRetries = 0
+      return
+    }
+    this._zeroSizeRetries++
+    this._zeroSizeRetryTimer = setTimeout(() => {
+      this._zeroSizeRetryTimer = null
+      if (this._destroyed) return
+      this._refit()
+    }, TerminalInstance.ZERO_SIZE_RETRY_MS) as unknown as ReturnType<typeof setTimeout>
+  }
+
+  private _clearZeroSizeRetry() {
+    if (this._zeroSizeRetryTimer) {
+      clearTimeout(this._zeroSizeRetryTimer)
+      this._zeroSizeRetryTimer = null
+    }
+    this._zeroSizeRetries = 0
+  }
+
   private _doFitAndResize(force = false) {
     if (this._followingPeer) {
       if (this._wrapperChanged()) this._pendingLocalRefit = true
       return
     }
     if (!this.fitAddon || !this.xterm || !this._wrapper) return
+    // Skip fitting during a sync/replay transaction: the buffered Output
+    // was encoded at the current xterm geometry, and a mid-transaction fit
+    // would change geometry out from under it. sync_end / replay_end will
+    // re-arm the settle-ladder so the wrapper's post-transaction size is
+    // applied as soon as the transaction closes.
+    if (this._transactionDepth > 0) return
     const rect = this._wrapper.getBoundingClientRect()
-    if (rect.width === 0 || rect.height === 0) return
+    if (rect.width === 0 || rect.height === 0) {
+      this._scheduleZeroSizeRetry()
+      return
+    }
+    this._clearZeroSizeRetry()
     try {
       this.fitAddon.fit()
     } catch {
@@ -1135,15 +1606,22 @@ export class TerminalInstance {
     this._lastRows = rows
     if (heightChanged && !this.isMouseModeEnabled()) {
       this.xterm.scrollToBottom()
+      this._writePinnedToBottom = true
     }
     if (force) {
       this._sendResize(cols, rows)
     } else {
-      if (this._resizeDebounce) clearTimeout(this._resizeDebounce)
-      this._resizeDebounce = window.setTimeout(() => {
-        this._resizeDebounce = 0
-        this._sendResize(cols, rows)
-      }, 25)
+      // No frontend debounce: rAF coalesces frame-rate (in _refit), the
+      // _lastSentCols/Rows dedup guards no-op frames, and the server's 25ms
+      // debounce is the single wire-rate throttle. Stacking a frontend
+      // debounce on top added latency without further compression.
+      this._sendResize(cols, rows)
+    }
+    // If we owe the server a snapshot_request (Reconnected arrived while the
+    // wrapper was 0×0), fire it now that the wrapper has recovered. Idempotent
+    // — bails if already sent or if we're between replay_begin and replay_end.
+    if (this._snapshotPending) {
+      this._maybeSendSnapshotRequest()
     }
   }
 
@@ -1338,6 +1816,28 @@ export class TerminalInstance {
     this.xterm?.attachCustomWheelEventHandler((e: WheelEvent): boolean => {
       if (this._wheelBypass) return true
       if (!this.xterm) return true
+
+      // Track user scroll intent to maintain the cross-batch viewport pin.
+      // macOS trackpad inertia produces sub-pixel deltaY<0 events that set
+      // xterm's isUserScrolling=true; without this filter, a single inertia
+      // event between rAF-yielded write batches would un-pin and drop the
+      // viewport above ybase mid-stream.
+      if (e.deltaY < 0) {
+        if (this._wheelUpResetTimer) clearTimeout(this._wheelUpResetTimer)
+        this._wheelUpAccumulated += Math.abs(e.deltaY)
+        if (this._wheelUpAccumulated > 8) {
+          this._writePinnedToBottom = false
+        }
+        this._wheelUpResetTimer = setTimeout(() => {
+          this._wheelUpAccumulated = 0
+          this._wheelUpResetTimer = null
+        }, 500)
+      } else if (e.deltaY > 0) {
+        this._wheelUpAccumulated = 0
+        if (this._isAtBottom()) {
+          this._writePinnedToBottom = true
+        }
+      }
 
       const now = Date.now()
       const elapsed = now - this._lastWheelTime

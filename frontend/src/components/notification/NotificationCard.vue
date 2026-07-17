@@ -1,5 +1,9 @@
 <template>
-  <div class="notification-card" :class="[`type-${type}`]" @click="$emit('goto')">
+  <div
+    class="notification-card"
+    :class="[`type-${type}`, { 'no-pane': !paneLabel }]"
+    @click="onCardClick"
+  >
     <div class="card-stripe"></div>
     <div class="card-content">
       <div class="card-header">
@@ -11,6 +15,7 @@
       </div>
       <div v-if="title && body" class="card-body">{{ body }}</div>
       <div class="card-footer">
+        <span v-if="source === 'plugin'" class="card-source">Plugin</span>
         <span v-if="paneLabel" class="card-pane">{{ paneLabel }}</span>
         <span class="card-time">{{ formattedTime }}</span>
       </div>
@@ -29,9 +34,16 @@ const props = defineProps<{
   body: string
   timestamp: number
   paneLabel?: string
+  source?: 'terminal' | 'plugin'
 }>()
 
-defineEmits<{ dismiss: []; goto: [] }>()
+const emit = defineEmits<{ dismiss: []; goto: [] }>()
+
+function onCardClick() {
+  if (props.paneLabel) {
+    emit('goto')
+  }
+}
 
 const formattedTime = computed(() => {
   const d = new Date(props.timestamp)
@@ -51,6 +63,9 @@ const formattedTime = computed(() => {
 }
 .notification-card:hover {
   background: var(--tab-hover-bg, #2a2a3e);
+}
+.notification-card.no-pane {
+  cursor: default;
 }
 .card-stripe {
   width: 3px;
@@ -148,5 +163,15 @@ const formattedTime = computed(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 60%;
+}
+.card-source {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--bg-hover, #333);
+  color: var(--fg-muted, #888);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
 }
 </style>

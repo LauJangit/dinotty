@@ -26,6 +26,11 @@
         <div class="mc-card-header">
           <span class="mc-card-index">{{ card.index }}</span>
           <span class="mc-card-title">{{ card.title }}</span>
+          <span
+            v-if="indicators[card.paneId]"
+            class="mc-notif-dot"
+            :class="'dot-' + indicators[card.paneId]"
+          ></span>
           <button
             class="mc-card-close"
             :aria-label="`Close ${card.title}`"
@@ -140,8 +145,9 @@ const props = withDefaults(
     activePaneId: string | null
     embedded?: boolean
     switchDirection?: 'left' | 'right'
+    indicators?: Record<string, string>
   }>(),
-  { embedded: false, switchDirection: 'right' },
+  { embedded: false, switchDirection: 'right', indicators: () => ({}) },
 )
 
 // Key for AnimatePresence — changes when workspace switches, not when individual tabs change

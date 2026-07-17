@@ -8,7 +8,7 @@
     <TabBar
       :tabs="visibleTabList"
       :active-pane-id="activePaneId"
-      :indicators="notif.unreadByPane"
+      :indicators="tabIndicators"
       :plugins="pluginList"
       :can-broadcast="canBroadcast"
       :broadcast-active="isBroadcastActive"
@@ -219,6 +219,7 @@
       :visible="overviewOpen"
       :active-pane-id="activePaneId"
       :term-refs="termRefs"
+      :indicators="tabIndicators"
       @close="overviewOpen = false"
       @activate="onOverviewActivate"
       @close-tab="onOverviewCloseTab"
@@ -280,7 +281,8 @@ import { isWebPreviewInput } from './utils/previewRouting'
 import { isWindowsClient } from './utils/clientPlatform'
 import { initMonitorHistory } from './composables/useMonitor'
 import NotificationPanel from './components/notification/NotificationPanel.vue'
-import { useNotification } from './composables/useNotification'
+import { useToast } from 'vue-toastification'
+import { useNotification, pushNotification, setToastInstance, aggregateSeverity } from './composables/useNotification'
 import { usePluginLoader } from './composables/usePluginLoader'
 import PluginView from './components/plugin/PluginView.vue'
 import {
@@ -339,6 +341,7 @@ const sshAuthPrompts = ref<Array<{ prompt: string; echo: boolean }>>([])
 const { t } = useI18n()
 const { getBinding, formatBinding } = useKeybindings()
 const notif = useNotification()
+setToastInstance(useToast())
 const { loadedPlugins, loadAll, getPluginContext, pluginList, allCommands } = usePluginLoader()
 const { isMobile } = useIsMobile()
 
@@ -364,6 +367,19 @@ const visibleTabList = computed(() => {
   })
   // Reindex: workspace-relative 1-based indices
   return list.map((t, i) => ({ ...t, index: i + 1 }))
+})
+
+/** Aggregated per-tab unread notification severity (rolls up all leaves of a split tab). */
+const tabIndicators = computed(() => {
+  const result: Record<string, string> = {}
+  for (const tab of tabs.value) {
+    const paneIds = tab.type === 'terminal'
+      ? [tab.paneId, ...getAllLeaves(tab.layout).map((l) => l.paneId)]
+      : [tab.paneId]
+    const sev = aggregateSeverity(paneIds)
+    if (sev) result[tab.paneId] = sev
+  }
+  return result
 })
 
 /** Enriched pane labels with workspace and tab context for notifications */
@@ -506,20 +522,15 @@ watch(
 )
 watch(
   () => {
-    const tab = tabs.value.find((t) => t.paneId === activePaneId.value)
-    if (!tab) return 'Terminal'
-    if (tab.type === 'terminal') {
-      return findLeaf(tab.layout, tab.activePaneId)?.title ?? 'Terminal'
-    }
-    return tab.title
+    return activeWorkspaceName.value ?? 'dinotty'
   },
-  (title) => {
-    const wsName = activeWorkspaceName.value
-    const fullTitle = wsName ? `${wsName} - ${title || 'Terminal'}` : (title || 'Terminal')
-    document.title = fullTitle
+  (wsName) => {
+    document.title = wsName
     if (isTauri()) {
-      const tauriWindow = (window as any).__TAURI__?.window?.getCurrentWindow?.()
-      tauriWindow?.setTitle?.(fullTitle)
+      tauriInvoke('set_window_title', { title: wsName }).catch(() => {
+        const tauriWindow = (window as any).__TAURI__?.window?.getCurrentWindow?.()
+        tauriWindow?.setTitle?.(wsName)
+      })
     }
   },
   { immediate: true }
@@ -768,11 +779,14 @@ async function activateTab(tabId: string) {
   }
 
   activePaneId.value = tab.paneId
+
+  // Clear notifications for this tab on activation (terminal: tab-level + all leaves; plugin: tab-level)
+  const activatedPaneIds = tab.type === 'terminal'
+    ? [tab.paneId, ...getAllLeaves(tab.layout).map((l) => l.paneId)]
+    : [tab.paneId]
+  notif.clearForPaneIds(activatedPaneIds)
+
   if (tab.type === 'terminal') {
-    // Clear unread for all leaves in this tab
-    for (const leaf of getAllLeaves(tab.layout)) {
-      notif.clearPaneUnread(leaf.paneId)
-    }
     try {
       await apiActivatePane(tab.paneId, tab.activePaneId)
     } catch (e) {
@@ -856,6 +870,12 @@ async function closeTab(tabId: string) {
   const tab = tabs.value.find((t) => t.paneId === tabId)
   if (!tab) return
 
+  // Clean up notifications associated with this tab (tab-level + all leaves)
+  const closedPaneIds = tab.type === 'terminal'
+    ? [tab.paneId, ...getAllLeaves(tab.layout).map((l) => l.paneId)]
+    : [tab.paneId]
+  notif.clearForPaneIds(closedPaneIds)
+
   // Invalidate plugin preview cache when closing a plugin tab
   if (tab.type === 'plugin') {
     invalidatePluginPreview(tab.paneId)
@@ -902,6 +922,13 @@ function focusActive() {
   if (!tab) return
   if (tab.type === 'terminal') {
     const paneId = tab.activePaneId
+    // Defer focus/blur/fit if ANY pane in this tab is mid-IME-composition.
+    // Calling .blur()/.focus()/.fit() during composition aborts the IME
+    // session and causes xterm's diff-fallback to leak preedit text as
+    // raw input (P3).
+    for (const leaf of getAllLeaves(tab.layout)) {
+      if (termRefs[leaf.paneId]?.isComposing()) return
+    }
     if (!(isTouchDevice() && kbVisible.value)) {
       // Blur all other panes first to prevent duplicate input in Tauri WKWebView
       for (const leaf of getAllLeaves(tab.layout)) {
@@ -1215,10 +1242,21 @@ window.__dinotty_terminal_api = {
     return tab?.type === 'terminal' ? tab.activePaneId : ''
   },
 }
-window.__dinotty_ui_notify = (message: string, level?: 'info' | 'warn' | 'error') => {
-  // Use notification system or console
-  if (level === 'error') console.error('[plugin]', message)
-  else console.log('[plugin]', message)
+// Test hooks for P3 verification (focusActive + isComposing guard).
+window.__dinotty_test_focus_active = focusActive
+window.__dinotty_test_is_composing = (paneId: string) => termRefs[paneId]?.isComposing() ?? false
+window.__dinotty_ui_notify = (
+  message: string,
+  level?: 'info' | 'warn' | 'error',
+  title?: string
+) => {
+  const type = level === 'error' ? 'error' : level === 'warn' ? 'warning' : 'info'
+  pushNotification({
+    type,
+    title: title ?? 'Plugin',
+    body: message,
+    source: 'plugin',
+  })
 }
 window.__dinotty_ui_confirm = (message: string) => uiConfirm(message)
 window.__dinotty_open_plugin = openPlugin
@@ -1366,6 +1404,9 @@ function onGlobalKeydown(e: KeyboardEvent) {
     const binding = getBinding(id)
     if (keyEventMatchesBinding(e, binding)) {
       e.preventDefault()
+      if (id === 'closeTab') {
+        lastTabCloseShortcutAt = Date.now()
+      }
       action()
       return
     }
@@ -1419,12 +1460,20 @@ const _focusHandler = () => {
 }
 
 // Tauri window close confirmation
+// On macOS, Cmd+W is bound to the native "Close" menu item and fires CloseRequested
+// in addition to the JS keydown handler. Track when the tab-close shortcut fires so
+// the window-close-requested listener can suppress the app-exit path — Cmd+W should
+// close the tab, not quit the app.
+let lastTabCloseShortcutAt = 0
 let unlistenWindowClose: (() => void) | undefined
 function setupTauriWindowClose() {
   if (!isTauri()) return
   const listen = (window as any).__TAURI__?.event?.listen
   if (!listen) return
   listen('window-close-requested', () => {
+    if (Date.now() - lastTabCloseShortcutAt < 500) {
+      return
+    }
     if (appSettings.confirm_before_close_tab && tabs.value.some((t) => t.type === 'terminal')) {
       windowCloseConfirmVisible.value = true
     } else {

@@ -44,6 +44,7 @@
             :cards="filteredCards"
             :active-pane-id="activePaneId"
             :switch-direction="switchDirection"
+            :indicators="indicators"
             :embedded="true"
             @activate="(id: string) => $emit('activate', id)"
             @close-tab="(id: string) => $emit('close-tab', id)"
@@ -76,7 +77,6 @@ import { useWorkspaces } from '../../composables/useWorkspaces'
 import { useI18n } from '../../composables/useI18n'
 import { uiConfirm } from '../../composables/useConfirm'
 import { useSessionStore } from '../../stores/sessionStore'
-import { useNotification } from '../../composables/useNotification'
 import { useTabPreview, type TabCard } from '../../composables/useTabPreview'
 import { getAllLeaves } from '../../types/pane'
 import type { Workspace } from '../../types/workspace'
@@ -90,6 +90,7 @@ const props = defineProps<{
   visible: boolean
   activePaneId: string | null
   termRefs: Record<string, InstanceType<typeof TerminalPane>>
+  indicators?: Record<string, string>
 }>()
 
 const emit = defineEmits<{
@@ -104,7 +105,6 @@ const emit = defineEmits<{
 const { workspaces, activeWorkspaceId, matchWorkspace, deleteWorkspace, activateWorkspace } = useWorkspaces()
 const { t } = useI18n()
 const session = useSessionStore()
-const notif = useNotification()
 const tabPreview = useTabPreview()
 
 const closing = ref(false)
@@ -134,7 +134,7 @@ watch(
       // Defer capture so the overlay animation starts without blocking
       setTimeout(() => {
         if (props.visible) {
-          allCards.value = tabPreview.captureAll(session.tabs, props.termRefs, notif.unreadByPane)
+          allCards.value = tabPreview.captureAll(session.tabs, props.termRefs)
         }
       }, 0)
     } else {
@@ -151,7 +151,7 @@ watch(
     if (!props.visible) return
     clearTimeout(tabChangeTimer)
     tabChangeTimer = window.setTimeout(() => {
-      allCards.value = tabPreview.captureAll(session.tabs, props.termRefs, notif.unreadByPane)
+          allCards.value = tabPreview.captureAll(session.tabs, props.termRefs)
     }, 100)
   },
 )

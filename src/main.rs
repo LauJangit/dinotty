@@ -19,7 +19,6 @@ use std::fs;
 use std::net::SocketAddr;
 
 use std::sync::Arc;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::auth::session::SessionStore;
 use crate::file_watcher::FileWatcherState;
@@ -638,63 +637,7 @@ async fn update_token(
 
 #[tokio::main]
 async fn main() {
-    // Load settings first to check log config
-    let initial_settings = settings::load_settings();
-
-    // Setup file logging if enabled
-    let _guard = if initial_settings.log.enabled {
-        let log_path = if initial_settings.log.path.is_empty() {
-            let dir = settings::log_dir();
-            std::fs::create_dir_all(&dir).expect("failed to create log directory");
-            settings::log_file_path()
-        } else {
-            let path = std::path::PathBuf::from(&initial_settings.log.path);
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).expect("failed to create log directory");
-            }
-            path
-        };
-
-        // Rotate if log exceeds max size
-        let max_bytes = initial_settings.log.max_size_mb * 1024 * 1024;
-        if log_path.exists() {
-            if let Ok(metadata) = std::fs::metadata(&log_path) {
-                if metadata.len() > max_bytes {
-                    let backup_path = log_path.with_extension("log.1");
-                    let _ = std::fs::rename(&log_path, &backup_path);
-                }
-            }
-        }
-
-        // Use OpenOptions with append to respect exact log_path (including custom paths)
-        let file = std::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(&log_path)
-            .expect("failed to create log file");
-
-        let (non_blocking, guard) = tracing_appender::non_blocking(file);
-
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::EnvFilter::new(
-                std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into()),
-            ))
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(tracing_subscriber::fmt::layer().with_writer(non_blocking))
-            .init();
-
-        tracing::info!("File logging enabled: {:?}", log_path);
-        Some(guard)
-    } else {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::EnvFilter::new(
-                std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into()),
-            ))
-            .with(tracing_subscriber::fmt::layer())
-            .init();
-
-        None
-    };
+    let _guard = settings::init_logging();
 
     let port = parse_port();
     let manager = Arc::new(SessionManager::new());
@@ -762,7 +705,7 @@ async fn main() {
     let mcp_sse = Arc::new(mcp::transport::SseState::new());
     let workspaces_state = workspace_mgmt::create_workspaces_state();
 
-    let session_ttl_days = initial_settings.auth.session_ttl_days;
+    let session_ttl_days = settings::load_settings().auth.session_ttl_days;
     let sessions = Arc::new(SessionStore::new(session_ttl_days));
     sessions.clone().start_cleanup_task();
 
@@ -788,6 +731,7 @@ async fn main() {
     };
 
     state.plugins.watch_changes(state.manager.clone());
+    let notify_manager = state.manager.clone();
 
     let app =
         Router::new()
@@ -971,5 +915,6 @@ async fn main() {
     tracing::info!("Listening on http://0.0.0.0:{}", port);
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    notify_manager.set_notify_port(listener.local_addr().expect("bound listener").port());
     axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await.unwrap();
 }

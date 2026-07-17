@@ -1,5 +1,5 @@
 import { ref, shallowReactive, computed, h, watch } from 'vue'
-import { useToast, TYPE } from 'vue-toastification'
+import { TYPE } from 'vue-toastification'
 import { getApiBase, wsUrlWithToken } from './apiBase'
 import { isTauri } from './useTransport'
 import { settings } from './useSettings'
@@ -82,10 +82,11 @@ export function getBuiltinSoundNames(): string[] {
 export interface NotificationItem {
   id: string
   type: NotificationType
-  paneId: string
+  paneId?: string
   title: string | null
   body: string
   timestamp: number
+  source?: 'terminal' | 'plugin'
 }
 
 const notifications = ref<NotificationItem[]>([])
@@ -111,6 +112,23 @@ function severityRank(t: NotificationType): number {
     urgent: 4,
   }
   return ranks[t] ?? 0
+}
+
+/** Returns the highest severity among the given paneIds, or null if none unread. */
+export function aggregateSeverity(paneIds: string[]): NotificationType | null {
+  let highest: NotificationType | null = null
+  let highestRank = -1
+  for (const pid of paneIds) {
+    const sev = unreadByPane[pid]
+    if (sev) {
+      const r = severityRank(sev)
+      if (r > highestRank) {
+        highest = sev
+        highestRank = r
+      }
+    }
+  }
+  return highest
 }
 
 function getNotifConfig() {
@@ -150,6 +168,7 @@ function handleEvent(event: {
     title,
     body,
     timestamp: Date.now(),
+    source: 'terminal',
   }
   notifications.value.unshift(item)
   if (notifications.value.length > 100) {
@@ -179,12 +198,68 @@ function handleEvent(event: {
   }
 }
 
+// Direct push for non-terminal sources (e.g. plugins). Bypasses bell/osc_notify
+// sub-switches; still respects the master `enabled` switch, sound and vibration
+// channels. Toast is always shown (not gated by `panel` channel, which is meant
+// for terminal bell/OSC events) - plugin notify() is an explicit user-facing call.
+export function pushNotification(opts: {
+  type: NotificationType
+  title?: string | null
+  body: string
+  source?: 'terminal' | 'plugin'
+  paneId?: string
+}) {
+  const cfg = getNotifConfig()
+  if (!cfg || !cfg.enabled) return
+
+  const item: NotificationItem = {
+    id: genId(),
+    type: opts.type,
+    paneId: opts.paneId,
+    title: opts.title ?? null,
+    body: opts.body,
+    timestamp: Date.now(),
+    source: opts.source ?? 'terminal',
+  }
+  notifications.value.unshift(item)
+  if (notifications.value.length > 100) {
+    notifications.value.length = 100
+  }
+
+  if (item.paneId) {
+    const current = unreadByPane[item.paneId]
+    if (!current || severityRank(item.type) > severityRank(current)) {
+      unreadByPane[item.paneId] = item.type
+    }
+  }
+
+  if (cfg.channels?.sound) {
+    const soundCfg: SoundConfig | undefined = cfg.sounds?.[item.type]
+    if (soundCfg) playSound(soundCfg)
+  }
+
+  if (cfg.channels?.vibration && navigator.vibrate) {
+    navigator.vibrate(item.type === 'urgent' ? [100, 50, 100, 50, 100] : [100])
+  }
+
+  showToast(item)
+}
+
 const toastTypeMap: Record<NotificationType, any> = {
   info: TYPE.INFO,
   success: TYPE.SUCCESS,
   warning: TYPE.WARNING,
   error: TYPE.ERROR,
   urgent: TYPE.ERROR,
+}
+
+// Toast instance must be captured from a component setup context (App.vue) and
+// injected here - vue-toastification v2's useToast() called outside component
+// context returns an interface that doesn't reach the mounted container reliably.
+let toastInstance: ((content: any, options?: any) => void) | null = null
+
+export function setToastInstance(toast: (content: any, options?: any) => void) {
+  toastInstance = toast
 }
 
 let goToHandler: ((paneId: string) => void) | null = null
@@ -194,25 +269,31 @@ export function setGoToPaneHandler(handler: (paneId: string) => void) {
 }
 
 function showToast(item: NotificationItem) {
-  const toast = useToast()
+  if (!toastInstance) {
+    console.warn('[notification] toast instance not set; call setToastInstance() from App.vue setup')
+    return
+  }
   const { t } = useI18n()
+  const paneId = item.paneId
   const children = [
     item.title ? h('strong', { class: 'notif-toast-title' }, item.title) : null,
     h('span', { class: 'notif-toast-body' }, item.body),
-    h(
-      'button',
-      {
-        class: 'notif-toast-btn',
-        onClick: () => {
-          if (goToHandler) {
-            goToHandler(item.paneId)
-          } else {
-            panelVisible.value = true
-          }
-        },
-      },
-      t('notification.goTo')
-    ),
+    paneId
+      ? h(
+          'button',
+          {
+            class: 'notif-toast-btn',
+            onClick: () => {
+              if (goToHandler) {
+                goToHandler(paneId)
+              } else {
+                panelVisible.value = true
+              }
+            },
+          },
+          t('notification.goTo')
+        )
+      : null,
     h(
       'button',
       {
@@ -225,7 +306,7 @@ function showToast(item: NotificationItem) {
     ),
   ].filter(Boolean)
   const content = h('div', { class: 'notif-toast-content' }, children)
-  toast(content, {
+  toastInstance(content, {
     type: toastTypeMap[item.type] ?? TYPE.INFO,
     timeout: item.type === 'urgent' ? 8000 : 5000,
   })
@@ -275,8 +356,9 @@ export function useNotification() {
     dismissOne(id: string) {
       const item = notifications.value.find((n) => n.id === id)
       notifications.value = notifications.value.filter((n) => n.id !== id)
-      if (item && !notifications.value.some((n) => n.paneId === item.paneId)) {
-        delete unreadByPane[item.paneId]
+      const paneId = item?.paneId
+      if (paneId && !notifications.value.some((n) => n.paneId === paneId)) {
+        delete unreadByPane[paneId]
       }
     },
     clearAll() {
@@ -286,6 +368,15 @@ export function useNotification() {
     },
     clearPaneUnread(paneId: string) {
       delete unreadByPane[paneId]
+    },
+    clearForPaneIds(paneIds: string[]) {
+      const idSet = new Set(paneIds)
+      notifications.value = notifications.value.filter(
+        (n) => !n.paneId || !idSet.has(n.paneId),
+      )
+      for (const pid of paneIds) {
+        delete unreadByPane[pid]
+      }
     },
     togglePanel() {
       panelVisible.value = !panelVisible.value

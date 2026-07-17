@@ -24,78 +24,154 @@ pub async fn broadcast_task(session: Arc<Session>, pane_id: String, manager: Arc
     let mut sync_started_at: Option<std::time::Instant> = None;
     let mut utf8_tail: Vec<u8> = Vec::new();
 
-    while let Some(first) = output_rx.recv().await {
-        if session.is_exited() {
-            break;
-        }
+    // Watchdog timer: force-flush the sync buffer if the PTY goes silent
+    // mid-sync-mode. Without this, the timeout check below only fires when
+    // output_rx.recv() returns a new message — a silent PTY (e.g. Claude
+    // Code waiting on an API response mid-redraw) leaves sync_active=true
+    // forever, buffering all subsequent output and freezing the client
+    // until a manual refresh. Polling every 100ms is cheap and well below
+    // the 500ms timeout threshold.
+    let mut sync_watch = tokio::time::interval(std::time::Duration::from_millis(100));
+    sync_watch.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // Discard the immediate first tick so we don't check before any PTY
+    // output has had a chance to arrive.
+    let _ = sync_watch.tick().await;
 
-        let mut batch = first;
-        while let Ok(data) = output_rx.try_recv() {
-            batch.extend_from_slice(&data);
-        }
+    loop {
+        tokio::select! {
+            msg = output_rx.recv() => {
+                let Some(first) = msg else { break };
+                if session.is_exited() {
+                    break;
+                }
 
-        if session.sync_active.load(std::sync::atomic::Ordering::Relaxed) {
-            if let Some(started) = sync_started_at {
-                if started.elapsed() > sync_timeout {
-                    tracing::warn!(
-                        "Sync mode timeout ({}ms), force-flushing, pane={}",
-                        started.elapsed().as_millis(),
-                        pane_id
-                    );
-                    session.set_sync_mode(false);
+                let mut batch = first;
+                while let Ok(data) = output_rx.try_recv() {
+                    batch.extend_from_slice(&data);
+                }
+
+                if session.sync_active.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Some(started) = sync_started_at {
+                        if started.elapsed() > sync_timeout {
+                            tracing::warn!(
+                                "Sync mode timeout ({}ms), force-flushing, pane={}",
+                                started.elapsed().as_millis(),
+                                pane_id
+                            );
+                            session.set_sync_mode(false);
+                            sync_started_at = None;
+                        }
+                    } else {
+                        sync_started_at = Some(std::time::Instant::now());
+                    }
+                } else {
                     sync_started_at = None;
                 }
-            } else {
-                sync_started_at = Some(std::time::Instant::now());
-            }
-        } else {
-            sync_started_at = None;
-        }
 
-        let results: Vec<crate::session::PendingCommandResult> = {
-            let mut pending =
-                session.pending_results.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            std::mem::take(&mut *pending)
-        };
-        for result in results {
-            manager.event_bus.publish(BusEvent::CommandFinished {
-                pane_id: pane_id.clone(),
-                command: String::new(),
-                exit_code: result.exit_code,
-                duration_ms: result.duration_ms,
-                stdout: result.stdout,
-                method: result.method.clone(),
-            });
-            manager.broadcast_sync(&SyncMsg::CommandFinished {
-                pane_id: pane_id.clone(),
-                command: String::new(),
-                exit_code: result.exit_code,
-                duration_ms: result.duration_ms,
-                stdout: String::new(),
-                method: result.method,
-            });
-        }
+                let results: Vec<crate::session::PendingCommandResult> = {
+                    let mut pending = session
+                        .pending_results
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    std::mem::take(&mut *pending)
+                };
+                for result in results {
+                    manager.event_bus.publish(BusEvent::CommandFinished {
+                        pane_id: pane_id.clone(),
+                        command: String::new(),
+                        exit_code: result.exit_code,
+                        duration_ms: result.duration_ms,
+                        stdout: result.stdout,
+                        method: result.method.clone(),
+                    });
+                    manager.broadcast_sync(&SyncMsg::CommandFinished {
+                        pane_id: pane_id.clone(),
+                        command: String::new(),
+                        exit_code: result.exit_code,
+                        duration_ms: result.duration_ms,
+                        stdout: String::new(),
+                        method: result.method,
+                    });
+                }
 
-        utf8_tail.extend_from_slice(&batch);
-        let valid_up_to = match std::str::from_utf8(&utf8_tail) {
-            Ok(s) => {
-                session.broadcast(s);
-                utf8_tail.clear();
-                continue;
+                utf8_tail.extend_from_slice(&batch);
+                let valid_up_to = match std::str::from_utf8(&utf8_tail) {
+                    Ok(s) => {
+                        session.broadcast(s);
+                        utf8_tail.clear();
+                        continue;
+                    }
+                    Err(e) => e.valid_up_to(),
+                };
+                if valid_up_to > 0 {
+                    let s = unsafe { std::str::from_utf8_unchecked(&utf8_tail[..valid_up_to]) };
+                    session.broadcast(s);
+                }
+                utf8_tail.drain(..valid_up_to);
+                if utf8_tail.len() > 3 {
+                    session.broadcast("\u{FFFD}");
+                    utf8_tail.clear();
+                }
             }
-            Err(e) => e.valid_up_to(),
-        };
-        if valid_up_to > 0 {
-            let s = unsafe { std::str::from_utf8_unchecked(&utf8_tail[..valid_up_to]) };
-            session.broadcast(s);
-        }
-        utf8_tail.drain(..valid_up_to);
-        if utf8_tail.len() > 3 {
-            session.broadcast("\u{FFFD}");
-            utf8_tail.clear();
+            _ = sync_watch.tick() => {
+                if session.is_exited() {
+                    break;
+                }
+                // PTY-silent watchdog: if sync mode is still active past the
+                // timeout with no new output, force-flush so the client
+                // unblocks. This is the path that was missing before.
+                if session.sync_active.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Some(started) = sync_started_at {
+                        if started.elapsed() > sync_timeout {
+                            tracing::warn!(
+                                "Sync mode timeout ({}ms, PTY silent), force-flushing, pane={}",
+                                started.elapsed().as_millis(),
+                                pane_id
+                            );
+                            session.set_sync_mode(false);
+                            sync_started_at = None;
+                        }
+                    }
+                } else {
+                    sync_started_at = None;
+                }
+            }
         }
     }
     info!("Broadcast task exited, pane={}", pane_id);
+}
+
+fn cleanup_exited_pty_session(
+    session: &Arc<Session>,
+    pane_id: &str,
+    manager: &Arc<SessionManager>,
+    exit_code: Option<i32>,
+) {
+    if !session.notify_exit_and_mark_exited(pane_id) {
+        return;
+    }
+
+    session.input_tx.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
+    let _ = session.output_tx.send(Vec::new());
+
+    if manager.sessions.remove(pane_id).is_some() {
+        manager
+            .event_bus
+            .publish(BusEvent::SessionClosed { pane_id: pane_id.to_string(), exit_code });
+        if let Some(tab_pane_id) = manager.on_pty_exited(pane_id) {
+            manager.broadcast_sync(&SyncMsg::TabClosed { pane_id: tab_pane_id });
+        }
+    }
+
+    if let Some(f) =
+        session.tauri_on_exit.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take()
+    {
+        f(pane_id.to_string());
+    }
+}
+
+fn notify_url_for(port: u16) -> Option<String> {
+    (port != 0).then(|| format!("http://127.0.0.1:{port}"))
 }
 
 /// Create a new PTY session and register it with the session manager.
@@ -121,11 +197,18 @@ pub fn create_session(
     let shell_spec = shell::default_shell();
     let shell_type = shell_spec.shell_type.clone();
     let mut cmd = CommandBuilder::new(&shell_spec.program);
+    for key in claude_session_env_keys_to_strip() {
+        cmd.env_remove(&key);
+    }
     for arg in &shell_spec.args {
         cmd.arg(arg);
     }
     cmd.env("TERM", "xterm-256color");
     cmd.env("DINOTTY_PANE_ID", pane_id);
+    cmd.env_remove("DINOTTY_URL");
+    if let Some(url) = notify_url_for(manager.notify_port()) {
+        cmd.env("DINOTTY_URL", url);
+    }
     if let Some(tid) = tab_id {
         cmd.env("DINOTTY_TAB_ID", tid);
     }
@@ -336,25 +419,68 @@ pub fn create_session(
             }
         }
         error!("PTY reader exiting, running cleanup, pane={}", reader_pane);
-        reader_session.notify_exit_and_mark_exited(&reader_pane);
-        if reader_manager.sessions.remove(&reader_pane).is_some() {
-            reader_manager
-                .event_bus
-                .publish(BusEvent::SessionClosed { pane_id: reader_pane.clone(), exit_code: None });
-            let tab_pane_id =
-                reader_manager.on_pty_exited(&reader_pane).unwrap_or_else(|| reader_pane.clone());
-            reader_manager.broadcast_sync(&SyncMsg::TabClosed { pane_id: tab_pane_id });
-        }
+        cleanup_exited_pty_session(&reader_session, &reader_pane, &reader_manager, None);
         info!("PTY exited, session removed: pane={}", reader_pane);
-        let cb = reader_session
-            .tauri_on_exit
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        if let Some(f) = cb {
-            f(reader_pane);
-        }
     });
+
+    // On Windows ConPTY may leave the reader blocked after the shell process
+    // exits. Poll the child handle so `exit` closes the tab even without EOF.
+    {
+        let watcher_session = Arc::clone(&session);
+        let watcher_manager = Arc::clone(manager);
+        let watcher_pane = pane_id.to_string();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_millis(200));
+            loop {
+                interval.tick().await;
+                if watcher_session.is_exited() {
+                    break;
+                }
+
+                let mut should_stop = false;
+                let status = {
+                    let mut backend = watcher_session.backend.lock().await;
+                    let status = match &mut *backend {
+                        SessionBackend::Local { child, .. } => {
+                            match child.try_wait() {
+                                Ok(Some(status)) => Some(status),
+                                Ok(None) => None,
+                                Err(e) => {
+                                    error!("PTY child watcher: try_wait failed: {e}, pane={watcher_pane}");
+                                    should_stop = true;
+                                    None
+                                }
+                            }
+                        }
+                        SessionBackend::Ssh | SessionBackend::Exited => {
+                            should_stop = true;
+                            None
+                        }
+                    };
+                    if status.is_some() {
+                        *backend = SessionBackend::Exited;
+                    }
+                    status
+                };
+
+                if let Some(status) = status {
+                    let exit_code = i32::try_from(status.exit_code()).ok();
+                    info!("PTY child exited: status={status:?}, pane={watcher_pane}");
+                    cleanup_exited_pty_session(
+                        &watcher_session,
+                        &watcher_pane,
+                        &watcher_manager,
+                        exit_code,
+                    );
+                    break;
+                }
+
+                if should_stop {
+                    break;
+                }
+            }
+        });
+    }
 
     // ── Broadcast task: forwards raw PTY data + handles commands ──
     // Reads raw PTY bytes from the output channel and broadcasts to clients
@@ -479,6 +605,24 @@ fn locale_adjustment(
     }
 }
 
+/// Env keys inherited from a parent Claude Code session that must NOT leak into
+/// the spawned terminal — otherwise an interactive `claude` inside the terminal
+/// treats itself as a child session and never persists its transcript.
+pub(crate) fn claude_session_env_keys_to_strip() -> Vec<String> {
+    std::env::vars_os()
+        .filter_map(|(k, _)| k.into_string().ok())
+        .filter(|k| is_claude_session_env_key(k))
+        .collect()
+}
+
+/// True if `key` is a Claude Code SESSION-scoped env var that must be stripped
+/// from spawned child processes (case-insensitive; generic CLAUDE_* like
+/// `CLAUDE_CONFIG_DIR` is preserved).
+fn is_claude_session_env_key(key: &str) -> bool {
+    let ku = key.to_ascii_uppercase();
+    ku.starts_with("CLAUDE_CODE_") || ku == "CLAUDECODE" || ku == "CLAUDE_SESSION_ID"
+}
+
 fn configure_utf8_locale(cmd: &mut CommandBuilder) {
     let lc_all = std::env::var("LC_ALL").ok();
     let lc_ctype = std::env::var("LC_CTYPE").ok();
@@ -511,7 +655,43 @@ pub fn get_shell_args(shell: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{locale_adjustment, LocaleAdjustment};
+    use super::{is_claude_session_env_key, locale_adjustment, notify_url_for, LocaleAdjustment};
+
+    #[test]
+    fn builds_notify_url_for_bound_port() {
+        assert_eq!(notify_url_for(8999), Some("http://127.0.0.1:8999".to_string()));
+        assert_eq!(notify_url_for(0), None);
+    }
+
+    #[test]
+    fn strips_claude_session_keys_case_insensitive() {
+        for k in [
+            "CLAUDE_CODE_CHILD_SESSION",
+            "claude_code_child_session",
+            "CLAUDECODE",
+            "claudecode",
+            "CLAUDE_SESSION_ID",
+            "Claude_Session_Id",
+            "CLAUDE_CODE_ENTRYPOINT",
+        ] {
+            assert!(is_claude_session_env_key(k), "should strip {k}");
+        }
+    }
+
+    #[test]
+    fn preserves_generic_and_dinotty_keys() {
+        for k in [
+            "CLAUDE_CONFIG_DIR",
+            "DINOTTY_PANE_ID",
+            "DINOTTY_TAB_ID",
+            "PATH",
+            "HOME",
+            "TERM",
+            "CLAUDECODEX",
+        ] {
+            assert!(!is_claude_session_env_key(k), "should preserve {k}");
+        }
+    }
 
     #[test]
     fn locale_defaults_to_utf8_ctype_when_environment_is_missing() {

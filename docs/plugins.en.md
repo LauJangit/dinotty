@@ -71,7 +71,7 @@ A plugin's JS entry exports an `activate(context)` function. The `context` objec
 | **Commands** | `commands.register(id, handler)` | Register a command palette command, returns `Disposable` |
 | **CLI exec** | `exec.run(args, options?)` | Run the plugin's CLI binary synchronously (`{code, stdout, stderr}`) |
 | | `exec.spawn(args)` | Stream CLI output over WebSocket (returns `ReadableStream`) |
-| **UI** | `ui.notify(message, level?)` | Show a notification (info / warn / error) |
+| **UI** | `ui.notify(message, level?, title?)` | Show a notification (info / warn / error) with optional custom title |
 | | `ui.confirm(message)` | Show a confirm dialog, returns `Promise<boolean>` |
 | **Settings** | `settings.get()` | Read app settings |
 | | `settings.onDidChange(cb)` | Subscribe to settings changes |

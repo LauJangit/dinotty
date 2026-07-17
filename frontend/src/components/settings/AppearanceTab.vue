@@ -1,78 +1,6 @@
 <template>
   <div>
-    <div class="settings-group">
-      <h3 class="settings-group-title">{{ t('settings.theme') }}</h3>
-      <div class="theme-grid">
-        <button
-          v-for="th in themes"
-          :key="th.name"
-          class="theme-card"
-          :class="{ active: settings.theme.preset === th.name }"
-          @click="
-            settings.theme.preset = th.name;
-            selectTheme();
-          "
-        >
-          <div class="theme-preview" :style="{ background: th.colors['--bg'] }">
-            <div class="theme-preview-header">
-              <span class="theme-dot" :style="{ background: th.colors['--color-red'] }"></span>
-              <span class="theme-dot" :style="{ background: th.colors['--color-yellow'] }"></span>
-              <span class="theme-dot" :style="{ background: th.colors['--color-green'] }"></span>
-            </div>
-            <div class="theme-preview-body">
-              <span :style="{ color: th.colors['--color-green'] }">$</span>
-              <span :style="{ color: th.colors['--fg'] }"> ls</span>
-              <span :style="{ color: th.colors['--color-blue'] }"> ~/src</span>
-            </div>
-            <div class="theme-swatches">
-              <span class="swatch" :style="{ background: th.colors['--color-red'] }"></span>
-              <span class="swatch" :style="{ background: th.colors['--color-green'] }"></span>
-              <span class="swatch" :style="{ background: th.colors['--color-yellow'] }"></span>
-              <span class="swatch" :style="{ background: th.colors['--color-blue'] }"></span>
-              <span class="swatch" :style="{ background: th.colors['--color-magenta'] }"></span>
-              <span class="swatch" :style="{ background: th.colors['--color-cyan'] }"></span>
-            </div>
-          </div>
-          <span class="theme-name">{{ themeLabel(th.name) }}</span>
-        </button>
-      </div>
-    </div>
-
-    <CollapsibleSection :title="t('settings.customColors')" level="group" default-open>
-      <p class="settings-hint">{{ t('settings.customColorsHint') }}</p>
-      <div class="custom-colors-grid">
-        <label class="color-field">
-          <span>{{ t('settings.color.fg') }}</span>
-          <div class="color-input-wrap">
-            <input type="color" :value="customFg" @input="setCustomColor('fg', $event)" />
-            <span class="color-hex">{{ customFg }}</span>
-          </div>
-        </label>
-        <label class="color-field">
-          <span>{{ t('settings.color.bg') }}</span>
-          <div class="color-input-wrap">
-            <input type="color" :value="customBg" @input="setCustomColor('bg', $event)" />
-            <span class="color-hex">{{ customBg }}</span>
-          </div>
-        </label>
-        <label class="color-field">
-          <span>{{ t('settings.color.cursor') }}</span>
-          <div class="color-input-wrap">
-            <input type="color" :value="customCursor" @input="setCustomColor('cursor', $event)" />
-            <span class="color-hex">{{ customCursor }}</span>
-          </div>
-        </label>
-      </div>
-      <details class="ansi-details">
-        <summary>{{ t('settings.color.ansi') }}</summary>
-        <div class="ansi-grid">
-          <label v-for="(c, i) in ansiColors" :key="i" class="ansi-field">
-            <span class="ansi-label">{{ ansiNames[i] }}</span>
-            <input type="color" :value="c" @input="setAnsiColor(i, $event)" />
-          </label>
-        </div>
-      </details>
-    </CollapsibleSection>
+    <ThemeManager />
 
     <div class="settings-group">
       <h3 class="settings-group-title">{{ t('settings.text') }}</h3>
@@ -82,13 +10,25 @@
         <div class="range-wrap">
           <input
             type="range"
-            v-model.number="settings.text.font_size"
-            min="8"
-            max="32"
+            v-model.number="fontSize"
+            :min="FONT_SIZE_MIN"
+            :max="FONT_SIZE_MAX"
             step="1"
-            @input="onTextSettingChange"
           />
-          <span class="range-val">{{ settings.text.font_size }}px</span>
+          <span class="range-val">{{ fontSize }}px</span>
+          <button
+            v-if="hasOverride('font_size')"
+            type="button"
+            class="setting-reset"
+            title="reset to default"
+            aria-label="reset to default"
+            @click="resetOverride('font_size')"
+          >
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+              <path d="M3 3v5h5" />
+            </svg>
+          </button>
         </div>
       </div>
 
@@ -97,7 +37,7 @@
         <div class="font-dropdown">
           <div
             class="font-dropdown-trigger shortcut-input"
-            :style="{ fontFamily: settings.text.font_family || 'inherit' }"
+            :style="{ fontFamily: fontFamily || 'inherit' }"
             @click="toggleFontDropdown"
           >
             <span>{{ currentFontLabel }}</span>
@@ -146,6 +86,19 @@
             <div v-if="addFontError" class="font-add-error">{{ addFontError }}</div>
           </div>
         </div>
+        <button
+          v-if="hasOverride('font_family')"
+          type="button"
+          class="setting-reset"
+          title="reset to default"
+          aria-label="reset to default"
+          @click="resetOverride('font_family')"
+        >
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+            <path d="M3 3v5h5" />
+          </svg>
+        </button>
       </div>
 
       <div class="settings-row">
@@ -153,13 +106,25 @@
         <div class="range-wrap">
           <input
             type="range"
-            v-model.number="settings.text.line_height"
+            v-model.number="lineHeight"
             min="0.8"
             max="2.0"
             step="0.1"
-            @input="onTextSettingChange"
           />
-          <span class="range-val">{{ settings.text.line_height.toFixed(1) }}</span>
+          <span class="range-val">{{ lineHeight.toFixed(1) }}</span>
+          <button
+            v-if="hasOverride('line_height')"
+            type="button"
+            class="setting-reset"
+            title="reset to default"
+            aria-label="reset to default"
+            @click="resetOverride('line_height')"
+          >
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+              <path d="M3 3v5h5" />
+            </svg>
+          </button>
         </div>
       </div>
 
@@ -168,13 +133,25 @@
         <div class="range-wrap">
           <input
             type="range"
-            v-model.number="settings.text.letter_spacing"
+            v-model.number="letterSpacing"
             min="0"
             max="4"
             step="0.5"
-            @input="onTextSettingChange"
           />
-          <span class="range-val">{{ settings.text.letter_spacing }}px</span>
+          <span class="range-val">{{ letterSpacing }}px</span>
+          <button
+            v-if="hasOverride('letter_spacing')"
+            type="button"
+            class="setting-reset"
+            title="reset to default"
+            aria-label="reset to default"
+            @click="resetOverride('letter_spacing')"
+          >
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+              <path d="M3 3v5h5" />
+            </svg>
+          </button>
         </div>
       </div>
 
@@ -269,11 +246,6 @@
       </CollapsibleSection>
     </div>
 
-    <div class="settings-group" style="text-align: right">
-      <button class="shortcut-add" @click="resetCustomColors">
-        {{ t('settings.color.reset') }}
-      </button>
-    </div>
   </div>
 </template>
 
@@ -281,8 +253,8 @@
 import { ref, computed, onBeforeUnmount, reactive } from 'vue'
 import { useSettings, notifyTextChange } from '../../composables/useSettings'
 import CollapsibleSection from './CollapsibleSection.vue'
+import ThemeManager from './ThemeManager.vue'
 import { useI18n } from '../../composables/useI18n'
-import { themes, getThemeByName } from '../../themes'
 import { primaryFamily, toFontFamilyStack, fontIdentity } from '../../utils/fontFamily'
 import {
   buildFontList,
@@ -292,123 +264,25 @@ import {
   type AddFontError,
 } from '../../utils/fontList'
 import { isFontAvailable, clearNegativeFontCache } from '../../utils/fontAvailability'
+import {
+  FONT_SIZE_MAX,
+  FONT_SIZE_MIN,
+  useDeviceTextSettings,
+} from '../../composables/useDeviceTextSettings'
 
-const { settings, saveSettings, applyCurrentTheme } = useSettings()
-const { t, themeLabel } = useI18n()
-
-// ── Theme ──
-
-function selectTheme() {
-  applyCurrentTheme()
-  saveSettings()
-}
-
-const ansiNames = [
-  'Black',
-  'Red',
-  'Green',
-  'Yellow',
-  'Blue',
-  'Magenta',
-  'Cyan',
-  'White',
-  'Bright Black',
-  'Bright Red',
-  'Bright Green',
-  'Bright Yellow',
-  'Bright Blue',
-  'Bright Magenta',
-  'Bright Cyan',
-  'Bright White',
-]
-
-const ansiColorKeys = [
-  '--color-black',
-  '--color-red',
-  '--color-green',
-  '--color-yellow',
-  '--color-blue',
-  '--color-magenta',
-  '--color-cyan',
-  '--color-white',
-  '--color-bright-black',
-  '--color-bright-red',
-  '--color-bright-green',
-  '--color-bright-yellow',
-  '--color-bright-blue',
-  '--color-bright-magenta',
-  '--color-bright-cyan',
-  '--color-bright-white',
-]
-
-function ensureCustom() {
-  if (!settings.theme.custom) {
-    settings.theme.custom = {
-      foreground: undefined,
-      background: undefined,
-      cursor: undefined,
-      ansi: undefined,
-    }
-  }
-  return settings.theme.custom!
-}
-
-const customFg = computed(() => {
-  const c = settings.theme.custom
-  if (c?.foreground) return c.foreground
-  return getThemeByName(settings.theme.preset).colors['--fg']
-})
-
-const customBg = computed(() => {
-  const c = settings.theme.custom
-  if (c?.background) return c.background
-  return getThemeByName(settings.theme.preset).colors['--bg']
-})
-
-const customCursor = computed(() => {
-  const c = settings.theme.custom
-  if (c?.cursor) return c.cursor
-  return getThemeByName(settings.theme.preset).colors['--fg-muted']
-})
-
-const ansiColors = computed(() => {
-  const theme = getThemeByName(settings.theme.preset)
-  const custom = settings.theme.custom
-  return ansiColorKeys.map((key, i) => {
-    if (custom?.ansi?.[i]) return custom.ansi[i]
-    return theme.colors[key]
-  })
-})
-
-function setCustomColor(which: 'fg' | 'bg' | 'cursor', e: Event) {
-  const val = (e.target as HTMLInputElement).value
-  const custom = ensureCustom()
-  if (which === 'fg') custom.foreground = val
-  else if (which === 'bg') custom.background = val
-  else custom.cursor = val
-  applyCurrentTheme()
-  saveSettings()
-}
-
-function setAnsiColor(index: number, e: Event) {
-  const val = (e.target as HTMLInputElement).value
-  const custom = ensureCustom()
-  if (!custom.ansi) custom.ansi = []
-  custom.ansi[index] = val
-  applyCurrentTheme()
-  saveSettings()
-}
-
-function resetCustomColors() {
-  settings.theme.custom = null
-  applyCurrentTheme()
-  saveSettings()
-}
+const { settings, saveSettings } = useSettings()
+const {
+  fontSize,
+  fontFamily,
+  lineHeight,
+  letterSpacing,
+  hasOverride,
+  resetOverride,
+} = useDeviceTextSettings()
+const { t } = useI18n()
 
 // ── Text / Font ──
 
-const customColorsOpen = ref(false)
-const advancedTextOpen = ref(false)
 const fontDropdownOpen = ref(false)
 
 // ── Font picker (DT17) ──
@@ -422,7 +296,7 @@ const customFonts = computed<string[]>(() => settings.text.custom_fonts ?? [])
 interface DecoratedItem extends FontItem { available: boolean }
 
 const fontList = computed<DecoratedItem[]>(() =>
-  buildFontList(settings.text.font_family || '', customFonts.value).map((it) => {
+  buildFontList(fontFamily.value || '', customFonts.value).map((it) => {
     let available = true
     if (it.kind !== 'default') {
       const id = fontIdentity(it.family)
@@ -433,7 +307,7 @@ const fontList = computed<DecoratedItem[]>(() =>
 )
 
 const currentFontLabel = computed(() =>
-  settings.text.font_family ? primaryFamily(settings.text.font_family) : t('settings.text.fontFamilyDefault'),
+  fontFamily.value ? primaryFamily(fontFamily.value) : t('settings.text.fontFamilyDefault'),
 )
 
 function fontItemLabel(item: FontItem): string {
@@ -453,7 +327,7 @@ async function runProbes() {
   } catch { /* ignore */ }
   clearNegativeFontCache()
   for (const key of Object.keys(availability)) delete availability[key]
-  for (const it of buildFontList(settings.text.font_family || '', customFonts.value)) {
+  for (const it of buildFontList(fontFamily.value || '', customFonts.value)) {
     if (it.kind !== 'default') probe(it.family)
   }
 }
@@ -478,9 +352,8 @@ function closeFontDropdown() {
 }
 
 function selectFontItem(item: FontItem) {
-  settings.text.font_family = item.kind === 'default' ? '' : toFontFamilyStack(item.family)
+  fontFamily.value = item.kind === 'default' ? '' : toFontFamilyStack(item.family)
   fontDropdownOpen.value = false
-  onTextSettingChange()
 }
 
 const ADD_ERR_KEY: Record<Exclude<AddFontError, ''>, string> = {
@@ -510,8 +383,8 @@ function removeFontItem(item: FontItem) {
   if (!item.removable) return
   const id = fontIdentity(item.family)
   settings.text.custom_fonts = normalizeCustomFonts(customFonts.value.filter((c) => fontIdentity(c) !== id))
-  if (fontIdentity(settings.text.font_family || '') === id) {
-    settings.text.font_family = 'monospace'
+  if (fontIdentity(fontFamily.value || '') === id) {
+    fontFamily.value = 'monospace'
   }
   onTextSettingChange()
 }

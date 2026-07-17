@@ -172,8 +172,8 @@ fn is_permission_error(msg: &str) -> bool {
 /// - Empty path → `/`  (tree root is the filesystem root)
 /// - Absolute path → as-is
 /// - `~` / `~/…` → remote home expansion
-/// - Relative path → joined against `cwd` (falls back to `/`)
-fn resolve_remote_rel(session: &Session, rel: &str, cwd: Option<&str>) -> String {
+/// - Relative path → joined against `/` (cwd param ignored - see below)
+fn resolve_remote_rel(session: &Session, rel: &str, _cwd: Option<&str>) -> String {
     let rel = rel.trim();
     if rel.is_empty() {
         return "/".to_string();
@@ -191,8 +191,10 @@ fn resolve_remote_rel(session: &Session, rel: &str, cwd: Option<&str>) -> String
         let home = session.remote_home.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         return home.as_ref().map_or_else(|| "/".to_string(), |h| h.to_string_lossy().into_owned());
     }
-    let base = cwd.unwrap_or("/");
-    normalize_remote_join(base, rel)
+    // SSH tree rel paths are always relative to / (the filesystem root).
+    // The cwd parameter is ignored - using it as base would double-prefix
+    // paths (e.g. /home/user + home/user/x -> /home/user/home/user/x).
+    normalize_remote_join("/", rel)
 }
 
 // ── list ──────────────────────────────────────────────────────────────────
@@ -361,15 +363,21 @@ pub async fn remote_meta(session: Arc<Session>, q: PanePathQuery) -> Response {
 // ── raw ───────────────────────────────────────────────────────────────────
 
 pub async fn remote_raw(session: Arc<Session>, q: PanePathQuery) -> Response {
+    tracing::info!("remote_raw: pane={} path={:?} cwd={:?}", q.pane_id, q.path, q.cwd);
     let sftp = match sftp(&session).await {
         Ok(s) => s,
         Err(e) => return e,
     };
     let target = resolve_remote_rel(&session, &q.path, q.cwd.as_deref());
+    tracing::info!("remote_raw: resolved target={:?}", target);
     let target = match sftp.canonicalize(&target).await {
-        Ok(p) => p,
+        Ok(p) => {
+            tracing::info!("remote_raw: canonicalize ok -> {:?}", p);
+            p
+        }
         Err(e) => {
             let emsg = format!("{e}");
+            tracing::warn!("remote_raw: canonicalize failed: {}", emsg);
             if is_permission_error(&emsg) && should_use_sudo(&session).await {
                 target
             } else {
@@ -653,7 +661,14 @@ pub async fn remote_upload(
         Ok(s) => s,
         Err(e) => return e,
     };
-    let dest_dir = resolve_remote_rel(&session, &dir, cwd.as_deref());
+    // When dir is empty (no directory selected), upload to the current
+    // browsing directory (cwd). resolve_remote_rel("") returns "/", ignoring cwd.
+    let dest_dir = if dir.trim().is_empty() {
+        let base = cwd.as_deref().filter(|c| !c.trim().is_empty()).unwrap_or("/");
+        resolve_remote_rel(&session, base, None)
+    } else {
+        resolve_remote_rel(&session, &dir, cwd.as_deref())
+    };
     let dest_dir = match sftp.canonicalize(&dest_dir).await {
         Ok(p) => p,
         Err(e) => return sftp_err(e),

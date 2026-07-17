@@ -40,7 +40,7 @@ export interface PluginContext {
   }
 
   ui: {
-    notify(message: string, level?: 'info' | 'warn' | 'error'): void
+    notify(message: string, level?: 'info' | 'warn' | 'error', title?: string): void
     confirm(message: string): Promise<boolean>
   }
 
