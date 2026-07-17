@@ -1,4 +1,9 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::missing_panics_doc,
+    clippy::manual_assert
+)]
 use axum::{
     body::Body,
     extract::Request,
