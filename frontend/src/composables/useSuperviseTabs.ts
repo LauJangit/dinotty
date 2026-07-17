@@ -1,7 +1,7 @@
-import { watch } from 'vue'
+import { getCurrentScope, onScopeDispose, watch } from 'vue'
 import { useSessionStore } from '../stores/sessionStore'
 import { getAllLeaves, type Tab } from '../types/pane'
-import { nextRevealNavGen } from '../utils/navGen'
+import { currentRevealNavGen, nextRevealNavGen } from '../utils/navGen'
 import { pickSupervisedTab, type TabCandidate } from '../utils/superviseTabs'
 import { useNotification } from './useNotification'
 import { useWorkspaces } from './useWorkspaces'
@@ -17,7 +17,16 @@ export function useSuperviseTabs() {
   const { firstUnreadAtByPane } = useNotification()
   const confirmedVisited = new Set<string>()
   const pending = new Map<string, number>()
+  const activeWatchdogs = new Set<ReturnType<typeof setTimeout>>()
   let tokenCounter = 0
+
+  if (getCurrentScope()) {
+    onScopeDispose(() => {
+      for (const timeoutId of activeWatchdogs) clearTimeout(timeoutId)
+      activeWatchdogs.clear()
+      pending.clear()
+    })
+  }
 
   function reminderAt(tab: Tab): number | null {
     let oldest: number | null = null
@@ -97,25 +106,42 @@ export function useSuperviseTabs() {
       if (promote) confirmedVisited.add(target)
     }
 
+    let activation: Promise<boolean>
+    try {
+      activation = activate(target)
+    } catch {
+      settle(false)
+      return
+    }
+    const attemptGen = currentRevealNavGen()
+
     let timeoutId: ReturnType<typeof setTimeout> | null = null
-    const activationSettled = Promise.resolve()
-      .then(() => activate(target))
+    const activationSettled = Promise.resolve(activation)
       .then(
         (activated) => settle(activated === true),
         () => settle(false),
       )
       .finally(() => {
-        if (timeoutId !== null) clearTimeout(timeoutId)
+        if (timeoutId !== null) {
+          clearTimeout(timeoutId)
+          activeWatchdogs.delete(timeoutId)
+        }
       })
     const timedOut = new Promise<void>((resolve) => {
-      timeoutId = setTimeout(() => {
+      const watchdogId = setTimeout(() => {
+        activeWatchdogs.delete(watchdogId)
+        timeoutId = null
         if (pending.get(target) === token) {
           pending.delete(target)
-          // Superseding the abandoned navigation prevents it from committing after the timeout.
-          nextRevealNavGen()
+          if (currentRevealNavGen() === attemptGen) {
+            // Superseding the abandoned navigation prevents it from committing after the timeout.
+            nextRevealNavGen()
+          }
         }
         resolve()
       }, 10_000)
+      timeoutId = watchdogId
+      activeWatchdogs.add(watchdogId)
     })
 
     await Promise.race([activationSettled, timedOut])

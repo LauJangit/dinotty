@@ -496,7 +496,7 @@ async function onOverviewNewTabSsh(connectionId: string, initialCwd?: string) {
     const result = await apiCreateSshTab(connectionId, initialCwd)
     const existing = tabs.value.find((t) => t.type === 'terminal' && t.paneId === result.tab_id)
     if (existing) {
-      activePaneId.value = result.tab_id
+      commitLocalActivePane(result.tab_id)
       persist()
       nextTick(() => focusActive())
       return
@@ -516,7 +516,7 @@ async function onOverviewNewTabSsh(connectionId: string, initialCwd?: string) {
       previewKind: 'web',
       connectionId,
     })
-    activePaneId.value = result.tab_id
+    commitLocalActivePane(result.tab_id)
     persist()
     nextTick(() => focusActive())
   } catch (e) {
@@ -753,7 +753,7 @@ async function newTab(cwd?: string, argv?: string[], title?: string): Promise<st
         existing.cwd = result.cwd
       }
       if (title && existing.type === 'terminal') existing.customTitle = title
-      activePaneId.value = result.tab_id
+      commitLocalActivePane(result.tab_id)
       persist()
       nextTick(() => focusActive())
       return result.pane_id
@@ -774,7 +774,7 @@ async function newTab(cwd?: string, argv?: string[], title?: string): Promise<st
       customTitle: title,
       cwd: result.cwd,
     })
-    activePaneId.value = result.tab_id
+    commitLocalActivePane(result.tab_id)
     persist()
     nextTick(() => focusActive())
     return result.pane_id
@@ -826,6 +826,12 @@ function clearResolvedTabNotifications(tab: Tab, reason: 'tab_activate' | 'goto'
   notif.clearForPaneIds(activatedPaneIds, reason)
 }
 
+function commitLocalActivePane(paneId: string) {
+  // User-initiated local navigation participates in latest-wins ordering so it supersedes any in-flight supervised hop.
+  nextRevealNavGen()
+  activePaneId.value = paneId
+}
+
 async function activateTab(tabId: string, opts?: { defer?: boolean }): Promise<boolean> {
   const gen = nextRevealNavGen()
   const defer = opts?.defer === true
@@ -868,13 +874,17 @@ async function activateTab(tabId: string, opts?: { defer?: boolean }): Promise<b
     if (gen !== currentRevealNavGen()) return false
   }
 
-  if (gen !== currentRevealNavGen()) return false
-
-  if (defer) {
-    activePaneId.value = tab.paneId
-    clearResolvedTabNotifications(tab)
+  if (!defer) {
+    persist()
+    nextTick(() => focusActive())
+    return gen === currentRevealNavGen()
   }
 
+  if (gen !== currentRevealNavGen()) return false
+  const live = resolveTab(tabId)
+  if (!live) return false
+  activePaneId.value = live.paneId
+  clearResolvedTabNotifications(live)
   persist()
   nextTick(() => focusActive())
   return true
@@ -1286,7 +1296,7 @@ async function onSshConnect(result: { tab_id: string; pane_id: string; layout: a
         existing.workspaceId = activeWorkspaceId.value
       }
     }
-    activePaneId.value = result.tab_id
+    commitLocalActivePane(result.tab_id)
     persist()
     nextTick(() => focusActive())
     return
@@ -1307,7 +1317,7 @@ async function onSshConnect(result: { tab_id: string; pane_id: string; layout: a
     connectionId: resolvedConnectionId,
     workspaceId: activeWorkspaceId.value ?? undefined,
   })
-  activePaneId.value = result.tab_id
+  commitLocalActivePane(result.tab_id)
   persist()
   nextTick(() => focusActive())
 }
@@ -1354,7 +1364,7 @@ function openPlugin(pluginId: string) {
       workspaceId: activeWorkspaceId.value ?? undefined,
     }
     tabs.value.push(newTab)
-    activePaneId.value = paneId
+    commitLocalActivePane(paneId)
     syncWs.sendSync({ type: 'activate_tab', pane_id: paneId })
     persist()
     nextTick(() => focusActive())

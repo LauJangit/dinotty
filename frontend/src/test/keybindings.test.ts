@@ -50,6 +50,7 @@ function trackWrapper(wrapper: VueWrapper) {
 function resetKeybindings() {
   settings.keybindings = {}
   settings.locale = 'en'
+  settings.windowsAltAsCmd = false
 }
 
 function keyEvent(key: string, init: KeyboardEventInit = {}) {
@@ -59,6 +60,12 @@ function keyEvent(key: string, init: KeyboardEventInit = {}) {
     cancelable: true,
     ...init,
   })
+}
+
+function dispatchWindowsAppBinding(event: KeyboardEvent, id: string, action: () => void) {
+  const binding = useKeybindings().getBinding(id)
+  const appCommand = event.ctrlKey || (settings.windowsAltAsCmd && event.altKey)
+  if (appCommand && keyEventMatchesBinding(event, binding)) action()
 }
 
 async function recordKey(id: string, event: KeyboardEvent) {
@@ -199,6 +206,25 @@ describe('unified keybindings', () => {
     expect(
       keyEventMatchesBinding(keyEvent('~', { code: 'Backquote', metaKey: true, shiftKey: true }), binding)
     ).toBe(false)
+  })
+
+  it('dispatches the supervise-tabs binding through Windows app modifiers', () => {
+    settings.windowsAltAsCmd = true
+    const dispatch = vi.fn()
+
+    dispatchWindowsAppBinding(
+      keyEvent('`', { code: 'Backquote', altKey: true }),
+      'superviseTabs',
+      dispatch
+    )
+    dispatchWindowsAppBinding(
+      keyEvent('`', { code: 'Backquote', ctrlKey: true }),
+      'superviseTabs',
+      dispatch
+    )
+    dispatchWindowsAppBinding(keyEvent('`', { code: 'Backquote' }), 'superviseTabs', dispatch)
+
+    expect(dispatch).toHaveBeenCalledTimes(2)
   })
 
   it('does not match terminal bindings hand-edited to reserved Ctrl+Shift+C/V', () => {
