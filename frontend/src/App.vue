@@ -16,6 +16,8 @@
       :is-mobile="isMobile"
       :current-tab-title="currentTabTitle"
       :current-tab-index="currentTabIndex"
+      :active-workspace-abbr="activeWorkspaceAbbr"
+      :active-workspace-color="activeWorkspaceColor"
       @activate="activateTab"
       @close="requestCloseTab"
       @action="onNewMenuAction"
@@ -322,6 +324,7 @@ import { useSessionStore } from './stores/sessionStore'
 import { useUiStore } from './stores/uiStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { shellEscapePath } from './utils/shell'
+import { resolveAbbr, resolveColor } from './utils/workspaceIcon'
 
 // ── Stores ──────────────────────────────────────────────────────
 const session = useSessionStore()
@@ -379,6 +382,13 @@ const { isMobile } = useIsMobile()
 
 // Workspace filtering
 const { workspaces, activeWorkspaceId, activeWorkspacePath, activeWorkspaceName, matchWorkspace, activateWorkspace, cancelPendingWorkspaceActivation } = useWorkspaces()
+const activeWorkspace = computed(() => workspaces.value.find((w) => w.id === activeWorkspaceId.value))
+const activeWorkspaceAbbr = computed(() =>
+  activeWorkspace.value ? resolveAbbr(activeWorkspace.value) : ''
+)
+const activeWorkspaceColor = computed(() =>
+  activeWorkspace.value ? resolveColor(activeWorkspace.value) : undefined
+)
 
 const visibleTabList = computed(() => {
   const list = tabList.value.filter((info) => {

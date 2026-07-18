@@ -24,8 +24,13 @@ export function useWorkspaces() {
     }
   }
 
-  async function createWorkspace(path: string, name?: string, connectionId?: string) {
-    const ws = await apiCreateWorkspace(path, name, connectionId)
+  async function createWorkspace(
+    path: string,
+    name?: string,
+    connectionId?: string,
+    overrides?: { abbr?: string; color?: string }
+  ) {
+    const ws = await apiCreateWorkspace(path, name, connectionId, overrides)
     // Optimistic add; sync will reconcile if needed
     if (ws && ws.id && !workspaces.value.find((w) => w.id === ws.id)) {
       workspaces.value.push(ws)

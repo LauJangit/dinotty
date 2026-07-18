@@ -15,6 +15,10 @@ use tracing::error;
 use crate::session::{SessionManager, SyncMsg};
 use crate::settings::{self, SettingsState};
 
+/// 7 preset workspace colors. KEEP IN SYNC with frontend/src/utils/workspaceIcon.ts `WORKSPACE_COLORS`.
+pub(crate) const WORKSPACE_PALETTE: [&str; 7] =
+    ["#FF5D5D", "#FF9F45", "#FFD23F", "#35D07F", "#29D6E8", "#4D9DFF", "#B084FF"];
+
 #[cfg(test)]
 mod tests;
 
@@ -29,10 +33,57 @@ pub struct Workspace {
     /// `None` means local workspace (the original behavior).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub abbr: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
 }
 
 /// Shared state for workspace management.
 pub type WorkspacesState = Arc<RwLock<Vec<Workspace>>>;
+
+pub(crate) fn fnv1a32(s: &str) -> u32 {
+    let mut hash = 0x811c_9dc5;
+    for b in s.bytes() {
+        hash ^= u32::from(b);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    hash
+}
+
+pub(crate) fn palette_color_for(id: &str) -> String {
+    WORKSPACE_PALETTE[(fnv1a32(id) % 7) as usize].to_string()
+}
+
+pub(crate) fn is_meaningless_char(c: char) -> bool {
+    c.is_control()
+        || c.is_whitespace()
+        || matches!(c, '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}' | '\u{FEFF}')
+}
+
+pub(crate) fn normalize_abbr(raw: &str) -> Option<String> {
+    let normalized: String = raw.chars().filter(|&c| !is_meaningless_char(c)).take(3).collect();
+    (!normalized.is_empty()).then_some(normalized)
+}
+
+pub(crate) fn is_valid_hex6(s: &str) -> bool {
+    s.len() == 7 && s.starts_with('#') && s[1..].chars().all(|c| c.is_ascii_hexdigit())
+}
+
+pub(crate) fn normalize_color(raw: &str) -> Option<String> {
+    is_valid_hex6(raw).then(|| raw.to_uppercase())
+}
+
+pub(crate) fn migrate_colors(ws: &mut Vec<Workspace>) -> bool {
+    let mut changed = false;
+    for workspace in ws {
+        if workspace.color.as_deref().is_none_or(|color| !is_valid_hex6(color)) {
+            workspace.color = Some(palette_color_for(&workspace.id));
+            changed = true;
+        }
+    }
+    changed
+}
 
 fn workspaces_path() -> PathBuf {
     settings::config_dir().join("workspaces.json")
@@ -44,7 +95,14 @@ pub fn load_workspaces() -> Vec<Workspace> {
     if path.exists() {
         match std::fs::read_to_string(&path) {
             Ok(data) => match serde_json::from_str(&data) {
-                Ok(ws) => return ws,
+                Ok(mut ws) => {
+                    if migrate_colors(&mut ws) {
+                        if let Err(e) = save_workspaces(&ws) {
+                            error!("save workspaces: {}", e);
+                        }
+                    }
+                    return ws;
+                }
                 Err(e) => error!("parse workspaces.json: {}", e),
             },
             Err(e) => error!("read workspaces.json: {}", e),
@@ -140,6 +198,10 @@ pub struct CreateWorkspaceReq {
     /// References an `SshProfile.id` for remote workspaces.
     #[serde(default)]
     pub connection_id: Option<String>,
+    #[serde(default)]
+    pub abbr: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -150,6 +212,10 @@ pub struct UpdateWorkspaceReq {
     pub path: Option<String>,
     #[serde(default)]
     pub connection_id: Option<String>,
+    #[serde(default)]
+    pub abbr: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -210,12 +276,18 @@ pub async fn create_workspace(
 
     #[allow(clippy::cast_possible_truncation)]
     let order = ws.len() as u32;
+    let id = uuid::Uuid::new_v4().to_string();
+    let abbr = req.abbr.as_deref().and_then(normalize_abbr);
+    let color =
+        req.color.as_deref().and_then(normalize_color).unwrap_or_else(|| palette_color_for(&id));
     let workspace = Workspace {
-        id: uuid::Uuid::new_v4().to_string(),
+        id,
         name,
         path: path_str,
         order,
         connection_id: req.connection_id,
+        abbr,
+        color: Some(color),
     };
 
     ws.push(workspace.clone());
@@ -304,6 +376,14 @@ pub async fn update_workspace(
         if !name.trim().is_empty() {
             ws[idx].name = name.trim().to_string();
         }
+    }
+
+    if let Some(raw) = &req.abbr {
+        ws[idx].abbr = normalize_abbr(raw);
+    }
+    if let Some(raw) = &req.color {
+        ws[idx].color =
+            Some(normalize_color(raw).unwrap_or_else(|| palette_color_for(&ws[idx].id)));
     }
 
     let workspace = ws[idx].clone();
