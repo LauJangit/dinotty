@@ -259,7 +259,7 @@
       </CollapsibleSection>
     </div>
 
-    <CollapsibleSection :title="t('settings.group.filesFolders')" level="group" :default-open="true">
+    <CollapsibleSection :title="t('settings.group.filesFolders')" level="group">
       <section class="settings-section">
         <div class="settings-row">
           <label>{{ t('settings.uploads.defaultDir') }}</label>
@@ -439,7 +439,7 @@
       </section>
     </div>
 
-    <CollapsibleSection :title="t('settings.log')" level="group" default-open>
+    <CollapsibleSection :title="t('settings.log')" level="group">
       <section class="settings-section">
         <div class="settings-row">
           <label>{{ t('settings.log.enabled') }}</label>
