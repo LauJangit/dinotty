@@ -54,6 +54,10 @@ const mocks = vi.hoisted(() => {
     reorderPane: vi.fn(),
     onTerminalInput: vi.fn(),
     focusNeighbor: vi.fn(),
+    scrollTabIntoView: vi.fn(),
+    apiActivatePane: vi.fn<(paneId: string, activePaneId: string) => Promise<void>>(async () => {}),
+    apiActivateWorkspace: vi.fn<(id: string) => Promise<void>>(async () => {}),
+    apiDeactivateWorkspace: vi.fn<() => Promise<void>>(async () => {}),
     apiCreateTab: vi.fn(async () => ({
       tab_id: 't-new',
       pane_id: 'p-new',
@@ -181,7 +185,7 @@ vi.mock('../composables/useTabApi', () => ({
   apiCreateTab: mocks.apiCreateTab,
   apiCloseTab: mocks.apiCloseTab,
   apiClosePane: vi.fn(async () => ({ tab_closed: false })),
-  apiActivatePane: vi.fn(async () => {}),
+  apiActivatePane: mocks.apiActivatePane,
   apiListTabs: vi.fn(async () => ({
     tabs: [
       {
@@ -201,6 +205,16 @@ vi.mock('../composables/useTabApi', () => ({
     ],
     active_pane_id: 'pane-1',
   })),
+}))
+
+vi.mock('../composables/useWorkspaceApi', () => ({
+  apiListWorkspaces: vi.fn(async () => []),
+  apiCreateWorkspace: vi.fn(),
+  apiUpdateWorkspace: vi.fn(),
+  apiDeleteWorkspace: vi.fn(),
+  apiActivateWorkspace: mocks.apiActivateWorkspace,
+  apiDeactivateWorkspace: mocks.apiDeactivateWorkspace,
+  apiReorderWorkspaces: vi.fn(),
 }))
 
 vi.mock('../composables/useI18n', () => ({
@@ -230,6 +244,10 @@ import { createPinia } from 'pinia'
 import App from '../App.vue'
 import { settings } from '../composables/useSettings'
 import { useUiStore } from '../stores/uiStore'
+import { useSessionStore } from '../stores/sessionStore'
+import { useWorkspaces } from '../composables/useWorkspaces'
+import { currentRevealNavGen } from '../utils/navGen'
+import type { Tab } from '../types/pane'
 
 // Spec: openspec/changes/confirm-before-close-tab/spec.md
 //   "### Requirement: Pane Close Confirmation"
@@ -265,7 +283,7 @@ const TabBarStub = defineComponent({
   setup(props, { slots, expose }) {
     expose({
       hasTab: () => true,
-      scrollTabIntoView: vi.fn(),
+      scrollTabIntoView: mocks.scrollTabIntoView,
     })
     return () => h('div', {
       class: 'tab-bar-stub',
@@ -332,6 +350,9 @@ async function mountWithTabs() {
 afterEach(() => {
   mountedWrapper?.unmount()
   mountedWrapper = undefined
+  const workspaceState = useWorkspaces()
+  workspaceState.workspaces.value = []
+  workspaceState.activeWorkspaceId.value = null
   vi.useRealTimers()
   localStorageMock.clear()
   mocks.clearForPaneIds.mockReset()
@@ -347,8 +368,129 @@ afterEach(() => {
     json: async () => ({ status: 'accepted', notifId: 'notif-1', eventSeq: '1' }),
   })
   mocks.pushNotification.mockReset()
+  mocks.scrollTabIntoView.mockReset()
+  mocks.apiActivatePane.mockReset()
+  mocks.apiActivatePane.mockResolvedValue(undefined)
+  mocks.apiActivateWorkspace.mockReset()
+  mocks.apiActivateWorkspace.mockResolvedValue(undefined)
+  mocks.apiDeactivateWorkspace.mockReset()
+  mocks.apiDeactivateWorkspace.mockResolvedValue(undefined)
   mocks.mintNotificationRequestId.mockClear()
   mocks.resetNotificationRequestIds()
+})
+
+describe('App.vue - activateTab cross-workspace', () => {
+  const terminalTab = (paneId: string, cwd: string): Tab => ({
+    type: 'terminal',
+    paneId,
+    layout: { type: 'leaf', paneId: `${paneId}-leaf`, title: paneId, ratio: 1, zoomed: false },
+    activePaneId: `${paneId}-leaf`,
+    paneMru: [`${paneId}-leaf`],
+    broadcastMode: false,
+    broadcastActivity: 0,
+    previewVisible: false,
+    previewAddress: '',
+    previewUrl: '',
+    previewKind: 'web',
+    cwd,
+  })
+
+  async function seedCrossWorkspaceTabs() {
+    const wrapper = await mountWithTabs()
+    const session = useSessionStore()
+    const workspaceState = useWorkspaces()
+    workspaceState.workspaces.value = [
+      { id: 'ws-active', name: 'Active', path: '/workspace/active', order: 0 },
+      { id: 'ws-other', name: 'Other', path: '/workspace/other', order: 1 },
+    ]
+    workspaceState.activeWorkspaceId.value = 'ws-active'
+    session.setTabs([
+      terminalTab('terminal-active', '/workspace/active'),
+      terminalTab('terminal-ungrouped', '/outside'),
+      terminalTab('terminal-other', '/workspace/other'),
+      { type: 'plugin', paneId: 'plugin-ungrouped', title: 'Plugin', pluginId: 'plugin' },
+    ])
+    session.setActivePane('terminal-active')
+    mocks.scrollTabIntoView.mockClear()
+    return { wrapper, workspaceState }
+  }
+
+  it('keeps the named workspace active for an ungrouped global plugin tab', async () => {
+    const { wrapper, workspaceState } = await seedCrossWorkspaceTabs()
+
+    const result = await (wrapper.vm as any).activateTab('plugin-ungrouped')
+    await nextTick()
+
+    expect(result).toBe(true)
+    expect(mocks.apiDeactivateWorkspace).not.toHaveBeenCalled()
+    expect(workspaceState.activeWorkspaceId.value).toBe('ws-active')
+  })
+
+  it('switches to the default workspace for an ungrouped terminal tab', async () => {
+    const { wrapper, workspaceState } = await seedCrossWorkspaceTabs()
+
+    const result = await (wrapper.vm as any).activateTab('terminal-ungrouped')
+
+    expect(result).toBe(true)
+    expect(mocks.apiDeactivateWorkspace).toHaveBeenCalledOnce()
+    expect(workspaceState.activeWorkspaceId.value).toBeNull()
+  })
+
+  it('activateTab abandons a stale cross-workspace hop superseded during workspace activation', async () => {
+    const { wrapper } = await seedCrossWorkspaceTabs()
+    let release!: () => void
+    mocks.apiActivateWorkspace.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { release = resolve })
+    )
+
+    const staleActivation = (wrapper.vm as any).activateTab('terminal-other') as Promise<boolean>
+    await Promise.resolve()
+    const latestResult = await (wrapper.vm as any).activateTab('plugin-ungrouped')
+    release()
+    const staleResult = await staleActivation
+    await nextTick()
+
+    expect(latestResult).toBe(true)
+    expect(staleResult).toBe(false)
+    expect(mocks.scrollTabIntoView).not.toHaveBeenCalledWith('terminal-other')
+  })
+
+  it('scrollActiveTabIntoView abandons a stale scroll superseded after pane activation', async () => {
+    const { wrapper } = await seedCrossWorkspaceTabs()
+    let releasePane!: () => void
+    mocks.apiActivatePane.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { releasePane = resolve })
+    )
+
+    const staleActivation = (wrapper.vm as any).activateTab('terminal-other') as Promise<boolean>
+    await Promise.resolve()
+    await Promise.resolve()
+    mocks.scrollTabIntoView.mockClear()
+
+    releasePane()
+    const supersede = nextTick(
+      () => (wrapper.vm as any).activateTab('terminal-active') as Promise<boolean>
+    )
+    expect(await staleActivation).toBe(true)
+    await nextTick()
+    await nextTick()
+    await supersede
+
+    expect(mocks.scrollTabIntoView).not.toHaveBeenCalledWith('terminal-other')
+  })
+
+  it('scrolls the target tab into view after cross-workspace activation', async () => {
+    const { wrapper, workspaceState } = await seedCrossWorkspaceTabs()
+
+    const result = await (wrapper.vm as any).activateTab('terminal-other')
+    await nextTick()
+    await nextTick()
+
+    expect(result).toBe(true)
+    expect(mocks.apiActivateWorkspace).toHaveBeenCalledWith('ws-other')
+    expect(workspaceState.activeWorkspaceId.value).toBe('ws-other')
+    expect(mocks.scrollTabIntoView).toHaveBeenCalledWith('terminal-other')
+  })
 })
 
 afterAll(() => {
@@ -509,6 +651,19 @@ describe('App.vue - onClosePane routes through confirmation gate', () => {
     await nextTick()
 
     expect(mocks.clearForPaneIds).not.toHaveBeenCalled()
+  })
+
+  it('advances reveal navigation when closing the active tab selects its replacement', async () => {
+    const wrapper = await mountWithTabs()
+    const session = useSessionStore()
+    session.addTab({ ...session.tabs[0], paneId: 'tab-survivor' }, false)
+    const navGenBeforeClose = currentRevealNavGen()
+
+    await (wrapper.vm as any).closeTab('tab-1')
+    await nextTick()
+
+    expect(currentRevealNavGen()).toBe(navGenBeforeClose + 1)
+    expect(session.activePaneId).toBe('tab-survivor')
   })
 })
 

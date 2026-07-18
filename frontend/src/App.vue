@@ -278,9 +278,11 @@ import { isTouchDevice, setActivePaneId } from './composables/useTerminal'
 import { useI18n } from './composables/useI18n'
 import { keyEventMatchesBinding, useKeybindings } from './composables/useKeybindings'
 import { useSplitPane } from './composables/useSplitPane'
+import { useSuperviseTabs } from './composables/useSuperviseTabs'
 import { useSyncWebSocket } from './composables/useSyncWebSocket'
 import { isWebPreviewInput } from './utils/previewRouting'
 import { isWindowsClient } from './utils/clientPlatform'
+import { nextRevealNavGen, currentRevealNavGen } from './utils/navGen'
 import { initMonitorHistory } from './composables/useMonitor'
 import NotificationPanel from './components/notification/NotificationPanel.vue'
 import { useToast } from 'vue-toastification'
@@ -357,6 +359,7 @@ const { t } = useI18n()
 const { getBinding, formatBinding } = useKeybindings()
 const notif = useNotification()
 const presentationSettings = useNotificationPresentation().settings
+const { supervise } = useSuperviseTabs()
 const clearToastInstance = setToastInstance(useToast())
 const clearActiveReadContext = setActiveReadContext({
   getActiveFocusedPaneId: () =>
@@ -493,7 +496,7 @@ async function onOverviewNewTabSsh(connectionId: string, initialCwd?: string) {
     const result = await apiCreateSshTab(connectionId, initialCwd)
     const existing = tabs.value.find((t) => t.type === 'terminal' && t.paneId === result.tab_id)
     if (existing) {
-      activePaneId.value = result.tab_id
+      commitLocalActivePane(result.tab_id)
       persist()
       nextTick(() => focusActive())
       return
@@ -513,7 +516,7 @@ async function onOverviewNewTabSsh(connectionId: string, initialCwd?: string) {
       previewKind: 'web',
       connectionId,
     })
-    activePaneId.value = result.tab_id
+    commitLocalActivePane(result.tab_id)
     persist()
     nextTick(() => focusActive())
   } catch (e) {
@@ -750,7 +753,7 @@ async function newTab(cwd?: string, argv?: string[], title?: string): Promise<st
         existing.cwd = result.cwd
       }
       if (title && existing.type === 'terminal') existing.customTitle = title
-      activePaneId.value = result.tab_id
+      commitLocalActivePane(result.tab_id)
       persist()
       nextTick(() => focusActive())
       return result.pane_id
@@ -771,7 +774,7 @@ async function newTab(cwd?: string, argv?: string[], title?: string): Promise<st
       customTitle: title,
       cwd: result.cwd,
     })
-    activePaneId.value = result.tab_id
+    commitLocalActivePane(result.tab_id)
     persist()
     nextTick(() => focusActive())
     return result.pane_id
@@ -823,12 +826,26 @@ function clearResolvedTabNotifications(tab: Tab, reason: 'tab_activate' | 'goto'
   notif.clearForPaneIds(activatedPaneIds, reason)
 }
 
-let revealNavGen = 0
+function commitLocalActivePane(paneId: string) {
+  // User-initiated local navigation participates in latest-wins ordering so it supersedes any in-flight supervised hop.
+  nextRevealNavGen()
+  activePaneId.value = paneId
+}
 
-async function activateTab(tabId: string) {
-  const gen = ++revealNavGen
+async function scrollActiveTabIntoView(targetPaneId: string, navGen: number) {
+  await nextTick()
+  if (navGen !== currentRevealNavGen()) return
+  if (tabBarRef.value?.scrollTabIntoView(targetPaneId)) return
+  await nextTick()
+  if (navGen !== currentRevealNavGen()) return
+  tabBarRef.value?.scrollTabIntoView(targetPaneId)
+}
+
+async function activateTab(tabId: string, opts?: { defer?: boolean }): Promise<boolean> {
+  const gen = nextRevealNavGen()
+  const defer = opts?.defer === true
   let tab = resolveTab(tabId)
-  if (!tab) return
+  if (!tab) return false
 
   // Switch workspace if the tab belongs to a different one. Terminal tabs
   // force a switch when filtered out of the current view; plugin tabs stay
@@ -840,34 +857,52 @@ async function activateTab(tabId: string) {
   if (needsSwitch) {
     try {
       const committed = await activateWorkspace(targetWs?.id ?? null)
-      if (!committed) return
+      if (!committed) return false
     } catch {
-      return
+      return false
     }
-    if (gen !== revealNavGen) return
+    if (gen !== currentRevealNavGen()) return false
     tab = resolveTab(tabId)
-    if (!tab) return
+    if (!tab) return false
   } else {
     cancelPendingWorkspaceActivation()
   }
 
-  activePaneId.value = tab.paneId
-  clearResolvedTabNotifications(tab)
+  if (!defer) {
+    activePaneId.value = tab.paneId
+    clearResolvedTabNotifications(tab)
+  }
 
   if (tab.type === 'terminal') {
     try {
       await apiActivatePane(tab.paneId, tab.activePaneId)
     } catch (e) {
+      if (defer) return false
       console.error('Failed to activate pane:', e)
     }
-    if (gen !== revealNavGen) return
+    if (gen !== currentRevealNavGen()) return false
   }
+
+  if (!defer) {
+    persist()
+    nextTick(() => focusActive())
+    void scrollActiveTabIntoView(tab.paneId, gen)
+    return gen === currentRevealNavGen()
+  }
+
+  if (gen !== currentRevealNavGen()) return false
+  const live = resolveTab(tabId)
+  if (!live) return false
+  activePaneId.value = live.paneId
+  clearResolvedTabNotifications(live)
   persist()
   nextTick(() => focusActive())
+  void scrollActiveTabIntoView(live.paneId, gen)
+  return true
 }
 
 async function revealPane(paneId: string): Promise<boolean> {
-  const gen = ++revealNavGen
+  const gen = nextRevealNavGen()
   let tab = resolveTab(paneId)
   if (!tab) return false
 
@@ -885,7 +920,7 @@ async function revealPane(paneId: string): Promise<boolean> {
     } catch {
       return false
     }
-    if (gen !== revealNavGen) return false
+    if (gen !== currentRevealNavGen()) return false
     tab = resolveTab(paneId)
     if (!tab) return false
   } else {
@@ -893,7 +928,7 @@ async function revealPane(paneId: string): Promise<boolean> {
   }
 
   await nextTick()
-  if (gen !== revealNavGen) return false
+  if (gen !== currentRevealNavGen()) return false
   tab = resolveTab(paneId)
   if (!tab) return false
 
@@ -910,11 +945,11 @@ async function revealPane(paneId: string): Promise<boolean> {
       }
       if (attempt < 4) {
         await new Promise((resolve) => setTimeout(resolve, 50))
-        if (gen !== revealNavGen) return false
+        if (gen !== currentRevealNavGen()) return false
       }
     }
     if (!tabElementFound) return false
-    if (gen !== revealNavGen) return false
+    if (gen !== currentRevealNavGen()) return false
     tab = resolveTab(paneId)
     if (!tab) return false
   }
@@ -926,7 +961,7 @@ async function revealPane(paneId: string): Promise<boolean> {
       return false
     }
     // The backend pointer may transiently lag a newer navigation, like rapid activateTab clicks.
-    if (gen !== revealNavGen) return false
+    if (gen !== currentRevealNavGen()) return false
   }
 
   tab = resolveTab(paneId)
@@ -1053,6 +1088,9 @@ async function closeTab(tabId: string) {
 
   if (activePaneId.value === tabId) {
     const newIdx = Math.min(idx, tabs.value.length - 1)
+    // Close-induced reselection is the newest navigation: supersede any in-flight
+    // deferred/supervised hop so a late older-generation commit cannot clobber it.
+    nextRevealNavGen()
     activePaneId.value = tabs.value[newIdx].paneId
   }
 
@@ -1272,7 +1310,7 @@ async function onSshConnect(result: { tab_id: string; pane_id: string; layout: a
         existing.workspaceId = activeWorkspaceId.value
       }
     }
-    activePaneId.value = result.tab_id
+    commitLocalActivePane(result.tab_id)
     persist()
     nextTick(() => focusActive())
     return
@@ -1293,7 +1331,7 @@ async function onSshConnect(result: { tab_id: string; pane_id: string; layout: a
     connectionId: resolvedConnectionId,
     workspaceId: activeWorkspaceId.value ?? undefined,
   })
-  activePaneId.value = result.tab_id
+  commitLocalActivePane(result.tab_id)
   persist()
   nextTick(() => focusActive())
 }
@@ -1340,7 +1378,7 @@ function openPlugin(pluginId: string) {
       workspaceId: activeWorkspaceId.value ?? undefined,
     }
     tabs.value.push(newTab)
-    activePaneId.value = paneId
+    commitLocalActivePane(paneId)
     syncWs.sendSync({ type: 'activate_tab', pane_id: paneId })
     persist()
     nextTick(() => focusActive())
@@ -1675,7 +1713,10 @@ const paletteCommands = computed<Command[]>(() => {
 function onGlobalKeydown(e: KeyboardEvent) {
   const cmd = e.metaKey || e.ctrlKey
   const altAsCmd = appSettings.windowsAltAsCmd && isWindowsClient
-  const appCmd = (cmd || (altAsCmd && e.altKey)) && !(altAsCmd && e.ctrlKey && e.altKey)
+  // On Windows, Ctrl+Alt is AltGr (a layout-character modifier), never an app command —
+  // exclude it regardless of Alt-as-Cmd so AltGr keeps producing its character. macOS
+  // (isWindowsClient=false) is unaffected.
+  const appCmd = (cmd || (altAsCmd && e.altKey)) && !(isWindowsClient && e.ctrlKey && e.altKey)
   if (!appCmd) return
 
   const keyActions: Record<string, () => void> = {
@@ -1706,6 +1747,7 @@ function onGlobalKeydown(e: KeyboardEvent) {
       termRefs[tab.activePaneId]?.toggleSearch()
     },
     missionControl: () => openOverview(),
+    superviseTabs: () => void supervise((id) => activateTab(id, { defer: true })),
     sshConnect: () => sshPanelRef.value?.open(),
     fontSizeUp: () => adjustActiveTerminalFontSize(1),
     fontSizeDown: () => adjustActiveTerminalFontSize(-1),
