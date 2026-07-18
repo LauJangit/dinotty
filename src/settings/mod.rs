@@ -16,7 +16,7 @@ use zeroize::Zeroize;
 
 use crate::session::SessionManager;
 
-pub const CURRENT_SETTINGS_VERSION: u32 = 3;
+pub const CURRENT_SETTINGS_VERSION: u32 = 4;
 const LEGACY_UPLOAD_DIR: &str = "~/.dinotty/uploads";
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -55,9 +55,13 @@ pub struct Settings {
     #[serde(default)]
     pub upload_file_cap_mb: u64,
     #[serde(default)]
+    pub toolbar_quick_keys: Vec<ActionKey>,
+    #[serde(default)]
     pub keyboard_sound: bool,
     #[serde(default)]
     pub show_virtual_keyboard: bool,
+    #[serde(default)]
+    pub show_workspace_badge_on_tab: Option<bool>,
     #[serde(default, rename = "windowsAltAsCmd")]
     pub windows_alt_as_cmd: bool,
     #[serde(default = "default_true")]
@@ -219,6 +223,8 @@ pub struct NotificationConfig {
     #[serde(default = "default_true")]
     pub osc_notify: bool,
     #[serde(default)]
+    pub idle_reminder: bool,
+    #[serde(default)]
     pub command_complete: CommandCompleteConfig,
     #[serde(default)]
     pub keyword_match: Vec<KeywordRule>,
@@ -236,6 +242,7 @@ impl Default for NotificationConfig {
             enabled: true,
             bell: BellNotificationConfig::default(),
             osc_notify: true,
+            idle_reminder: false,
             command_complete: CommandCompleteConfig::default(),
             keyword_match: vec![],
             channels: NotificationChannels::default(),
@@ -869,6 +876,7 @@ impl Default for Settings {
             recent_files: vec![],
             recent_urls: vec![],
             action_keyboard: None,
+            toolbar_quick_keys: vec![],
             upload_dir: default_upload_dir(),
             default_base_dir: None,
             default_workspace_root: None,
@@ -877,6 +885,7 @@ impl Default for Settings {
             upload_file_cap_mb: 0,
             keyboard_sound: false,
             show_virtual_keyboard: false,
+            show_workspace_badge_on_tab: None,
             windows_alt_as_cmd: false,
             confirm_before_close_tab: true,
             space_confirms_dialogs: false,
@@ -901,7 +910,9 @@ impl Default for Settings {
 
 #[must_use]
 pub fn config_dir() -> PathBuf {
-    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("dinotty")
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(format!("dinotty{}", option_env!("DINOTTY_CONFIG_SUFFIX").unwrap_or("")))
 }
 
 fn settings_path() -> PathBuf {
@@ -994,6 +1005,12 @@ fn migrate_settings(settings: &mut Settings) -> bool {
         settings.upload_dir = default_upload_dir();
     }
     // v3: auth + preview sections added with serde defaults - no explicit migration needed.
+    // v4: show_workspace_badge_on_tab is now Option<bool>. The previous default was `true`
+    // for all clients; treat that legacy default as "not explicitly set" so the device-based
+    // default (mobile portrait on, desktop off) applies. An explicit `Some(false)` is kept.
+    if settings.show_workspace_badge_on_tab == Some(true) {
+        settings.show_workspace_badge_on_tab = None;
+    }
     settings.settings_version = CURRENT_SETTINGS_VERSION;
     true
 }

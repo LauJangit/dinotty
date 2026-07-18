@@ -78,6 +78,7 @@ import { computed, ref } from 'vue'
 import { Motion } from 'motion-v'
 import { ChevronLeft, X, Puzzle, Plus, Pencil, Square } from 'lucide-vue-next'
 import { useI18n } from '../../composables/useI18n'
+import { uiPrompt } from '../../composables/usePrompt'
 import type { TabCard } from '../../composables/useTabPreview'
 import type { Workspace } from '../../types/workspace'
 import ContextMenu from '../ui/ContextMenu.vue'
@@ -172,9 +173,12 @@ function showCardCtx(card: TabCard, x: number, y: number) {
     {
       label: t('palette.rename'),
       icon: Pencil,
-      action: () => {
-        const name = prompt(t('palette.rename'), card.title)
-        if (name !== null && name.trim()) {
+      action: async () => {
+        const name = await uiPrompt(t('palette.rename'), card.title, {
+          confirmText: t('settings.token.save'),
+          cancelText: t('confirm.closeWindowCancel'),
+        })
+        if (name && name.trim()) {
           emit('rename-tab', card.paneId, name.trim())
         }
       },

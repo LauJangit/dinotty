@@ -23,12 +23,19 @@ export async function apiListWorkspaces(): Promise<Workspace[]> {
 export async function apiCreateWorkspace(
   path: string,
   name?: string,
-  connectionId?: string
+  connectionId?: string,
+  overrides?: { abbr?: string; color?: string }
 ): Promise<Workspace> {
   const res = await authFetch(apiUrl('/api/workspaces'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path, name, connection_id: connectionId }),
+    body: JSON.stringify({
+      path,
+      name,
+      connection_id: connectionId,
+      abbr: overrides?.abbr,
+      color: overrides?.color,
+    }),
   })
   await ensureOk(res)
   return res.json()
@@ -36,7 +43,7 @@ export async function apiCreateWorkspace(
 
 export async function apiUpdateWorkspace(
   id: string,
-  data: { name?: string; path?: string; connection_id?: string }
+  data: { name?: string; path?: string; connection_id?: string; abbr?: string; color?: string }
 ): Promise<Workspace> {
   const res = await authFetch(apiUrl(`/api/workspaces/${id}`), {
     method: 'PUT',

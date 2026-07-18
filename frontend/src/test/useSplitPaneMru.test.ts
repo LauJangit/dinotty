@@ -6,12 +6,22 @@ const api = vi.hoisted(() => ({
   split: vi.fn(),
   close: vi.fn(),
 }))
+const triggers = vi.hoisted(() => ({
+  foreground: true,
+  markPaneReadIfUnread: vi.fn(),
+}))
 
 vi.mock('../composables/useTabApi', () => ({
   apiSplitPane: api.split,
   apiClosePane: api.close,
 }))
 vi.mock('../composables/useTerminal', () => ({ setActivePaneId: vi.fn() }))
+vi.mock('../composables/useAppForeground', () => ({
+  getIsAppForeground: () => triggers.foreground,
+}))
+vi.mock('../composables/useNotification', () => ({
+  markPaneReadIfUnread: triggers.markPaneReadIfUnread,
+}))
 
 import { useSplitPane } from '../composables/useSplitPane'
 
@@ -63,7 +73,10 @@ function setup() {
 }
 
 describe('useSplitPane MRU', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    triggers.foreground = true
+  })
 
   it('prepends the pane created and focused by splitPane', async () => {
     const { tab, subject } = setup()
@@ -78,6 +91,30 @@ describe('useSplitPane MRU', () => {
     subject.focusPane('a')
     expect(tab.paneMru).toEqual(['a', 'b', 'c'])
     expect(tab.activePaneId).toBe('a')
+    expect(triggers.markPaneReadIfUnread).toHaveBeenCalledWith('a', 'focus')
+  })
+
+  it('foreground-guards focus and terminal input read triggers', () => {
+    const { subject } = setup()
+    triggers.foreground = false
+    subject.focusPane('a')
+    subject.onTerminalInput('a', 'x')
+    expect(triggers.markPaneReadIfUnread).not.toHaveBeenCalled()
+  })
+
+  it('marks terminal input before the non-broadcast early return', () => {
+    const { tab, subject } = setup()
+    expect(tab.broadcastMode).toBe(false)
+    subject.onTerminalInput('b', 'x')
+    expect(triggers.markPaneReadIfUnread).toHaveBeenCalledWith('b', 'terminal_input')
+  })
+
+  it('broadcast relay sends do not mark sibling panes read', () => {
+    const { tab, subject } = setup()
+    tab.broadcastMode = true
+    subject.onTerminalInput('b', 'x')
+    expect(triggers.markPaneReadIfUnread).toHaveBeenCalledTimes(1)
+    expect(triggers.markPaneReadIfUnread).toHaveBeenCalledWith('b', 'terminal_input')
   })
 
   it('focuses the next MRU pane when the active pane closes', async () => {

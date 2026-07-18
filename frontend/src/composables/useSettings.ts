@@ -1,4 +1,4 @@
-import { reactive } from 'vue'
+import { reactive, readonly, ref } from 'vue'
 import { applyThemeToDOM, getXtermTheme } from '../themes'
 import { getApiBase, apiUrl, authFetch, hasAuthToken } from './apiBase'
 import { resolveEffectiveTheme } from './useDeviceThemeSelection'
@@ -33,6 +33,7 @@ export interface SettingsData {
   recent_files: RecentEntry[]
   recent_urls: RecentEntry[]
   action_keyboard: ActionKeyboardConfig | null
+  toolbar_quick_keys: ActionKey[]
   upload_dir: string
   default_base_dir?: string | null
   default_workspace_root?: string | null
@@ -41,6 +42,7 @@ export interface SettingsData {
   upload_cap_count: number
   keyboard_sound: boolean
   show_virtual_keyboard: boolean
+  show_workspace_badge_on_tab: boolean | null
   confirm_before_close_tab: boolean
   space_confirms_dialogs: boolean
   windowsAltAsCmd: boolean
@@ -84,6 +86,7 @@ export interface NotificationConfig {
   enabled: boolean
   bell: { enabled: boolean; debounce_ms: number }
   osc_notify: boolean
+  idle_reminder: boolean
   command_complete: { enabled: boolean; threshold_seconds: number }
   keyword_match: { pattern: string; notification_type: string; case_sensitive: boolean }[]
   channels: {
@@ -233,12 +236,14 @@ export const settings = reactive<SettingsData>({
   recent_files: [],
   recent_urls: [],
   action_keyboard: null,
+  toolbar_quick_keys: [],
   upload_dir: '',
   upload_cap_mb: 200,
   upload_file_cap_mb: 0,
   upload_cap_count: 100,
   keyboard_sound: false,
   show_virtual_keyboard: false,
+  show_workspace_badge_on_tab: null,
   confirm_before_close_tab: true,
   space_confirms_dialogs: false,
   windowsAltAsCmd: isWindowsClient,
@@ -256,6 +261,7 @@ export const settings = reactive<SettingsData>({
     enabled: true,
     bell: { enabled: true, debounce_ms: 300 },
     osc_notify: true,
+    idle_reminder: false,
     command_complete: { enabled: false, threshold_seconds: 10 },
     keyword_match: [],
     channels: {
@@ -302,16 +308,41 @@ export const settings = reactive<SettingsData>({
 
 let loaded = false
 let loadPromise: Promise<void> | null = null
+let loadedNotificationPresentationEcho: {
+  channels?: unknown
+  sounds?: unknown
+} | null = null
+const settingsLoadedState = ref(false)
+export const settingsLoaded = readonly(settingsLoadedState)
+
+export function __setSettingsLoadedForTest(value: boolean) {
+  settingsLoadedState.value = value
+}
+
+export function __resetSettingsLoadStateForTest() {
+  loaded = false
+  loadPromise = null
+  loadedNotificationPresentationEcho = null
+  settingsLoadedState.value = false
+}
 
 export function useSettings() {
   if (!loaded) {
     loadPromise = loadSettings()
     loaded = true
   }
-  return { settings, saveSettings, loadSettings, applyCurrentTheme, getCurrentXtermTheme }
+  return {
+    settings,
+    settingsLoaded,
+    saveSettings,
+    loadSettings,
+    applyCurrentTheme,
+    getCurrentXtermTheme,
+  }
 }
 
 function restoreActionIcons() {
+  // Toolbar quick keys are plain user-defined labels/sends; do not attach default icons.
   const cfg = settings.action_keyboard
   if (!cfg?.rows) return
   // Build a lookup from send → icon using DEFAULT_ACTION_KEYBOARD
@@ -340,18 +371,29 @@ function syncActionKeyboardStorage() {
   }
 }
 
-async function loadSettings() {
+export async function loadSettings() {
   if (!hasAuthToken()) return
   try {
     await getApiBase()
     const res = await authFetch(apiUrl('/api/settings'))
     if (res.ok) {
       const data = await res.json()
+      const notification = data?.notification as Record<string, unknown> | undefined
+      if (notification) notification.idle_reminder = notification.idle_reminder === true
+      loadedNotificationPresentationEcho = {
+        ...(notification && Object.prototype.hasOwnProperty.call(notification, 'channels')
+          ? { channels: JSON.parse(JSON.stringify(notification.channels)) }
+          : {}),
+        ...(notification && Object.prototype.hasOwnProperty.call(notification, 'sounds')
+          ? { sounds: JSON.parse(JSON.stringify(notification.sounds)) }
+          : {}),
+      }
       Object.assign(settings, data)
       restoreActionIcons()
       applyCurrentTheme()
       // Sync action keyboard to localStorage for static mobile-keyboard.js
       syncActionKeyboardStorage()
+      settingsLoadedState.value = true
     }
   } catch (e) {
     console.error('[settings] load failed:', e)
@@ -362,13 +404,37 @@ export async function saveSettings() {
   try {
     // Wait for initial load to complete before saving, to avoid overwriting server data with defaults
     if (loadPromise) await loadPromise
+    // A save before any successful settings load would strip the server-owned
+    // notification.channels/sounds; the server's full-overwrite PUT (#[serde(default)])
+    // would then reset them to defaults across every device. Defer until a load has
+    // established the presentation echo.
+    if (!loadedNotificationPresentationEcho) {
+      console.warn('[settings] save skipped: settings have not loaded yet')
+      return
+    }
     // Sync action keyboard to localStorage for static mobile-keyboard.js
     syncActionKeyboardStorage()
+    const payload = JSON.parse(JSON.stringify(settings)) as SettingsData
+    const notification = payload.notification as unknown as Record<string, unknown>
+    for (const key of [
+      'presentation_enabled', 'channels', 'sounds', 'dnd_level', 'ignore_current_tab',
+      'quiet_hours', 'coalesce_window_ms',
+    ]) {
+      delete notification[key]
+    }
+    if (loadedNotificationPresentationEcho) {
+      if (Object.prototype.hasOwnProperty.call(loadedNotificationPresentationEcho, 'channels')) {
+        notification.channels = JSON.parse(JSON.stringify(loadedNotificationPresentationEcho.channels))
+      }
+      if (Object.prototype.hasOwnProperty.call(loadedNotificationPresentationEcho, 'sounds')) {
+        notification.sounds = JSON.parse(JSON.stringify(loadedNotificationPresentationEcho.sounds))
+      }
+    }
     await getApiBase()
     const res = await authFetch(apiUrl('/api/settings'), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(settings),
+      body: JSON.stringify(payload),
     })
     if (!res.ok) {
       console.error('[settings] save failed:', res.status, await res.text())

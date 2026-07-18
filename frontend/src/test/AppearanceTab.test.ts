@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import AppearanceTab from '../components/settings/AppearanceTab.vue'
-import { settings, saveSettings } from '../composables/useSettings'
+import {
+  __resetSettingsLoadStateForTest,
+  settings,
+  saveSettings,
+  useSettings,
+} from '../composables/useSettings'
 import {
   getEffectiveText,
   resetAllOverrides,
@@ -14,7 +19,7 @@ vi.mock('../composables/apiBase', () => ({
   apiUrl: (path: string) => path,
   authFetch: appearanceMocks.authFetch,
   getApiBase: vi.fn(async () => ''),
-  hasAuthToken: () => false,
+  hasAuthToken: () => true,
 }))
 
 vi.mock('../utils/fontAvailability', () => ({
@@ -33,7 +38,7 @@ class MemoryStorage implements Storage {
 }
 
 describe('AppearanceTab device text overrides', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.useFakeTimers()
     const storage = new MemoryStorage()
     Object.defineProperty(window, 'localStorage', { value: storage, configurable: true })
@@ -41,7 +46,7 @@ describe('AppearanceTab device text overrides', () => {
     localStorage.clear()
     appearanceMocks.authFetch.mockReset()
     appearanceMocks.isFontAvailable.mockClear()
-    appearanceMocks.authFetch.mockResolvedValue(new Response('{}', { status: 200 }))
+    appearanceMocks.authFetch.mockImplementation(async () => new Response('{}', { status: 200 }))
     resetAllOverrides()
     settings.text.font_size = 14
     settings.text.font_family = 'server-font'
@@ -49,6 +54,9 @@ describe('AppearanceTab device text overrides', () => {
     settings.text.letter_spacing = 1
     settings.text.cursor_style = 'block'
     settings.text.custom_fonts = ['Fira Code']
+    __resetSettingsLoadStateForTest()
+    await useSettings().loadSettings()
+    appearanceMocks.authFetch.mockClear()
   })
 
   it('renders effective values, including a font size above the old max, and writes no PUT on sliders', async () => {

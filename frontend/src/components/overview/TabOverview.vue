@@ -51,6 +51,23 @@
           <pre v-else class="mc-card-text"></pre>
         </div>
         </Motion>
+        <Motion
+          :ref="(el: any) => setCardRef(cards.length, el)"
+          class="mc-card mc-card-add"
+          :class="{ focused: cards.length === focusedIndex }"
+          :initial="{ opacity: 0 }"
+          :animate="{ opacity: 1, transition: { duration: 0.12 } }"
+          :exit="{ opacity: 0, transition: { duration: 0.08 } }"
+          role="button"
+          :aria-label="t('keybinding.newTab')"
+          @click="$emit('new-tab')"
+          @mouseenter="focusedIndex = cards.length"
+        >
+          <div class="mc-card-header"></div>
+          <div class="mc-card-preview">
+            <Plus :size="32" />
+          </div>
+        </Motion>
       </Motion>
     </AnimatePresence>
   </template>
@@ -113,6 +130,23 @@
             <pre v-else class="mc-card-text"></pre>
           </div>
         </Motion>
+        <Motion
+          :ref="(el: any) => setCardRef(cards.length, el)"
+          class="mc-card mc-card-add"
+          :class="{ focused: cards.length === focusedIndex }"
+          :initial="{ opacity: 0 }"
+          :animate="{ opacity: 1, transition: { duration: 0.12 } }"
+          :exit="{ opacity: 0, transition: { duration: 0.08 } }"
+          role="button"
+          :aria-label="t('keybinding.newTab')"
+          @click="$emit('new-tab')"
+          @mouseenter="focusedIndex = cards.length"
+        >
+          <div class="mc-card-header"></div>
+          <div class="mc-card-preview">
+            <Plus :size="32" />
+          </div>
+        </Motion>
       </Motion>
     </Motion>
   </AnimatePresence>
@@ -128,11 +162,15 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { Motion, AnimatePresence } from 'motion-v'
-import { X, Puzzle, Pencil, Square } from 'lucide-vue-next'
+import { X, Puzzle, Pencil, Square, Plus } from 'lucide-vue-next'
 import type { TabCard, PanePreviewNode } from '../../composables/useTabPreview'
 import SplitPreviewNode from './SplitPreviewNode.vue'
 import ContextMenu from '../ui/ContextMenu.vue'
 import type { ContextMenuItem } from '../ui/ContextMenu.vue'
+import { useI18n } from '../../composables/useI18n'
+import { uiPrompt } from '../../composables/usePrompt'
+
+const { t } = useI18n()
 
 function isSplitPreview(content: string | PanePreviewNode): content is PanePreviewNode {
   return typeof content === 'object' && content !== null && 'direction' in content
@@ -158,6 +196,7 @@ const emit = defineEmits<{
   activate: [paneId: string]
   'close-tab': [paneId: string]
   'rename-tab': [paneId: string, title: string]
+  'new-tab': []
 }>()
 
 // Context menu for tab cards
@@ -171,11 +210,14 @@ function openCardCtx(e: MouseEvent, card: TabCard) {
   ctxY.value = e.clientY
   ctxItems.value = [
     {
-      label: 'Rename',
+      label: t('palette.rename'),
       icon: Pencil,
-      action: () => {
-        const name = prompt('Rename tab', card.title)
-        if (name !== null && name.trim()) {
+      action: async () => {
+        const name = await uiPrompt(t('palette.rename'), card.title, {
+          confirmText: t('settings.token.save'),
+          cancelText: t('confirm.closeWindowCancel'),
+        })
+        if (name && name.trim()) {
           emit('rename-tab', card.paneId, name.trim())
         }
       },
@@ -213,7 +255,8 @@ function getCols(): number {
 }
 
 const gridStyle = computed(() => {
-  const n = props.cards.length || 1
+  // +1 accounts for the trailing "add" card so empty workspaces still occupy one cell
+  const n = props.cards.length + 1
   return {
     '--mc-rows': Math.ceil(n / COLS_SM),
     '--mc-rows-md': Math.ceil(n / COLS_MD),
@@ -229,7 +272,8 @@ watch(
     if (v) {
       closing.value = false
       const idx = props.cards.findIndex((c) => c.paneId === props.activePaneId)
-      focusedIndex.value = idx >= 0 ? idx : 0
+      // Fall back to the "add" card so empty workspaces are still keyboard-actionable
+      focusedIndex.value = idx >= 0 ? idx : props.cards.length
       if (!props.embedded) {
         nextTick(() => backdropRef.value?.$el?.focus?.())
       }
@@ -243,12 +287,9 @@ watch(
 watch(
   () => props.cards,
   (cards) => {
-    if (!cards.length) {
-      focusedIndex.value = 0
-      return
-    }
-    // Clamp to valid range
-    if (focusedIndex.value >= cards.length) focusedIndex.value = cards.length - 1
+    // "add" card lives at index cards.length; only clamp when beyond that
+    if (focusedIndex.value > cards.length) focusedIndex.value = cards.length
+    if (!cards.length) return
     // Try to focus the active pane
     const idx = cards.findIndex((c) => c.paneId === props.activePaneId)
     if (idx >= 0) focusedIndex.value = idx
@@ -257,11 +298,11 @@ watch(
 )
 
 function onKeydown(e: KeyboardEvent) {
-  const len = props.cards.length
-  if (!len) return
-
+  // Total cells = cards + trailing "add" card
+  const tabCount = props.cards.length
+  const total = tabCount + 1
   const cols = getCols()
-  const rows = Math.ceil(len / cols)
+  const rows = Math.ceil(total / cols)
   const cur = focusedIndex.value
   const col = Math.floor(cur / rows)
   const row = cur % rows
@@ -273,7 +314,7 @@ function onKeydown(e: KeyboardEvent) {
       break
     case 'ArrowDown':
       e.preventDefault()
-      focusedIndex.value = row < rows - 1 && cur + 1 < len ? cur + 1 : col * rows
+      focusedIndex.value = row < rows - 1 && cur + 1 < total ? cur + 1 : col * rows
       break
     case 'ArrowLeft':
       e.preventDefault()
@@ -286,12 +327,16 @@ function onKeydown(e: KeyboardEvent) {
       e.preventDefault()
       if (col < cols - 1) {
         const target = cur + rows
-        focusedIndex.value = target < len ? target : len - 1
+        focusedIndex.value = target < total ? target : total - 1
       }
       break
     case 'Enter':
       e.preventDefault()
-      emit('activate', props.cards[cur].paneId)
+      if (cur < tabCount) {
+        emit('activate', props.cards[cur].paneId)
+      } else {
+        emit('new-tab')
+      }
       break
     case 'Escape':
       e.preventDefault()
@@ -311,8 +356,10 @@ defineExpose({
   focusedIndex,
   onKeydown,
   activateFocused() {
-    if (props.cards.length) {
+    if (focusedIndex.value < props.cards.length) {
       emit('activate', props.cards[focusedIndex.value].paneId)
+    } else {
+      emit('new-tab')
     }
   },
 })

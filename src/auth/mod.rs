@@ -1,4 +1,9 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::missing_panics_doc,
+    clippy::manual_assert
+)]
 use axum::{
     body::Body,
     extract::Request,
@@ -15,7 +20,35 @@ use crate::settings::SettingsState;
 
 pub mod session;
 
-pub const SESSION_COOKIE_NAME: &str = "dinotty_session";
+static SESSION_COOKIE_PORT: OnceLock<u16> = OnceLock::new();
+
+#[must_use]
+pub fn session_cookie_name(port: u16) -> String {
+    format!("dinotty_session_{port}")
+}
+
+fn check_port_conflict(existing: u16, new: u16) -> bool {
+    existing != new
+}
+
+pub fn set_session_cookie_port(port: u16) {
+    if SESSION_COOKIE_PORT.set(port).is_err() {
+        let existing = *SESSION_COOKIE_PORT.get().expect("session cookie port must be initialized");
+        if check_port_conflict(existing, port) {
+            panic!(
+                "session cookie port already configured as {existing}; cannot reconfigure to {port}"
+            );
+        }
+    }
+}
+
+fn default_port() -> u16 {
+    option_env!("DINOTTY_DEFAULT_PORT").and_then(|s| s.parse().ok()).unwrap_or(8999)
+}
+
+fn configured_session_cookie_port() -> u16 {
+    SESSION_COOKIE_PORT.get().copied().unwrap_or_else(default_port)
+}
 
 struct FailRecord {
     count: u32,
@@ -107,6 +140,7 @@ pub async fn auth_middleware(
     settings: &SettingsState,
     sessions: &SessionStore,
     client_ip: IpAddr,
+    port: u16,
 ) -> Response {
     let path = request.uri().path();
 
@@ -196,7 +230,7 @@ pub async fn auth_middleware(
     }
 
     // Cookie session check (browser login).
-    if let Some(session_id) = extract_session_cookie(&request) {
+    if let Some(session_id) = extract_session_cookie(&request, port) {
         if sessions.validate(&session_id) {
             return next.run(request).await;
         }
@@ -214,10 +248,9 @@ pub async fn auth_middleware(
         .unwrap()
 }
 
-/// Extract the `dinotty_session` cookie value from the Cookie header.
 /// Check whether a request carries a valid session cookie or Bearer token.
 pub fn has_valid_auth(request: &Request, sessions: &SessionStore, token: &str) -> bool {
-    if let Some(sid) = extract_session_cookie(request) {
+    if let Some(sid) = extract_session_cookie(request, configured_session_cookie_port()) {
         if sessions.validate(&sid) {
             return true;
         }
@@ -225,12 +258,13 @@ pub fn has_valid_auth(request: &Request, sessions: &SessionStore, token: &str) -
     check_token(request, token)
 }
 
-fn extract_session_cookie(request: &Request) -> Option<String> {
+fn extract_session_cookie(request: &Request, port: u16) -> Option<String> {
     let header = request.headers().get(header::COOKIE)?;
     let raw = header.to_str().ok()?;
+    let cookie_prefix = format!("{}=", session_cookie_name(port));
     for pair in raw.split(';') {
         let pair = pair.trim();
-        if let Some(rest) = pair.strip_prefix(&format!("{SESSION_COOKIE_NAME}=")) {
+        if let Some(rest) = pair.strip_prefix(&cookie_prefix) {
             return Some(rest.to_string());
         }
     }

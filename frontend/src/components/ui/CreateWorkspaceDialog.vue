@@ -69,6 +69,7 @@
             :placeholder="t('workspace.name')"
             @keydown.enter="onSubmit"
           />
+
           <p v-if="error" class="cw-error">{{ error }}</p>
         </div>
         <div class="cw-footer">
@@ -202,20 +203,22 @@ async function onSubmit() {
   error.value = ''
   try {
     if (isEdit.value && props.workspace) {
-      await updateWorkspace(props.workspace.id, { name: name.value.trim() })
+      await updateWorkspace(props.workspace.id, {
+        name: name.value.trim(),
+      })
     } else if (mode.value === 'remote') {
       const profile = sshProfiles.value.find((p: any) => p.id === selectedConnectionId.value)
       autoFillNameFromRemote(profile)
       const ws = await createWorkspace(
         remotePath.value.trim(),
         name.value.trim() || undefined,
-        selectedConnectionId.value
+        selectedConnectionId.value,
       )
       emit('created', ws.id)
     } else {
       const p = path.value.trim()
       autoFillName()
-      const ws = await createWorkspace(p, name.value.trim() || undefined)
+      const ws = await createWorkspace(p, name.value.trim() || undefined, undefined)
       emit('created', ws.id)
     }
     emit('close')

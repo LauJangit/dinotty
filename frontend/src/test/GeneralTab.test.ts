@@ -16,7 +16,7 @@ vi.mock('../composables/apiBase', () => ({
   setAuthToken: () => {},
   getApiBase: async () => 'http://127.0.0.1:7681',
   fetchServerToken: async () => '',
-  hasAuthToken: () => false,
+  hasAuthToken: () => true,
 }))
 
 vi.mock('../composables/useTransport', () => ({
@@ -39,14 +39,18 @@ vi.mock('../utils/clipboard', () => ({
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import GeneralTab from '../components/settings/GeneralTab.vue'
-import { settings } from '../composables/useSettings'
+import {
+  __resetSettingsLoadStateForTest,
+  loadSettings,
+  settings,
+} from '../composables/useSettings'
 
 // Spec: openspec/changes/confirm-before-close-tab/spec.md
 //   "### Requirement: Setting UI In General Settings"
 // GeneralTab must expose a toggle bound to settings.confirm_before_close_tab.
 
 describe('GeneralTab - confirm-before-close-tab toggle', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     // Reset the shared reactive settings to the documented default.
     settings.confirm_before_close_tab = true
     settings.space_confirms_dialogs = false
@@ -69,6 +73,8 @@ describe('GeneralTab - confirm-before-close-tab toggle', () => {
       if (url === '/api/settings' && init?.method === 'PUT') return response({})
       return response({})
     })
+    __resetSettingsLoadStateForTest()
+    await loadSettings()
   })
 
   it('renders a toggle input bound to settings.confirm_before_close_tab', () => {

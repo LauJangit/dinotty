@@ -35,7 +35,7 @@ impl Default for HostKeyVerifier {
 impl HostKeyVerifier {
     #[must_use]
     pub fn new() -> Self {
-        let config_dir = dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("dinotty");
+        let config_dir = crate::settings::config_dir();
         std::fs::create_dir_all(&config_dir).ok();
         Self {
             known_hosts_path: config_dir.join("known_hosts"),

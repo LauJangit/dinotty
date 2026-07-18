@@ -67,6 +67,17 @@
         </div>
       </div>
       <iframe v-else-if="meta?.kind === 'pdf'" class="file-pdf" :src="rawUrl"></iframe>
+      <CsvPreview
+        v-else-if="
+          isCsvFile && csvShowTable && (meta?.kind === 'text' || meta?.kind === 'unsupported')
+        "
+        :content="meta?.content ?? editorText"
+        :file-path="csvFilePath"
+        :raw-url="rawUrl"
+        :source-available="meta?.kind === 'text'"
+        :truncated="!!meta?.truncated"
+        @show-source="showCsvSource"
+      />
       <template v-else-if="meta?.kind === 'html'">
         <div class="file-editor-root">
           <div class="file-editor-chrome">
@@ -117,7 +128,20 @@
             <span v-if="editorDirty" class="file-editor-dirty">{{
               t('filePreview.modified')
             }}</span>
-            <template v-if="meta?.kind === 'markdown'">
+            <template v-if="isCsvFile">
+              <button
+                type="button"
+                class="file-editor-tab"
+                data-testid="csv-table-button"
+                @click="showCsvTable"
+              >
+                {{ t('csvPreview.table') }}
+              </button>
+              <button type="button" class="file-editor-tab active">
+                {{ t('filePreview.source') }}
+              </button>
+            </template>
+            <template v-else-if="meta?.kind === 'markdown'">
               <button
                 type="button"
                 class="file-editor-tab"
@@ -176,13 +200,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, defineAsyncComponent } from 'vue'
+import { ref, computed, defineAsyncComponent, watch } from 'vue'
 import { useI18n } from '../../composables/useI18n'
+import { isCsvPreviewFile } from '../../utils/csvPreview'
+import CsvPreview from './CsvPreview.vue'
 const MonacoEditor = defineAsyncComponent(() => import('./MonacoEditor.vue'))
 
 const { t } = useI18n()
 
 const audioRef = ref<HTMLAudioElement | null>(null)
+const csvShowTable = ref(true)
 defineExpose({ audioRef })
 
 const props = defineProps<{
@@ -190,7 +217,13 @@ const props = defineProps<{
   previewErr: string | null
   selectedRel: string | null
   selectedIsDir: boolean
-  meta: { kind: string; language?: string; message?: string; truncated?: boolean } | null
+  meta: {
+    kind: string
+    content?: string
+    language?: string
+    message?: string
+    truncated?: boolean
+  } | null
   rawUrl: string
   showSave: boolean
   audioTitle: string
@@ -214,6 +247,29 @@ const props = defineProps<{
 }>()
 
 const language = computed(() => props.meta?.language || 'plaintext')
+const csvFilePath = computed(function computeCsvFilePath() {
+  // 步骤1：优先使用编辑器文件路径，缺失时使用导航器选中路径。
+  return props.filePath || props.selectedRel || ''
+})
+const isCsvFile = computed(function computeIsCsvFile() {
+  // 步骤1：按当前文件路径判断是否启用 CSV 预览。
+  return isCsvPreviewFile(csvFilePath.value)
+})
+
+watch(csvFilePath, function resetCsvViewForFile() {
+  // 步骤1：选择新文件时恢复默认的表格视图。
+  csvShowTable.value = true
+})
+
+function showCsvSource() {
+  // 步骤1：切换到现有的 Monaco 源码视图。
+  csvShowTable.value = false
+}
+
+function showCsvTable() {
+  // 步骤1：切回 CSV 表格视图。
+  csvShowTable.value = true
+}
 
 defineEmits<{
   audioTimeUpdate: [e: Event]
@@ -475,6 +531,11 @@ video.file-media {
 
 .file-editor-tab:hover {
   color: var(--fg);
+}
+
+.file-editor-tab.active {
+  background: var(--bg-hover, #333);
+  color: var(--fg-bright, #eee);
 }
 
 .file-editor-save {

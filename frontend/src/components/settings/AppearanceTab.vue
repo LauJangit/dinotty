@@ -155,7 +155,7 @@
         </div>
       </div>
 
-      <CollapsibleSection :title="t('settings.advancedText')" level="section" default-open>
+      <CollapsibleSection :title="t('settings.advancedText')" level="section">
 
       <div class="settings-row">
         <label>{{ t('settings.text.cursorStyle') }}</label>

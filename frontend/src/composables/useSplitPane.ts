@@ -21,6 +21,8 @@ import { setActivePaneId } from './useTerminal'
 import { useI18n } from './useI18n'
 import { usePaneWarning } from './usePaneWarning'
 import { reconcilePaneMru, removePaneFromMru, touchPaneMru } from '../types/paneMru'
+import { getIsAppForeground } from './useAppForeground'
+import { markPaneReadIfUnread } from './useNotification'
 
 export function useSplitPane(opts: {
   tabs: Ref<Tab[]>
@@ -154,6 +156,7 @@ export function useSplitPane(opts: {
       clearAllZoom(tab.layout)
       persist()
       syncTabLayout(tab)
+      if (getIsAppForeground()) markPaneReadIfUnread(paneId, 'focus')
       nextTick(() => {
         // Blur all other panes first to prevent duplicate input in Tauri WKWebView
         for (const leaf of getAllLeaves(tab.layout)) {
@@ -325,6 +328,7 @@ export function useSplitPane(opts: {
 
   /** Handle broadcast input: send data to all other panes in the same tab */
   function onTerminalInput(sourcePaneId: string, data: string) {
+    if (getIsAppForeground()) markPaneReadIfUnread(sourcePaneId, 'terminal_input')
     const tab = findTabByPaneId(sourcePaneId)
     if (!tab || !tab.broadcastMode) return
 

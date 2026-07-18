@@ -74,6 +74,7 @@
       :pane-id="leaf.paneId"
       :ssh-host="leaf.shell_type === 'ssh' ? leaf.title : undefined"
       @title-change="(title: string) => emit('titleChange', leaf!.paneId, title)"
+      @shell-info="(shell: string) => emit('shellInfo', leaf!.paneId, shell)"
       @input="(data: string) => emit('input', leaf!.paneId, data)"
       @file-click="(path: string) => emit('fileClick', path)"
       @preview-link="(url: string) => emit('previewLink', leaf!.paneId, url)"
@@ -103,6 +104,7 @@
         :style="getChildStyle(idx)"
         @register="(id: string, el: any) => emit('register', id, el)"
         @title-change="(id: string, title: string) => emit('titleChange', id, title)"
+        @shell-info="(id: string, shell: string) => emit('shellInfo', id, shell)"
         @focus="(id: string) => emit('focus', id)"
         @close="(id: string) => emit('close', id)"
         @input="(id: string, data: string) => emit('input', id, data)"
@@ -151,6 +153,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   register: [paneId: string, el: any]
   titleChange: [paneId: string, title: string]
+  shellInfo: [paneId: string, shell: string]
   focus: [paneId: string]
   close: [paneId: string]
   input: [paneId: string, data: string]

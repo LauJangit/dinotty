@@ -39,30 +39,56 @@ const localStorageMock = {
 ;(global as any).localStorage = localStorageMock
 
 // vi.mock factories are hoisted; vi.hoisted lets us share spies with them.
-const mocks = vi.hoisted(() => ({
-  closePane: vi.fn<(paneId: string) => Promise<boolean>>(),
-  splitPane: vi.fn(),
-  toggleBroadcast: vi.fn(),
-  toggleZoom: vi.fn(),
-  equalizePanes: vi.fn(),
-  focusPane: vi.fn(),
-  focusNext: vi.fn(),
-  focusPrev: vi.fn(),
-  keyboardResize: vi.fn(),
-  reorderPane: vi.fn(),
-  onTerminalInput: vi.fn(),
-  focusNeighbor: vi.fn(),
-  apiCreateTab: vi.fn(async () => ({
-    tab_id: 't-new',
-    pane_id: 'p-new',
-    layout: { type: 'leaf', paneId: 'p-new', title: 'Terminal', ratio: 1, zoomed: false },
-  })),
-  apiCloseTab: vi.fn(async () => {}),
-}))
+const mocks = vi.hoisted(() => {
+  let notificationRequestIdCounter = 0
+  return {
+    closePane: vi.fn<(paneId: string) => Promise<boolean>>(),
+    splitPane: vi.fn(),
+    toggleBroadcast: vi.fn(),
+    toggleZoom: vi.fn(),
+    equalizePanes: vi.fn(),
+    focusPane: vi.fn(),
+    focusNext: vi.fn(),
+    focusPrev: vi.fn(),
+    keyboardResize: vi.fn(),
+    reorderPane: vi.fn(),
+    onTerminalInput: vi.fn(),
+    focusNeighbor: vi.fn(),
+    scrollTabIntoView: vi.fn(),
+    apiActivatePane: vi.fn<(paneId: string, activePaneId: string) => Promise<void>>(async () => {}),
+    apiActivateWorkspace: vi.fn<(id: string) => Promise<void>>(async () => {}),
+    apiDeactivateWorkspace: vi.fn<() => Promise<void>>(async () => {}),
+    apiCreateTab: vi.fn(async () => ({
+      tab_id: 't-new',
+      pane_id: 'p-new',
+      layout: { type: 'leaf', paneId: 'p-new', title: 'Terminal', ratio: 1, zoomed: false },
+    })),
+    apiCloseTab: vi.fn(async () => {}),
+    clearForPaneIds: vi.fn(),
+    notificationItems: { value: [] as unknown[] },
+    unreadAttentionCount: { value: 0 },
+    unreadByPane: {} as Record<string, string>,
+    authoritativeSeverity: null as string | null,
+    presentationSettings: null as any,
+    authFetch: vi.fn<(input: string, init?: RequestInit) => Promise<any>>(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ status: 'accepted', notifId: 'notif-1', eventSeq: '1' }),
+    })),
+    pushNotification: vi.fn(),
+    setActiveReadContext: vi.fn(),
+    evaluateActiveRead: vi.fn(),
+    stopForegroundGainSubscription: vi.fn(),
+    mintNotificationRequestId: vi.fn(() => `tab-nonce-${++notificationRequestIdCounter}`),
+    resetNotificationRequestIds: () => {
+      notificationRequestIdCounter = 0
+    },
+  }
+})
 
 vi.mock('../composables/apiBase', () => ({
   apiUrl: (path: string) => path,
-  authFetch: vi.fn(async () => ({ ok: true, json: async () => ({}) })),
+  authFetch: mocks.authFetch,
   getAuthToken: () => 'token',
   setAuthToken: () => {},
   getApiBase: async () => 'http://127.0.0.1:7681',
@@ -111,17 +137,37 @@ vi.mock('../composables/useKeybindings', () => ({
 vi.mock('../composables/useMonitor', () => ({ initMonitorHistory: () => {} }))
 vi.mock('../composables/useNotification', () => ({
   useNotification: () => ({
-    notifications: { value: [] },
-    unreadCount: { value: 0 },
-    unreadByPane: {},
+    notifications: mocks.notificationItems,
+    unreadAttentionCount: mocks.unreadAttentionCount,
+    historyCount: { value: 0 },
+    unreadByPane: mocks.unreadByPane,
     togglePanel: vi.fn(),
     clearPaneUnread: vi.fn(),
-    clearForPaneIds: vi.fn(),
+    clearForPaneIds: mocks.clearForPaneIds,
     setGoToPaneHandler: vi.fn(),
   }),
-  aggregateSeverity: vi.fn(() => null),
-  pushNotification: vi.fn(),
-  setToastInstance: vi.fn(),
+  aggregateSeverity: vi.fn(() => mocks.authoritativeSeverity),
+  pushNotification: mocks.pushNotification,
+  setToastInstance: vi.fn(() => vi.fn()),
+  setActiveReadContext: vi.fn((...args) => {
+    mocks.setActiveReadContext(...args)
+    return vi.fn()
+  }),
+  evaluateActiveRead: mocks.evaluateActiveRead,
+  getNotificationClientId: () => 'client-stable',
+  mintNotificationRequestId: mocks.mintNotificationRequestId,
+  disposeNotificationPresentationScheduler: vi.fn(),
+}))
+vi.mock('../composables/useNotificationPresentation', async () => {
+  const { reactive } = await import('vue')
+  mocks.presentationSettings = reactive({ channels: { tab_indicator: true } })
+  return {
+    useNotificationPresentation: () => ({ settings: mocks.presentationSettings }),
+  }
+})
+vi.mock('../composables/useAppForeground', () => ({
+  getIsAppForeground: () => true,
+  onAppForegroundGain: vi.fn(() => mocks.stopForegroundGainSubscription),
 }))
 vi.mock('../composables/usePluginLoader', () => ({
   usePluginLoader: () => ({
@@ -139,7 +185,7 @@ vi.mock('../composables/useTabApi', () => ({
   apiCreateTab: mocks.apiCreateTab,
   apiCloseTab: mocks.apiCloseTab,
   apiClosePane: vi.fn(async () => ({ tab_closed: false })),
-  apiActivatePane: vi.fn(async () => {}),
+  apiActivatePane: mocks.apiActivatePane,
   apiListTabs: vi.fn(async () => ({
     tabs: [
       {
@@ -159,6 +205,16 @@ vi.mock('../composables/useTabApi', () => ({
     ],
     active_pane_id: 'pane-1',
   })),
+}))
+
+vi.mock('../composables/useWorkspaceApi', () => ({
+  apiListWorkspaces: vi.fn(async () => []),
+  apiCreateWorkspace: vi.fn(),
+  apiUpdateWorkspace: vi.fn(),
+  apiDeleteWorkspace: vi.fn(),
+  apiActivateWorkspace: mocks.apiActivateWorkspace,
+  apiDeactivateWorkspace: mocks.apiDeactivateWorkspace,
+  apiReorderWorkspaces: vi.fn(),
 }))
 
 vi.mock('../composables/useI18n', () => ({
@@ -188,6 +244,10 @@ import { createPinia } from 'pinia'
 import App from '../App.vue'
 import { settings } from '../composables/useSettings'
 import { useUiStore } from '../stores/uiStore'
+import { useSessionStore } from '../stores/sessionStore'
+import { useWorkspaces } from '../composables/useWorkspaces'
+import { currentRevealNavGen } from '../utils/navGen'
+import type { Tab } from '../types/pane'
 
 // Spec: openspec/changes/confirm-before-close-tab/spec.md
 //   "### Requirement: Pane Close Confirmation"
@@ -200,10 +260,12 @@ import { useUiStore } from '../stores/uiStore'
 // the inline arrow handler runs against the live `tabs` state.
 const SplitContainerStub = defineComponent({
   name: 'SplitContainer',
+  props: ['layout'],
   emits: [
     'close',
     'register',
     'title-change',
+    'shell-info',
     'focus',
     'input',
     'file-click',
@@ -214,6 +276,21 @@ const SplitContainerStub = defineComponent({
   ],
   setup(_, { emit }) {
     return () => h('div', { class: 'split-stub' })
+  },
+})
+
+const TabBarStub = defineComponent({
+  name: 'TabBar',
+  props: { indicators: { type: Object, default: () => ({}) } },
+  setup(props, { slots, expose }) {
+    expose({
+      hasTab: () => true,
+      scrollTabIntoView: mocks.scrollTabIntoView,
+    })
+    return () => h('div', {
+      class: 'tab-bar-stub',
+      'data-indicators': JSON.stringify(props.indicators),
+    }, slots.right?.())
   },
 })
 
@@ -254,6 +331,7 @@ async function mountWithTabs() {
       plugins: [createPinia()],
       stubs: {
         SplitContainer: SplitContainerStub,
+        TabBar: TabBarStub,
         ConfirmCloseDialog: ConfirmCloseDialogStub,
         ConfirmModal: ConfirmModalStub,
       },
@@ -274,8 +352,147 @@ async function mountWithTabs() {
 afterEach(() => {
   mountedWrapper?.unmount()
   mountedWrapper = undefined
+  const workspaceState = useWorkspaces()
+  workspaceState.workspaces.value = []
+  workspaceState.activeWorkspaceId.value = null
   vi.useRealTimers()
   localStorageMock.clear()
+  mocks.clearForPaneIds.mockReset()
+  mocks.notificationItems.value = []
+  mocks.unreadAttentionCount.value = 0
+  for (const paneId of Object.keys(mocks.unreadByPane)) delete mocks.unreadByPane[paneId]
+  mocks.authoritativeSeverity = null
+  mocks.presentationSettings.channels.tab_indicator = true
+  mocks.authFetch.mockReset()
+  mocks.authFetch.mockResolvedValue({
+    ok: true,
+    status: 200,
+    json: async () => ({ status: 'accepted', notifId: 'notif-1', eventSeq: '1' }),
+  })
+  mocks.pushNotification.mockReset()
+  mocks.scrollTabIntoView.mockReset()
+  mocks.apiActivatePane.mockReset()
+  mocks.apiActivatePane.mockResolvedValue(undefined)
+  mocks.apiActivateWorkspace.mockReset()
+  mocks.apiActivateWorkspace.mockResolvedValue(undefined)
+  mocks.apiDeactivateWorkspace.mockReset()
+  mocks.apiDeactivateWorkspace.mockResolvedValue(undefined)
+  mocks.mintNotificationRequestId.mockClear()
+  mocks.resetNotificationRequestIds()
+})
+
+describe('App.vue - activateTab cross-workspace', () => {
+  const terminalTab = (paneId: string, cwd: string): Tab => ({
+    type: 'terminal',
+    paneId,
+    layout: { type: 'leaf', paneId: `${paneId}-leaf`, title: paneId, ratio: 1, zoomed: false },
+    activePaneId: `${paneId}-leaf`,
+    paneMru: [`${paneId}-leaf`],
+    broadcastMode: false,
+    broadcastActivity: 0,
+    previewVisible: false,
+    previewAddress: '',
+    previewUrl: '',
+    previewKind: 'web',
+    cwd,
+  })
+
+  async function seedCrossWorkspaceTabs() {
+    const wrapper = await mountWithTabs()
+    const session = useSessionStore()
+    const workspaceState = useWorkspaces()
+    workspaceState.workspaces.value = [
+      { id: 'ws-active', name: 'Active', path: '/workspace/active', order: 0 },
+      { id: 'ws-other', name: 'Other', path: '/workspace/other', order: 1 },
+    ]
+    workspaceState.activeWorkspaceId.value = 'ws-active'
+    session.setTabs([
+      terminalTab('terminal-active', '/workspace/active'),
+      terminalTab('terminal-ungrouped', '/outside'),
+      terminalTab('terminal-other', '/workspace/other'),
+      { type: 'plugin', paneId: 'plugin-ungrouped', title: 'Plugin', pluginId: 'plugin' },
+    ])
+    session.setActivePane('terminal-active')
+    mocks.scrollTabIntoView.mockClear()
+    return { wrapper, workspaceState }
+  }
+
+  it('keeps the named workspace active for an ungrouped global plugin tab', async () => {
+    const { wrapper, workspaceState } = await seedCrossWorkspaceTabs()
+
+    const result = await (wrapper.vm as any).activateTab('plugin-ungrouped')
+    await nextTick()
+
+    expect(result).toBe(true)
+    expect(mocks.apiDeactivateWorkspace).not.toHaveBeenCalled()
+    expect(workspaceState.activeWorkspaceId.value).toBe('ws-active')
+  })
+
+  it('switches to the default workspace for an ungrouped terminal tab', async () => {
+    const { wrapper, workspaceState } = await seedCrossWorkspaceTabs()
+
+    const result = await (wrapper.vm as any).activateTab('terminal-ungrouped')
+
+    expect(result).toBe(true)
+    expect(mocks.apiDeactivateWorkspace).toHaveBeenCalledOnce()
+    expect(workspaceState.activeWorkspaceId.value).toBeNull()
+  })
+
+  it('activateTab abandons a stale cross-workspace hop superseded during workspace activation', async () => {
+    const { wrapper } = await seedCrossWorkspaceTabs()
+    let release!: () => void
+    mocks.apiActivateWorkspace.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { release = resolve })
+    )
+
+    const staleActivation = (wrapper.vm as any).activateTab('terminal-other') as Promise<boolean>
+    await Promise.resolve()
+    const latestResult = await (wrapper.vm as any).activateTab('plugin-ungrouped')
+    release()
+    const staleResult = await staleActivation
+    await nextTick()
+
+    expect(latestResult).toBe(true)
+    expect(staleResult).toBe(false)
+    expect(mocks.scrollTabIntoView).not.toHaveBeenCalledWith('terminal-other')
+  })
+
+  it('scrollActiveTabIntoView abandons a stale scroll superseded after pane activation', async () => {
+    const { wrapper } = await seedCrossWorkspaceTabs()
+    let releasePane!: () => void
+    mocks.apiActivatePane.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { releasePane = resolve })
+    )
+
+    const staleActivation = (wrapper.vm as any).activateTab('terminal-other') as Promise<boolean>
+    await Promise.resolve()
+    await Promise.resolve()
+    mocks.scrollTabIntoView.mockClear()
+
+    releasePane()
+    const supersede = nextTick(
+      () => (wrapper.vm as any).activateTab('terminal-active') as Promise<boolean>
+    )
+    expect(await staleActivation).toBe(true)
+    await nextTick()
+    await nextTick()
+    await supersede
+
+    expect(mocks.scrollTabIntoView).not.toHaveBeenCalledWith('terminal-other')
+  })
+
+  it('scrolls the target tab into view after cross-workspace activation', async () => {
+    const { wrapper, workspaceState } = await seedCrossWorkspaceTabs()
+
+    const result = await (wrapper.vm as any).activateTab('terminal-other')
+    await nextTick()
+    await nextTick()
+
+    expect(result).toBe(true)
+    expect(mocks.apiActivateWorkspace).toHaveBeenCalledWith('ws-other')
+    expect(workspaceState.activeWorkspaceId.value).toBe('ws-other')
+    expect(mocks.scrollTabIntoView).toHaveBeenCalledWith('terminal-other')
+  })
 })
 
 afterAll(() => {
@@ -394,6 +611,416 @@ describe('App.vue - onClosePane routes through confirmation gate', () => {
 
     expect(mocks.closePane).toHaveBeenCalledWith('pane-1')
     expect(mocks.apiCloseTab).not.toHaveBeenCalled()
+  })
+
+  it('marks a closed tab read only after the backend close succeeds', async () => {
+    settings.confirm_before_close_tab = false
+    mocks.closePane.mockResolvedValue(false)
+    let resolveClose!: () => void
+    mocks.apiCloseTab.mockImplementationOnce(
+      () => new Promise<void>((resolve) => (resolveClose = resolve))
+    )
+
+    const wrapper = await mountWithTabs()
+    mocks.clearForPaneIds.mockClear()
+    const splitContainer = wrapper.findComponent(SplitContainerStub)
+    splitContainer.vm.$emit('close', 'pane-1')
+    await nextTick()
+
+    expect(mocks.apiCloseTab).toHaveBeenCalledWith('tab-1')
+    expect(mocks.clearForPaneIds).not.toHaveBeenCalled()
+
+    resolveClose()
+    await Promise.resolve()
+    await nextTick()
+    expect(mocks.clearForPaneIds).toHaveBeenCalledWith(
+      expect.arrayContaining(['tab-1', 'pane-1', 'pane-2']),
+      'tab_close'
+    )
+  })
+
+  it('does not mark a tab read when the backend close fails', async () => {
+    settings.confirm_before_close_tab = false
+    mocks.closePane.mockResolvedValue(false)
+    mocks.apiCloseTab.mockRejectedValueOnce(new Error('close failed'))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const wrapper = await mountWithTabs()
+    mocks.clearForPaneIds.mockClear()
+    const splitContainer = wrapper.findComponent(SplitContainerStub)
+    splitContainer.vm.$emit('close', 'pane-1')
+    await Promise.resolve()
+    await nextTick()
+
+    expect(mocks.clearForPaneIds).not.toHaveBeenCalled()
+  })
+
+  it('advances reveal navigation when closing the active tab selects its replacement', async () => {
+    const wrapper = await mountWithTabs()
+    const session = useSessionStore()
+    session.addTab({ ...session.tabs[0], paneId: 'tab-survivor' }, false)
+    const navGenBeforeClose = currentRevealNavGen()
+
+    await (wrapper.vm as any).closeTab('tab-1')
+    await nextTick()
+
+    expect(currentRevealNavGen()).toBe(navGenBeforeClose + 1)
+    expect(session.activePaneId).toBe('tab-survivor')
+  })
+})
+
+describe('App.vue - notification badge visibility', () => {
+  it('keeps the bell visible for authoritative unread attention with empty history', async () => {
+    mocks.notificationItems.value = []
+    mocks.unreadAttentionCount.value = 1
+
+    const wrapper = await mountWithTabs()
+
+    expect(wrapper.find('button.notif-btn').exists()).toBe(true)
+    expect(wrapper.find('.notif-badge').text()).toBe('1')
+  })
+})
+
+describe('App.vue - notification goto flow', () => {
+  it('passes the goto reason from the real NotificationPanel reveal path', async () => {
+    const wrapper = await mountWithTabs()
+    mocks.clearForPaneIds.mockClear()
+
+    await wrapper.findComponent({ name: 'NotificationPanel' }).vm.$emit('goto-pane', 'pane-1')
+    await Promise.resolve()
+    await nextTick()
+
+    expect(mocks.clearForPaneIds).toHaveBeenCalledWith(
+      expect.arrayContaining(['tab-1', 'pane-1', 'pane-2']),
+      'goto'
+    )
+  })
+})
+
+describe('App.vue - plugin notification bridge', () => {
+  function response(status: number, body: Record<string, unknown>) {
+    return { ok: status >= 200 && status < 300, status, json: async () => body }
+  }
+
+  async function flushBridge() {
+    for (let i = 0; i < 6; i++) await Promise.resolve()
+  }
+
+  it('POSTs pane-less plugin notifications and waits for the raised broadcast to insert history', async () => {
+    await mountWithTabs()
+    mocks.authFetch.mockClear()
+    mocks.pushNotification.mockClear()
+    ;(window as any).__dinotty_ui_notify('hello', 'warn', 'Plugin title')
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(mocks.authFetch).toHaveBeenCalledWith('/api/notify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clientId: 'client-stable',
+        requestId: 'tab-nonce-1',
+        source: 'plugin',
+        type: 'warning',
+        title: 'Plugin title',
+        body: 'hello',
+      }),
+      signal: expect.any(AbortSignal),
+    })
+    expect(mocks.pushNotification).not.toHaveBeenCalled()
+  })
+
+  it('retries an accepted-but-response-lost request with the same requestId and does not insert locally', async () => {
+    await mountWithTabs()
+    mocks.authFetch.mockClear()
+    vi.useFakeTimers()
+    mocks.authFetch.mockRejectedValueOnce(new Error('network'))
+    mocks.authFetch.mockResolvedValueOnce(
+      response(200, { status: 'accepted', notifId: 'notif-2', eventSeq: '2' })
+    )
+    ;(window as any).__dinotty_ui_notify('offline', 'error')
+    await flushBridge()
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushBridge()
+
+    expect(mocks.authFetch).toHaveBeenCalledTimes(2)
+    const requestBodies = mocks.authFetch.mock.calls.map(([, init]) => JSON.parse(init!.body as string))
+    expect(requestBodies[0].requestId).toBe(requestBodies[1].requestId)
+    expect(requestBodies[0]).toEqual(requestBodies[1])
+    expect(mocks.pushNotification).not.toHaveBeenCalled()
+  })
+
+  it('does not insert for a suppressed response', async () => {
+    await mountWithTabs()
+    mocks.authFetch.mockClear()
+    mocks.authFetch.mockResolvedValueOnce(response(200, { status: 'suppressed', reason: 'disabled' }))
+
+    ;(window as any).__dinotty_ui_notify('suppressed', 'info')
+    await flushBridge()
+
+    expect(mocks.authFetch).toHaveBeenCalledTimes(1)
+    expect(mocks.pushNotification).not.toHaveBeenCalled()
+  })
+
+  it('retries HTTP 503 responses regardless of body shape with the same requestId', async () => {
+    await mountWithTabs()
+    mocks.authFetch.mockClear()
+    vi.useFakeTimers()
+    mocks.authFetch
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        json: async () => {
+          throw new SyntaxError('truncated proxy response')
+        },
+      })
+      .mockResolvedValueOnce(response(503, { status: 'unexpected-proxy-shape' }))
+      .mockResolvedValueOnce(
+        response(200, { status: 'accepted', notifId: 'notif-3', eventSeq: '3' })
+      )
+
+    ;(window as any).__dinotty_ui_notify('busy', 'info')
+    await flushBridge()
+    await vi.advanceTimersByTimeAsync(3000)
+    await flushBridge()
+
+    expect(mocks.authFetch).toHaveBeenCalledTimes(3)
+    const requestBodies = mocks.authFetch.mock.calls.map(([, init]) => JSON.parse(init!.body as string))
+    expect(new Set(requestBodies.map(({ requestId }) => requestId))).toEqual(
+      new Set([requestBodies[0].requestId])
+    )
+    expect(requestBodies[1]).toEqual(requestBodies[0])
+    expect(requestBodies[2]).toEqual(requestBodies[0])
+    expect(mocks.pushNotification).not.toHaveBeenCalled()
+  })
+
+  it('gives separate jobs distinct requestIds while preserving each id across retries', async () => {
+    await mountWithTabs()
+    mocks.authFetch.mockClear()
+    vi.useFakeTimers()
+    const attemptsByRequestId = new Map<string, number>()
+    mocks.authFetch.mockImplementation(async (_input, init) => {
+      const request = JSON.parse(init!.body as string)
+      const attempt = (attemptsByRequestId.get(request.requestId) ?? 0) + 1
+      attemptsByRequestId.set(request.requestId, attempt)
+      if (attempt === 1) throw new Error('network')
+      return response(200, { status: 'accepted', notifId: request.requestId, eventSeq: '1' })
+    })
+
+    ;(window as any).__dinotty_ui_notify('first', 'info')
+    ;(window as any).__dinotty_ui_notify('second', 'warn')
+    await flushBridge()
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushBridge()
+
+    const requests = mocks.authFetch.mock.calls.map(([, init]) => JSON.parse(init!.body as string))
+    const requestIdsByBody = new Map<string, Set<string>>()
+    for (const request of requests) {
+      const ids = requestIdsByBody.get(request.body) ?? new Set<string>()
+      ids.add(request.requestId)
+      requestIdsByBody.set(request.body, ids)
+    }
+    expect([...requestIdsByBody.keys()].sort()).toEqual(['first', 'second'])
+    expect(requestIdsByBody.get('first')?.size).toBe(1)
+    expect(requestIdsByBody.get('second')?.size).toBe(1)
+    expect([...requestIdsByBody.get('first')!][0]).not.toBe(
+      [...requestIdsByBody.get('second')!][0]
+    )
+    expect([...attemptsByRequestId.values()]).toEqual([2, 2])
+  })
+
+  it.each([400, 404, 409])(
+    'treats HTTP %s as terminal without retrying or inserting locally',
+    async (status) => {
+      await mountWithTabs()
+      mocks.authFetch.mockClear()
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+      mocks.authFetch.mockResolvedValueOnce(response(status, { status: 'terminal' }))
+
+      ;(window as any).__dinotty_ui_notify('rejected', 'info')
+      await flushBridge()
+
+      expect(mocks.authFetch).toHaveBeenCalledTimes(1)
+      expect(mocks.pushNotification).not.toHaveBeenCalled()
+      expect(consoleError).toHaveBeenCalledWith(
+        `[notification] plugin notify failed with HTTP ${status}`
+      )
+      consoleError.mockRestore()
+    }
+  )
+
+  it('falls back exactly once after all four retryable attempts fail', async () => {
+    await mountWithTabs()
+    mocks.authFetch.mockClear()
+    vi.useFakeTimers()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    mocks.authFetch.mockRejectedValue(new Error('offline'))
+
+    ;(window as any).__dinotty_ui_notify('offline', 'error')
+    await flushBridge()
+    await vi.advanceTimersByTimeAsync(7000)
+    await flushBridge()
+
+    expect(mocks.authFetch).toHaveBeenCalledTimes(4)
+    expect(mocks.pushNotification).toHaveBeenCalledTimes(1)
+    expect(mocks.pushNotification).toHaveBeenCalledWith({
+      type: 'error',
+      title: 'Plugin',
+      body: 'offline',
+      source: 'plugin',
+    })
+    consoleError.mockRestore()
+  })
+
+  it('limits a failing notification burst to three concurrent fetches', async () => {
+    await mountWithTabs()
+    mocks.authFetch.mockClear()
+    mocks.pushNotification.mockClear()
+    vi.useFakeTimers()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let inFlight = 0
+    let maxInFlight = 0
+    const attemptsByBody = new Map<string, number>()
+    const requestIdsByBody = new Map<string, Set<string>>()
+    const attemptsByRequestId = new Map<string, number>()
+    mocks.authFetch.mockImplementation(
+      (_input, init) =>
+        new Promise((_, reject) => {
+          const request = JSON.parse(init!.body as string)
+          attemptsByBody.set(request.body, (attemptsByBody.get(request.body) ?? 0) + 1)
+          const ids = requestIdsByBody.get(request.body) ?? new Set<string>()
+          ids.add(request.requestId)
+          requestIdsByBody.set(request.body, ids)
+          attemptsByRequestId.set(
+            request.requestId,
+            (attemptsByRequestId.get(request.requestId) ?? 0) + 1
+          )
+          inFlight++
+          maxInFlight = Math.max(maxInFlight, inFlight)
+          setTimeout(() => {
+            inFlight--
+            reject(new Error('offline'))
+          }, 10)
+        })
+    )
+
+    for (let i = 0; i < 12; i++) {
+      ;(window as any).__dinotty_ui_notify(`burst-${i}`, 'info')
+    }
+    await flushBridge()
+    await vi.runAllTimersAsync()
+    await flushBridge()
+
+    expect(maxInFlight).toBe(3)
+    expect(mocks.authFetch).toHaveBeenCalledTimes(48)
+    expect([...attemptsByBody.keys()].sort()).toEqual(
+      Array.from({ length: 12 }, (_, i) => `burst-${i}`).sort()
+    )
+    expect([...attemptsByBody.values()]).toEqual(Array(12).fill(4))
+    expect([...requestIdsByBody.values()].every((ids) => ids.size === 1)).toBe(true)
+    expect(attemptsByRequestId.size).toBe(12)
+    expect([...attemptsByRequestId.values()]).toEqual(Array(12).fill(4))
+    consoleError.mockRestore()
+  })
+
+  it('aggregates overflow warnings while evicting the oldest queued jobs', async () => {
+    await mountWithTabs()
+    mocks.authFetch.mockClear()
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const pending: Array<{
+      body: string
+      resolve: (value: ReturnType<typeof response>) => void
+    }> = []
+    mocks.authFetch.mockImplementation(
+      (_input, init) =>
+        new Promise((resolve) => {
+          pending.push({ body: init!.body as string, resolve })
+        })
+    )
+
+    for (let i = 0; i < 72; i++) {
+      ;(window as any).__dinotty_ui_notify(`queued-${i}`, 'info')
+    }
+    await flushBridge()
+
+    expect(mocks.authFetch).toHaveBeenCalledTimes(3)
+    expect(consoleWarn).toHaveBeenCalledTimes(1)
+    expect(consoleWarn).toHaveBeenCalledWith(
+      '[notification] plugin notify bridge queue full; evicted 5 oldest pending jobs'
+    )
+    pending.splice(0, 3).forEach(({ resolve }) =>
+      resolve(response(200, { status: 'accepted', notifId: 'notif', eventSeq: '1' }))
+    )
+    await flushBridge()
+
+    const startedAfterSlotRelease = mocks.authFetch.mock.calls
+      .slice(3, 6)
+      .map(([, init]) => JSON.parse(init!.body as string).body)
+    expect(startedAfterSlotRelease).toEqual(['queued-8', 'queued-9', 'queued-10'])
+    pending.splice(0).forEach(({ resolve }) =>
+      resolve(response(200, { status: 'accepted', notifId: 'notif', eventSeq: '1' }))
+    )
+    await flushBridge()
+    consoleWarn.mockRestore()
+  })
+
+  it('aborts pending fetches on unmount without retrying, starting queued work, or falling back', async () => {
+    const wrapper = await mountWithTabs()
+    mocks.authFetch.mockClear()
+    mocks.pushNotification.mockClear()
+    const signals: AbortSignal[] = []
+    let abortEvents = 0
+    mocks.authFetch.mockImplementation(
+      (_input, init) =>
+        new Promise((_, reject) => {
+          const signal = init!.signal as AbortSignal
+          signals.push(signal)
+          signal.addEventListener('abort', () => {
+            abortEvents++
+            const error = new Error('aborted')
+            error.name = 'AbortError'
+            reject(error)
+          })
+        })
+    )
+
+    for (let i = 0; i < 4; i++) {
+      ;(window as any).__dinotty_ui_notify(`dispose-${i}`, 'error')
+    }
+    await flushBridge()
+    expect(mocks.authFetch).toHaveBeenCalledTimes(3)
+    expect(signals.every((signal) => !signal.aborted)).toBe(true)
+
+    wrapper.unmount()
+    mountedWrapper = undefined
+    await flushBridge()
+
+    expect(abortEvents).toBe(3)
+    expect(signals.every((signal) => signal.aborted)).toBe(true)
+    expect(mocks.authFetch).toHaveBeenCalledTimes(3)
+    const startedBodies = mocks.authFetch.mock.calls.map(([, init]) =>
+      JSON.parse(init!.body as string).body
+    )
+    expect(startedBodies).toEqual(['dispose-0', 'dispose-1', 'dispose-2'])
+    expect(mocks.pushNotification).not.toHaveBeenCalled()
+  })
+})
+
+describe('App.vue - records terminal shell type', () => {
+  it('writes shell info into the matching leaf pane', async () => {
+    // 步骤1：挂载包含两个本地终端 Pane 的应用。
+    const wrapper = await mountWithTabs()
+    const splitContainer = wrapper.findComponent(SplitContainerStub)
+    const layout = splitContainer.props('layout') as {
+      children: Array<{ paneId: string; shell_type?: string }>
+    }
+
+    // 步骤2：模拟 PowerShell 终端上报 shell 类型。
+    await splitContainer.vm.$emit('shell-info', 'pane-1', 'powershell')
+    await nextTick()
+
+    // 步骤3：应用状态应记录该类型，供“运行代码”选择正确解释器。
+    expect(layout.children[0].shell_type).toBe('powershell')
   })
 })
 
@@ -600,5 +1227,28 @@ describe('App.vue - Cmd+W routes through confirmation gate in split-pane mode', 
     expect(mocks.apiCloseTab).not.toHaveBeenCalled()
     const confirmDialog = wrapper.findComponent(ConfirmCloseDialogStub)
     expect(confirmDialog.attributes('data-visible')).toBe('false')
+  })
+})
+
+describe('App.vue - notification tab indicator display filter', () => {
+  it('hides and shows the rendered indicator without mutating authoritative unread state', async () => {
+    mocks.authoritativeSeverity = 'warning'
+    mocks.unreadByPane['pane-1'] = 'warning'
+    mocks.presentationSettings.channels.tab_indicator = true
+    const wrapper = await mountWithTabs()
+    const tabBar = wrapper.findComponent(TabBarStub)
+
+    expect(tabBar.attributes('data-indicators')).toContain('warning')
+    expect(mocks.unreadByPane['pane-1']).toBe('warning')
+
+    mocks.presentationSettings.channels.tab_indicator = false
+    await nextTick()
+    expect(tabBar.attributes('data-indicators')).toBe('{}')
+    expect(mocks.unreadByPane['pane-1']).toBe('warning')
+
+    mocks.presentationSettings.channels.tab_indicator = true
+    await nextTick()
+    expect(tabBar.attributes('data-indicators')).toContain('warning')
+    expect(mocks.unreadByPane['pane-1']).toBe('warning')
   })
 })

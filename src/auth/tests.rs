@@ -27,6 +27,60 @@ fn constant_time_eq_single_char_diff() {
     assert!(!constant_time_eq("abc", "abd"));
 }
 
+// ── session cookie port scoping ────────────────────────────────
+
+#[test]
+fn session_cookie_names_are_port_scoped() {
+    let port_8998 = session_cookie_name(8998);
+    let port_8999 = session_cookie_name(8999);
+
+    assert_eq!(port_8998, "dinotty_session_8998");
+    assert_ne!(port_8998, port_8999);
+    assert_ne!("dinotty_session", port_8998);
+    assert_ne!("dinotty_session", port_8999);
+}
+
+#[test]
+fn session_cookie_port_conflict_check_allows_same_port_only() {
+    assert!(!check_port_conflict(8998, 8998));
+    assert!(check_port_conflict(8998, 8999));
+}
+
+#[test]
+fn setting_same_session_cookie_port_twice_is_idempotent() {
+    set_session_cookie_port(8998);
+    set_session_cookie_port(8998);
+
+    assert_eq!(configured_session_cookie_port(), 8998);
+}
+
+#[test]
+fn extract_session_cookie_rejects_legacy_and_wrong_port_names() {
+    let req = Request::builder()
+        .header(
+            header::COOKIE,
+            "dinotty_session=legacy-session; dinotty_session_8999=wrong-port-session",
+        )
+        .body(Body::empty())
+        .unwrap();
+
+    assert_eq!(extract_session_cookie(&req, 8998), None);
+}
+
+#[test]
+fn extract_session_cookie_honors_only_the_correct_port_name() {
+    let req = Request::builder()
+        .header(
+            header::COOKIE,
+            "dinotty_session=legacy-session; dinotty_session_8999=wrong-port-session; \
+             dinotty_session_8998=correct-session",
+        )
+        .body(Body::empty())
+        .unwrap();
+
+    assert_eq!(extract_session_cookie(&req, 8998).as_deref(), Some("correct-session"));
+}
+
 // ── matches_wildcard ────────────────────────────────────────────
 
 #[test]

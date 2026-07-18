@@ -13,6 +13,7 @@ import {
 
 const workspaces = ref<Workspace[]>([])
 const activeWorkspaceId = ref<string | null>(null)
+let wsNavGen = 0
 
 export function useWorkspaces() {
   async function loadWorkspaces() {
@@ -23,8 +24,13 @@ export function useWorkspaces() {
     }
   }
 
-  async function createWorkspace(path: string, name?: string, connectionId?: string) {
-    const ws = await apiCreateWorkspace(path, name, connectionId)
+  async function createWorkspace(
+    path: string,
+    name?: string,
+    connectionId?: string,
+    overrides?: { abbr?: string; color?: string }
+  ) {
+    const ws = await apiCreateWorkspace(path, name, connectionId, overrides)
     // Optimistic add; sync will reconcile if needed
     if (ws && ws.id && !workspaces.value.find((w) => w.id === ws.id)) {
       workspaces.value.push(ws)
@@ -47,13 +53,20 @@ export function useWorkspaces() {
     }
   }
 
-  async function activateWorkspace(id: string | null) {
+  async function activateWorkspace(id: string | null): Promise<boolean> {
+    const gen = ++wsNavGen
     if (id) {
       await apiActivateWorkspace(id)
     } else {
       await apiDeactivateWorkspace()
     }
+    if (gen !== wsNavGen) return false
     activeWorkspaceId.value = id
+    return true
+  }
+
+  function cancelPendingWorkspaceActivation() {
+    wsNavGen++
   }
 
   async function reorderWorkspaces(ids: string[]) {
@@ -135,6 +148,7 @@ export function useWorkspaces() {
     updateWorkspace,
     deleteWorkspace,
     activateWorkspace,
+    cancelPendingWorkspaceActivation,
     reorderWorkspaces,
     matchWorkspace,
     filterTabs,

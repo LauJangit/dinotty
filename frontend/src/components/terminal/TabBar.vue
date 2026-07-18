@@ -6,6 +6,20 @@
         <LayoutDashboard :size="16" />
       </button>
       <span class="current-tab-index">{{ currentTabIndex }}</span>
+      <span
+        v-if="showWsBadge && currentWorkspace"
+        class="tab-ws-badge mobile"
+        :title="currentWorkspace.name"
+      >
+        <span
+          class="tab-ws-dot"
+          :style="{ background: currentWorkspace.color ?? 'var(--accent, #8a8a8a)' }"
+        ></span>
+        <span v-if="currentWorkspace.remote" class="tab-ws-remote">
+          <Server :size="9" />
+        </span>
+        <span v-if="currentWorkspace.abbr" class="tab-ws-abbr">{{ currentWorkspace.abbr }}</span>
+      </span>
       <span class="current-tab-name">{{ currentTabTitle }}</span>
     </template>
     <!-- Desktop mode: full tab list -->
@@ -13,7 +27,7 @@
     <button class="mc-trigger desktop-mc" @click="$emit('open-overview')">
       <LayoutDashboard :size="16" />
     </button>
-    <div id="tabs-list">
+    <div id="tabs-list" ref="tabsListRef">
       <div
         v-for="tab in tabs"
         :key="tab.paneId"
@@ -26,6 +40,20 @@
         @touchend.prevent="onTabTouchEnd($event, tab.paneId)"
       >
         <span class="tab-index">{{ tab.index }}</span>
+        <span
+          v-if="showWsBadge && tab.workspace"
+          class="tab-ws-badge"
+          :title="tab.workspace.name"
+        >
+          <span
+            class="tab-ws-dot"
+            :style="{ background: tab.workspace.color ?? 'var(--accent, #8a8a8a)' }"
+          ></span>
+          <span v-if="tab.workspace.remote" class="tab-ws-remote">
+            <Server :size="9" />
+          </span>
+          <span v-if="tab.workspace.abbr" class="tab-ws-abbr">{{ tab.workspace.abbr }}</span>
+        </span>
         <Puzzle v-if="tab.type === 'plugin'" :size="12" class="tab-plugin-icon" />
         <Server v-else-if="tab.shellType === 'ssh'" :size="12" class="tab-ssh-icon" />
         <input
@@ -71,7 +99,7 @@
       >
         <Terminal :size="16" />
       </button>
-      <div v-if="newMenuOpen" class="new-menu-dropdown" :class="{ 'align-right': newMenuAlignRight }" @mouseleave="newMenuOpen = false">
+      <div v-if="newMenuOpen" class="new-menu-dropdown" :class="{ 'align-right': newMenuAlignRight }">
         <div
           class="new-menu-item"
           @click="emitAction('new-tab')"
@@ -135,7 +163,7 @@
       >
         <Puzzle :size="16" />
       </button>
-      <div v-if="pluginMenuOpen" class="plugin-dropdown" @mouseleave="pluginMenuOpen = false">
+      <div v-if="pluginMenuOpen" class="plugin-dropdown">
         <div
           v-for="p in plugins"
           :key="p.id"
@@ -159,13 +187,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue'
 import { X, Terminal, Puzzle, Columns2, Rows2, Radio, LayoutDashboard, Globe, Server } from 'lucide-vue-next'
 import { useI18n } from '../../composables/useI18n'
 import { useKeybindings } from '../../composables/useKeybindings'
+import { useSettingsStore } from '../../stores'
 
 const { t } = useI18n()
 const { getBinding, formatBinding } = useKeybindings()
+const settingsStore = useSettingsStore()
 const kbdNewTab = formatBinding(getBinding('newTab')).join('')
 const kbdSplitH = formatBinding(getBinding('splitHorizontal')).join('')
 const kbdSplitV = formatBinding(getBinding('splitVertical')).join('')
@@ -178,6 +208,13 @@ export interface TabInfo {
   index: number
   type: 'terminal' | 'plugin'
   shellType?: string // "ssh" for SSH tabs
+  workspace?: {
+    id: string
+    abbr?: string
+    name: string
+    color?: string
+    remote?: boolean
+  }
 }
 
 export interface PluginInfo {
@@ -188,7 +225,7 @@ export interface PluginInfo {
   state: string
 }
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     tabs: TabInfo[]
     activePaneId: string | null
@@ -211,6 +248,15 @@ withDefaults(
   }
 )
 
+const showWsBadge = computed(
+  () => settingsStore.settings.show_workspace_badge_on_tab ?? props.isMobile
+)
+
+const currentWorkspace = computed(() => {
+  const tab = props.tabs.find((t) => t.paneId === props.activePaneId)
+  return tab?.workspace
+})
+
 const emit = defineEmits<{
   activate: [paneId: string]
   close: [paneId: string]
@@ -220,6 +266,17 @@ const emit = defineEmits<{
   rename: [paneId: string, title: string]
   'open-overview': []
 }>()
+
+const tabsListRef = ref<HTMLElement | null>(null)
+
+function findTabElement(paneId: string): HTMLElement | undefined {
+  return Array.from(tabsListRef.value?.querySelectorAll<HTMLElement>('.tab[data-pane-id]') ?? [])
+    .find((tab) => tab.dataset.paneId === paneId)
+}
+
+function hasTab(paneId: string): boolean {
+  return !!findTabElement(paneId)
+}
 
 const editingPaneId = ref<string | null>(null)
 const editValue = ref('')
@@ -285,11 +342,22 @@ function onDocTouchStart(e: TouchEvent) {
   }
 }
 
+function onDocMenuMouseDown(e: MouseEvent) {
+  if (pluginWrapRef.value && !pluginWrapRef.value.contains(e.target as Node)) {
+    pluginMenuOpen.value = false
+  }
+  if (newMenuWrapRef.value && !newMenuWrapRef.value.contains(e.target as Node)) {
+    newMenuOpen.value = false
+  }
+}
+
 watch([pluginMenuOpen, newMenuOpen], ([pluginOpen, newOpen]) => {
   if (pluginOpen || newOpen) {
     document.addEventListener('touchstart', onDocTouchStart, { passive: true })
+    document.addEventListener('mousedown', onDocMenuMouseDown)
   } else {
     document.removeEventListener('touchstart', onDocTouchStart)
+    document.removeEventListener('mousedown', onDocMenuMouseDown)
   }
   if (newOpen) {
     nextTick(() => {
@@ -312,6 +380,16 @@ let isTouchDrag = false
 let suppressClick = false
 const DRAG_THRESHOLD = 5
 
+function scrollTabIntoView(paneId: string): boolean {
+  const el = findTabElement(paneId)
+  if (!el) return false
+  if (!dragStarted || dragFromId === null) {
+    el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' })
+  }
+  return true
+}
+
+defineExpose({ hasTab, scrollTabIntoView })
 function getPointerPos(e: MouseEvent | TouchEvent): { clientX: number; clientY: number } {
   if ('touches' in e) {
     const t = e.touches[0]
@@ -426,6 +504,7 @@ function cleanup() {
 onBeforeUnmount(() => {
   cleanup()
   document.removeEventListener('mousedown', onDocMouseDown)
+  document.removeEventListener('mousedown', onDocMenuMouseDown)
   document.removeEventListener('touchstart', onDocTouchStart)
 })
 </script>
@@ -438,6 +517,41 @@ onBeforeUnmount(() => {
   text-align: center;
   flex-shrink: 0;
   opacity: 0.7;
+}
+.tab-ws-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  color: var(--text-muted, #888);
+  opacity: 0.75;
+  line-height: 1;
+}
+.tab-ws-badge.mobile {
+  opacity: 0.85;
+}
+.tab.active .tab-ws-badge {
+  opacity: 0.9;
+}
+.tab-ws-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.tab-ws-remote {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted, #888);
+  opacity: 0.7;
+}
+.tab-ws-abbr {
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  max-width: 28px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .tab-ssh-icon {
   flex-shrink: 0;

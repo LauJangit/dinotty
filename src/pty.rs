@@ -155,6 +155,7 @@ fn cleanup_exited_pty_session(
     let _ = session.output_tx.send(Vec::new());
 
     if manager.sessions.remove(pane_id).is_some() {
+        manager.pane_closed_notify(pane_id);
         manager
             .event_bus
             .publish(BusEvent::SessionClosed { pane_id: pane_id.to_string(), exit_code });
@@ -188,20 +189,33 @@ pub fn create_session(
     tab_id: Option<&str>,
     tauri_on_exit: Option<Arc<dyn Fn(String) + Send + Sync>>,
     cwd: Option<PathBuf>,
+    argv: Option<Vec<String>>,
 ) -> Result<(Arc<Session>, String), String> {
+    if argv.as_ref().is_some_and(Vec::is_empty) {
+        return Err("argv must be non-empty when provided".to_string());
+    }
+
     let pty_system = NativePtySystem::default();
     let pair = pty_system
         .openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 })
         .map_err(|e| e.to_string())?;
 
-    let shell_spec = shell::default_shell();
-    let shell_type = shell_spec.shell_type.clone();
-    let mut cmd = CommandBuilder::new(&shell_spec.program);
+    #[allow(clippy::single_match_else)]
+    let (mut cmd, shell_type) = match argv {
+        Some(argv) => {
+            let mut cmd = CommandBuilder::new(&argv[0]);
+            cmd.args(&argv[1..]);
+            (cmd, "command".to_string())
+        }
+        None => {
+            let shell_spec = shell::default_shell();
+            let mut cmd = CommandBuilder::new(&shell_spec.program);
+            cmd.args(&shell_spec.args);
+            (cmd, shell_spec.shell_type.clone())
+        }
+    };
     for key in claude_session_env_keys_to_strip() {
         cmd.env_remove(&key);
-    }
-    for arg in &shell_spec.args {
-        cmd.arg(arg);
     }
     cmd.env("TERM", "xterm-256color");
     cmd.env("DINOTTY_PANE_ID", pane_id);

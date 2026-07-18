@@ -4,6 +4,7 @@ import { Star, Clock } from 'lucide-vue-next'
 import { useWorkspaceBookmarks } from '../../composables/useWorkspaceBookmarks'
 import { useRecentFiles } from '../../composables/useRecentAccess'
 import { useI18n } from '../../composables/useI18n'
+import { uiPrompt } from '../../composables/usePrompt'
 import { settings } from '../../composables/useSettings'
 
 const props = defineProps<{
@@ -48,11 +49,14 @@ function closeCtxMenu() {
   ctxMenu.value = null
 }
 
-function ctxRenameBookmark() {
+async function ctxRenameBookmark() {
   if (!ctxMenu.value?.id) return
   const bm = bookmarks.value.find((b) => b.id === ctxMenu.value!.id)
   if (!bm) return
-  const newName = prompt(t('fileBookmark.rename'), bm.name)
+  const newName = await uiPrompt(t('fileBookmark.rename'), bm.name, {
+    confirmText: t('settings.token.save'),
+    cancelText: t('confirm.closeWindowCancel'),
+  })
   if (newName && newName.trim()) {
     renameBookmark(bm.id, newName.trim())
   }

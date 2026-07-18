@@ -10,9 +10,9 @@
       </div>
     </div>
 
-    <CollapsibleSection :title="t('notification.triggers')" level="group" default-open>
+    <CollapsibleSection :title="t('notification.triggers')" level="group">
         <div class="settings-row">
-          <label>Terminal Bell (\a)</label>
+          <label>{{ t('notification.bellTrigger') }}</label>
           <label class="toggle">
             <input type="checkbox" v-model="cfg.bell.enabled" @change="saveSettings()" />
             <span class="toggle-track"><span class="toggle-thumb"></span></span>
@@ -38,45 +38,104 @@
             <span class="toggle-track"><span class="toggle-thumb"></span></span>
           </label>
         </div>
+        <div class="settings-row">
+          <label>{{ t('notification.idleReminder') }}</label>
+          <label class="toggle">
+            <input type="checkbox" v-model="cfg.idle_reminder" @change="saveSettings()" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
     </CollapsibleSection>
 
     <div class="settings-group">
       <h3 class="settings-group-title">{{ t('notification.channels') }}</h3>
       <div class="settings-row">
+        <label>{{ t('notification.localPresentation') }}</label>
+        <label class="toggle">
+          <input type="checkbox" v-model="presentation.presentation_enabled" />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
+      <div class="settings-row">
         <label>{{ t('notification.sound') }}</label>
         <label class="toggle">
-          <input type="checkbox" v-model="cfg.channels.sound" @change="saveSettings()" />
+          <input type="checkbox" v-model="presentation.channels.sound" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
       <div class="settings-row">
         <label>{{ t('notification.vibration') }}</label>
         <label class="toggle">
-          <input type="checkbox" v-model="cfg.channels.vibration" @change="saveSettings()" />
+          <input type="checkbox" v-model="presentation.channels.vibration" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
       <div class="settings-row">
-        <label>{{ t('notification.panel') }}</label>
+        <label>{{ t('notification.popup') }}</label>
         <label class="toggle">
-          <input type="checkbox" v-model="cfg.channels.panel" @change="saveSettings()" />
+          <input type="checkbox" v-model="presentation.channels.popup" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
       <div class="settings-row">
         <label>{{ t('notification.tabIndicator') }}</label>
         <label class="toggle">
-          <input type="checkbox" v-model="cfg.channels.tab_indicator" @change="saveSettings()" />
+          <input type="checkbox" v-model="presentation.channels.tab_indicator" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
       </div>
     </div>
 
     <div class="settings-group">
+      <h3 class="settings-group-title">{{ t('notification.presentationBehavior') }}</h3>
+      <div class="settings-row">
+        <label>{{ t('notification.dndLevel') }}</label>
+        <div class="segmented-control">
+          <button
+            v-for="level in dndLevels"
+            :key="level.value"
+            :class="{ active: presentation.dnd_level === level.value }"
+            @click="presentation.dnd_level = level.value"
+          >
+            {{ t(level.labelKey) }}
+          </button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <label>{{ t('notification.ignoreCurrentTab') }}</label>
+        <label class="toggle">
+          <input type="checkbox" v-model="presentation.ignore_current_tab" />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
+      <div class="settings-row quiet-hours-row">
+        <label>{{ t('notification.quietHours') }}</label>
+        <input type="time" v-model="presentation.quiet_hours.start" />
+        <span>–</span>
+        <input type="time" v-model="presentation.quiet_hours.end" />
+      </div>
+      <div class="settings-row">
+        <label>{{ t('notification.coalesceWindow') }}</label>
+        <input
+          type="number"
+          class="num-input coalesce-input"
+          v-model.number="presentation.coalesce_window_ms"
+          min="0"
+          max="10000"
+          step="50"
+        />
+        ms
+      </div>
+      <p v-if="isEphemeral" class="ephemeral-note">
+        {{ t('notification.localPresentationHint') }}
+      </p>
+    </div>
+
+    <div class="settings-group">
       <h3 class="settings-group-title">{{ t('notification.sounds') }}</h3>
       <div v-for="key in soundTypes" :key="key" class="settings-row sound-row">
         <label class="sound-label">{{ t(`notification.type.${key}`) }}</label>
-        <select class="sound-select" v-model="cfg.sounds[key].value" @change="saveSettings()">
+        <select class="sound-select" v-model="presentation.sounds[key].value">
           <option v-for="name in builtinNames" :key="name" :value="name">{{ name }}</option>
         </select>
         <input
@@ -84,17 +143,17 @@
           class="vol-slider"
           min="0"
           max="100"
-          :value="Math.round(cfg.sounds[key].volume * 100)"
+          :value="Math.round(presentation.sounds[key].volume * 100)"
           @input="
             (e: Event) =>
-              (cfg.sounds[key].volume = (e.target as HTMLInputElement).valueAsNumber / 100)
+              (presentation.sounds[key].volume = (e.target as HTMLInputElement).valueAsNumber / 100)
           "
         />
         <button class="preview-btn" @click="previewSound(key)">▶</button>
       </div>
     </div>
 
-    <CollapsibleSection :title="t('notification.hooks')" level="group" default-open>
+    <CollapsibleSection :title="t('notification.hooks')" level="group">
       <p class="hook-hint">{{ t('notification.hookEnvHint') }}</p>
       <div v-for="(hook, idx) in cfg.hooks" :key="idx" class="hook-row">
         <label class="toggle toggle-sm">
@@ -124,31 +183,37 @@
       </button>
     </CollapsibleSection>
 
-    <CollapsibleSection :title="t('notification.test')" level="group" default-open>
+    <CollapsibleSection :title="t('notification.test')" level="group">
       <div class="api-test">
         <div class="api-method-row">
           <span class="method-badge">POST</span>
           <span class="api-url">/api/notify</span>
           <div class="mode-tabs">
             <button :class="{ active: testMode === 'form' }" @click="switchMode('form')">
-              Form
+              {{ t('notification.testForm') }}
             </button>
-            <button :class="{ active: testMode === 'raw' }" @click="switchMode('raw')">Raw</button>
+            <button :class="{ active: testMode === 'raw' }" @click="switchMode('raw')">
+              {{ t('notification.testRaw') }}
+            </button>
           </div>
         </div>
 
         <template v-if="testMode === 'form'">
           <div class="api-field">
             <label>pane_id</label>
-            <input type="text" v-model="testForm.pane_id" placeholder="(optional)" />
+            <input type="text" v-model="testForm.pane_id" :placeholder="t('notification.optional')" />
           </div>
           <div class="api-field">
             <label>title</label>
-            <input type="text" v-model="testForm.title" placeholder="(optional)" />
+            <input type="text" v-model="testForm.title" :placeholder="t('notification.optional')" />
           </div>
           <div class="api-field">
             <label>body <span class="required">*</span></label>
-            <input type="text" v-model="testForm.body" placeholder="Hello from dinotty" />
+            <input
+              type="text"
+              v-model="testForm.body"
+              :placeholder="t('notification.testBodyDefault')"
+            />
           </div>
           <div class="api-field">
             <label>notification_type</label>
@@ -165,7 +230,7 @@
 
         <div class="api-actions">
           <button class="send-btn" :disabled="!canSend || sending" @click="sendTest">
-            {{ sending ? '...' : '▶ Send' }}
+            {{ sending ? '...' : `▶ ${t('notification.testSend')}` }}
           </button>
           <span v-if="testResult" class="api-result" :class="testResult.ok ? 'ok' : 'err'">{{
             testResult.text
@@ -187,20 +252,30 @@ import {
   type NotificationType,
 } from '../../composables/useNotification'
 import { getApiBase, authFetch } from '../../composables/apiBase'
+import {
+  useNotificationPresentation,
+  type DndLevel,
+} from '../../composables/useNotificationPresentation'
 
 const { settings, saveSettings } = useSettings()
 const { t } = useI18n()
 
 const cfg = computed(() => settings.notification)
+const { settings: presentation, isEphemeral } = useNotificationPresentation()
 const builtinNames = getBuiltinSoundNames()
 const soundTypes: NotificationType[] = ['info', 'success', 'warning', 'error', 'urgent']
 const notifTypes = ['info', 'success', 'warning', 'error', 'urgent']
+const dndLevels: Array<{ value: DndLevel; labelKey: string }> = [
+  { value: 'normal', labelKey: 'notification.dnd.normal' },
+  { value: 'dot_sound', labelKey: 'notification.dnd.dotSound' },
+  { value: 'silent', labelKey: 'notification.dnd.silent' },
+]
 
 const testMode = ref<'form' | 'raw'>('form')
 const testForm = reactive({
   pane_id: '',
   title: '',
-  body: 'Hello from dinotty',
+  body: t('notification.testBodyDefault'),
   notification_type: 'info',
 })
 const rawJson = ref('')
@@ -251,7 +326,7 @@ const canSend = computed(() => {
 })
 
 function previewSound(type: NotificationType) {
-  playSound(cfg.value.sounds[type])
+  playSound(presentation.sounds[type])
 }
 
 async function sendTest() {
@@ -266,7 +341,7 @@ async function sendTest() {
       const obj = JSON.parse(rawJson.value)
       payload = JSON.stringify(obj)
     } catch (e: any) {
-      rawError.value = 'Invalid JSON'
+      rawError.value = t('notification.invalidJson')
       sending.value = false
       return
     }
@@ -284,7 +359,7 @@ async function sendTest() {
       testResult.value = { ok: false, text: `${res.status} ${res.statusText}` }
     }
   } catch (e: any) {
-    testResult.value = { ok: false, text: e.message || 'Network error' }
+    testResult.value = { ok: false, text: e.message || t('notification.networkError') }
   } finally {
     sending.value = false
   }
@@ -303,6 +378,48 @@ async function sendTest() {
   background: var(--bg);
   color: var(--fg);
   font-size: 12px;
+}
+.coalesce-input {
+  margin-left: auto;
+}
+.segmented-control {
+  display: flex;
+  margin-left: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.segmented-control button {
+  border: 0;
+  border-right: 1px solid var(--border);
+  padding: 3px 8px;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 11px;
+}
+.segmented-control button:last-child {
+  border-right: 0;
+}
+.segmented-control button.active {
+  background: var(--fg-muted);
+  color: var(--bg);
+}
+.quiet-hours-row input[type='time'] {
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+}
+.quiet-hours-row input:first-of-type {
+  margin-left: auto;
+}
+.ephemeral-note {
+  margin: 6px 0 0;
+  color: var(--warning, #d9a441);
+  font-size: 11px;
 }
 .sound-row {
   display: flex;

@@ -1,4 +1,29 @@
 import { settings } from './useSettings'
+import {
+  Command,
+  Star,
+  Plus,
+  X,
+  Columns2,
+  Columns3,
+  Rows2,
+  Radio,
+  Maximize2,
+  ChevronRight,
+  ChevronLeft,
+  Search,
+  SquareStack,
+  LayoutDashboard,
+  Bell,
+  Globe,
+  ArrowUp,
+  ArrowDown,
+  RotateCcw,
+  CornerDownLeft,
+  ArrowLeftToLine,
+  ArrowRightToLine,
+  Delete,
+} from 'lucide-vue-next'
 
 export interface KeyBinding {
   key: string
@@ -11,7 +36,7 @@ export interface KeyBinding {
 export interface KeyBindingDef {
   id: string
   defaultBinding: KeyBinding
-  icon: string
+  icon: object
   titleKey: string
   readonly?: boolean
   kind?: 'app' | 'terminal'
@@ -22,116 +47,122 @@ const defs: KeyBindingDef[] = [
   {
     id: 'togglePalette',
     defaultBinding: { key: 'k', shift: false },
-    icon: '⌘K',
+    icon: Command,
     titleKey: 'keybinding.togglePalette',
   },
   {
     id: 'openBookmarks',
     defaultBinding: { key: 'b', shift: true },
-    icon: '★',
+    icon: Star,
     titleKey: 'keybinding.openBookmarks',
   },
   {
     id: 'newTab',
     defaultBinding: { key: 't', shift: false },
-    icon: '＋',
+    icon: Plus,
     titleKey: 'keybinding.newTab',
   },
   {
     id: 'closeTab',
     defaultBinding: { key: 'w', shift: false },
-    icon: '✕',
+    icon: X,
     titleKey: 'keybinding.closeTab',
   },
   {
     id: 'splitHorizontal',
     defaultBinding: { key: 'd', shift: false },
-    icon: '⊞',
+    icon: Columns2,
     titleKey: 'keybinding.splitHorizontal',
   },
   {
     id: 'splitVertical',
     defaultBinding: { key: 'd', shift: true },
-    icon: '⊟',
+    icon: Rows2,
     titleKey: 'keybinding.splitVertical',
   },
   {
     id: 'toggleBroadcast',
     defaultBinding: { key: 'i', shift: true },
-    icon: '⬤',
+    icon: Radio,
     titleKey: 'keybinding.toggleBroadcast',
   },
   {
     id: 'toggleZoom',
     defaultBinding: { key: 'Enter', shift: true },
-    icon: '⤢',
+    icon: Maximize2,
     titleKey: 'keybinding.toggleZoom',
   },
   {
     id: 'equalizePanes',
     defaultBinding: { key: '=', shift: false },
-    icon: '⊞',
+    icon: Columns3,
     titleKey: 'keybinding.equalizePanes',
   },
   {
     id: 'focusNextPane',
     defaultBinding: { key: ']', shift: false },
-    icon: '→',
+    icon: ChevronRight,
     titleKey: 'keybinding.focusNextPane',
   },
   {
     id: 'focusPrevPane',
     defaultBinding: { key: '[', shift: false },
-    icon: '←',
+    icon: ChevronLeft,
     titleKey: 'keybinding.focusPrevPane',
   },
   {
     id: 'searchTerminal',
     defaultBinding: { key: 'f', shift: false },
-    icon: '🔍',
+    icon: Search,
     titleKey: 'keybinding.searchTerminal',
   },
   {
     id: 'switchTab',
     defaultBinding: { key: '1', shift: false },
-    icon: '⌨',
+    icon: SquareStack,
     titleKey: 'keybinding.switchTab',
     readonly: true,
   },
   {
     id: 'missionControl',
     defaultBinding: { key: 'm', shift: true },
-    icon: '⊞',
+    icon: LayoutDashboard,
     titleKey: 'keybinding.missionControl',
+  },
+  {
+    id: 'superviseTabs',
+    defaultBinding: { key: '`', shift: false },
+    icon: Bell,
+    titleKey: 'keybinding.superviseTabs',
   },
   {
     id: 'sshConnect',
     defaultBinding: { key: 'n', shift: true },
-    icon: '🔗',
+    icon: Globe,
     titleKey: 'keybinding.sshConnect',
   },
   {
     id: 'fontSizeUp',
     defaultBinding: { key: '=', shift: true },
-    icon: 'A+',
+    icon: ArrowUp,
     titleKey: 'keybinding.fontSizeUp',
   },
   {
     id: 'fontSizeDown',
     defaultBinding: { key: '-', shift: false },
-    icon: 'A-',
+    icon: ArrowDown,
     titleKey: 'keybinding.fontSizeDown',
   },
   {
     id: 'fontSizeReset',
     defaultBinding: { key: '0', shift: false },
-    icon: 'A0',
+    icon: RotateCcw,
     titleKey: 'keybinding.fontSizeReset',
   },
   {
     id: 'term.newline',
     defaultBinding: { key: 'enter', shift: true, meta: false },
-    icon: '↵',
+    icon: CornerDownLeft,
     titleKey: 'keybinding.term.newline',
     kind: 'terminal',
     sequence: '\x1b\r',
@@ -139,7 +170,7 @@ const defs: KeyBindingDef[] = [
   {
     id: 'term.lineStart',
     defaultBinding: { key: 'arrowleft', shift: false, meta: true },
-    icon: '←',
+    icon: ArrowLeftToLine,
     titleKey: 'keybinding.term.lineStart',
     kind: 'terminal',
     sequence: '\x01',
@@ -147,7 +178,7 @@ const defs: KeyBindingDef[] = [
   {
     id: 'term.lineEnd',
     defaultBinding: { key: 'arrowright', shift: false, meta: true },
-    icon: '→',
+    icon: ArrowRightToLine,
     titleKey: 'keybinding.term.lineEnd',
     kind: 'terminal',
     sequence: '\x05',
@@ -155,7 +186,7 @@ const defs: KeyBindingDef[] = [
   {
     id: 'term.deleteToLineStart',
     defaultBinding: { key: 'backspace', shift: false, meta: true },
-    icon: '⌫',
+    icon: Delete,
     titleKey: 'keybinding.term.deleteToLineStart',
     kind: 'terminal',
     sequence: '\x15',
@@ -210,7 +241,7 @@ export function useKeybindings() {
     const keyLabels: Record<string, string> = {
       enter: '⏎',
       arrowleft: '←',
-      arrowright: '→',
+      arrowright: '->',
       backspace: '⌫',
     }
     parts.push(keyLabels[binding.key.toLowerCase()] ?? binding.key.toUpperCase())

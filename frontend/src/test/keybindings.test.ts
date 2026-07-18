@@ -33,6 +33,7 @@ const APP_DEFAULTS = [
   ['searchTerminal', 'f', false, false],
   ['switchTab', '1', false, true],
   ['missionControl', 'm', true, false],
+  ['superviseTabs', '`', false, false],
   ['sshConnect', 'n', true, false],
   ['fontSizeUp', '=', true, false],
   ['fontSizeDown', '-', false, false],
@@ -49,6 +50,7 @@ function trackWrapper(wrapper: VueWrapper) {
 function resetKeybindings() {
   settings.keybindings = {}
   settings.locale = 'en'
+  settings.windowsAltAsCmd = false
 }
 
 function keyEvent(key: string, init: KeyboardEventInit = {}) {
@@ -58,6 +60,14 @@ function keyEvent(key: string, init: KeyboardEventInit = {}) {
     cancelable: true,
     ...init,
   })
+}
+
+function dispatchWindowsAppBinding(event: KeyboardEvent, id: string, action: () => void) {
+  const binding = useKeybindings().getBinding(id)
+  const appCommand =
+    (event.ctrlKey || (settings.windowsAltAsCmd && event.altKey)) &&
+    !(event.ctrlKey && event.altKey)
+  if (appCommand && keyEventMatchesBinding(event, binding)) action()
 }
 
 async function recordKey(id: string, event: KeyboardEvent) {
@@ -79,10 +89,10 @@ describe('unified keybindings', () => {
     vi.restoreAllMocks()
   })
 
-  it('keeps the 18 app defaults and persisted shape unchanged', () => {
+  it('keeps the 19 app defaults and persisted shape unchanged', () => {
     const appDefs = keyBindingDefs.filter((def) => (def.kind ?? 'app') === 'app')
 
-    expect(appDefs).toHaveLength(18)
+    expect(appDefs).toHaveLength(19)
     expect(
       appDefs.map((def) => [
         def.id,
@@ -186,6 +196,52 @@ describe('unified keybindings', () => {
     expect(
       keyEventMatchesBinding(keyEvent('+', { code: 'NumpadAdd', shiftKey: true }), binding)
     ).toBe(false)
+  })
+
+  it('maps Backquote to the unshifted supervise-tabs binding with app modifiers', () => {
+    const binding = useKeybindings().getBinding('superviseTabs')
+
+    expect(binding).toEqual({ key: '`', shift: false })
+    expect(
+      keyEventMatchesBinding(keyEvent('Dead', { code: 'Backquote', metaKey: true }), binding)
+    ).toBe(true)
+    expect(
+      keyEventMatchesBinding(keyEvent('~', { code: 'Backquote', metaKey: true, shiftKey: true }), binding)
+    ).toBe(false)
+  })
+
+  it('dispatches the supervise-tabs binding through Windows app modifiers', () => {
+    settings.windowsAltAsCmd = true
+    const dispatch = vi.fn()
+
+    dispatchWindowsAppBinding(
+      keyEvent('`', { code: 'Backquote', altKey: true }),
+      'superviseTabs',
+      dispatch
+    )
+    dispatchWindowsAppBinding(
+      keyEvent('`', { code: 'Backquote', ctrlKey: true }),
+      'superviseTabs',
+      dispatch
+    )
+    dispatchWindowsAppBinding(keyEvent('`', { code: 'Backquote' }), 'superviseTabs', dispatch)
+
+    expect(dispatch).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects Windows Ctrl+Alt AltGr while preserving plain Ctrl app shortcuts', () => {
+    settings.windowsAltAsCmd = false
+    const dispatch = vi.fn()
+
+    dispatchWindowsAppBinding(
+      keyEvent('t', { ctrlKey: true, altKey: true }),
+      'newTab',
+      dispatch
+    )
+    dispatchWindowsAppBinding(keyEvent('t', { ctrlKey: true }), 'newTab', dispatch)
+    dispatchWindowsAppBinding(keyEvent('t', { altKey: true }), 'newTab', dispatch)
+
+    expect(dispatch).toHaveBeenCalledOnce()
   })
 
   it('does not match terminal bindings hand-edited to reserved Ctrl+Shift+C/V', () => {

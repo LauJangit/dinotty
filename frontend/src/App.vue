@@ -6,6 +6,7 @@
   </div>
   <div v-else id="app-root">
     <TabBar
+      ref="tabBarRef"
       :tabs="visibleTabList"
       :active-pane-id="activePaneId"
       :indicators="tabIndicators"
@@ -65,7 +66,7 @@
           <Settings :size="16" />
         </button>
         <button
-          v-if="notif.notifications.value.length > 0"
+          v-if="notif.notifications.value.length > 0 || notif.unreadAttentionCount.value > 0"
           type="button"
           class="tab-bar-icon-btn notif-btn"
           :title="t('notification.title')"
@@ -73,8 +74,8 @@
           @touchend.prevent="notif.togglePanel()"
         >
           <Bell :size="16" />
-          <span v-if="notif.unreadCount.value > 0" class="notif-badge">{{
-            notif.unreadCount.value > 9 ? '9+' : notif.unreadCount.value
+          <span v-if="notif.unreadAttentionCount.value > 0" class="notif-badge">{{
+            notif.unreadAttentionCount.value > 9 ? '9+' : notif.unreadAttentionCount.value
           }}</span>
         </button>
       </template>
@@ -100,6 +101,7 @@
             :allow-close="getAllLeaves(tab.layout).length > 1"
             @register="registerTermRef"
             @title-change="onTitleChange"
+            @shell-info="onShellInfo"
             @focus="(id: string) => splitPane.focusPane(id)"
             @close="(id: string) => onClosePane(tab.paneId, id)"
             @input="(id: string, data: string) => splitPane.onTerminalInput(id, data)"
@@ -157,7 +159,7 @@
       </div>
     </div>
 
-    <NotificationPanel :pane-labels="notificationPaneLabels" @goto-pane="activateTab" />
+    <NotificationPanel :pane-labels="notificationPaneLabels" @goto-pane="revealPane" />
 
     <StatusBar />
 
@@ -175,6 +177,17 @@
       :cancel-text="confirmState.cancelText"
       @confirm="confirmResolve"
       @cancel="confirmCancel"
+    />
+
+    <PromptModal
+      :visible="promptState.visible"
+      :title="promptState.title"
+      :default-value="promptState.defaultValue"
+      :placeholder="promptState.placeholder"
+      :confirm-text="promptState.confirmText"
+      :cancel-text="promptState.cancelText"
+      @confirm="promptResolve"
+      @cancel="promptCancel"
     />
 
     <ConfirmModal
@@ -253,13 +266,15 @@ import SettingsPanel from './components/SettingsPanel.vue'
 import ConfirmCloseDialog from './components/ui/ConfirmCloseDialog.vue'
 import ConfirmModal from './components/ui/ConfirmModal.vue'
 import { confirmState, uiConfirm, confirmResolve, confirmCancel } from './composables/useConfirm'
+import PromptModal from './components/ui/PromptModal.vue'
+import { promptState, promptResolve, promptCancel } from './composables/usePrompt'
 import PreviewPanel from './components/preview/PreviewPanel.vue'
 import CommandBookmarks from './components/command/CommandBookmarks.vue'
 import ServerList from './components/ServerList.vue'
 import SshHostsPanel from './components/ssh/SshHostsPanel.vue'
 import SshAuthPromptDialog from './components/ssh/SshAuthPromptDialog.vue'
 import StatusBar from './components/terminal/StatusBar.vue'
-import type { Tab, TerminalTab, PluginTab, PaneLayout, DropPosition } from './types/pane'
+import type { Tab, TerminalTab, PluginTab, PaneLayout, LeafPane, DropPosition } from './types/pane'
 import { getAllLeaves, findLeaf, findFirstLeaf, ensureSplitRoot } from './types/pane'
 import { initializePaneMru } from './types/paneMru'
 // useSettings replaced by useSettingsStore
@@ -269,6 +284,7 @@ import {
   fetchAutoToken,
   validateToken,
   apiUrl,
+  authFetch,
   markCookieAuthenticated,
 } from './composables/apiBase'
 import { isTauri, tauriInvoke } from './composables/useTransport'
@@ -276,13 +292,27 @@ import { isTouchDevice, setActivePaneId } from './composables/useTerminal'
 import { useI18n } from './composables/useI18n'
 import { keyEventMatchesBinding, useKeybindings } from './composables/useKeybindings'
 import { useSplitPane } from './composables/useSplitPane'
+import { useSuperviseTabs } from './composables/useSuperviseTabs'
 import { useSyncWebSocket } from './composables/useSyncWebSocket'
 import { isWebPreviewInput } from './utils/previewRouting'
 import { isWindowsClient } from './utils/clientPlatform'
+import { nextRevealNavGen, currentRevealNavGen } from './utils/navGen'
 import { initMonitorHistory } from './composables/useMonitor'
 import NotificationPanel from './components/notification/NotificationPanel.vue'
 import { useToast } from 'vue-toastification'
-import { useNotification, pushNotification, setToastInstance, aggregateSeverity } from './composables/useNotification'
+import {
+  useNotification,
+  pushNotification,
+  setToastInstance,
+  setActiveReadContext,
+  evaluateActiveRead,
+  aggregateSeverity,
+  getNotificationClientId,
+  mintNotificationRequestId,
+  disposeNotificationPresentationScheduler,
+} from './composables/useNotification'
+import { useNotificationPresentation } from './composables/useNotificationPresentation'
+import { getIsAppForeground, onAppForegroundGain } from './composables/useAppForeground'
 import { usePluginLoader } from './composables/usePluginLoader'
 import PluginView from './components/plugin/PluginView.vue'
 import {
@@ -306,6 +336,7 @@ import { useSessionStore } from './stores/sessionStore'
 import { useUiStore } from './stores/uiStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { shellEscapePath } from './utils/shell'
+import { buildRunCodeCommand } from './utils/runCodeCommand'
 
 // ── Stores ──────────────────────────────────────────────────────
 const session = useSessionStore()
@@ -326,6 +357,7 @@ let scrollGestureTimer = 0
 
 // ── Template refs (purely UI concerns) ─────────────────────────
 const paletteRef = ref<InstanceType<typeof CommandPalette>>()
+const tabBarRef = ref<InstanceType<typeof TabBar> | null>(null)
 const previewPanelRef = ref<InstanceType<typeof PreviewPanel> | null>(null)
 
 function setPreviewPanelRef(el: any) {
@@ -341,12 +373,28 @@ const sshAuthPrompts = ref<Array<{ prompt: string; echo: boolean }>>([])
 const { t } = useI18n()
 const { getBinding, formatBinding } = useKeybindings()
 const notif = useNotification()
-setToastInstance(useToast())
+const presentationSettings = useNotificationPresentation().settings
+const { supervise } = useSuperviseTabs()
+const clearToastInstance = setToastInstance(useToast())
+const clearActiveReadContext = setActiveReadContext({
+  getActiveFocusedPaneId: () =>
+    activeTab.value?.type === 'terminal' ? activeTab.value.activePaneId : null,
+  isAppForeground: getIsAppForeground,
+  getActiveTabPaneIds: () => {
+    const tab = activeTab.value
+    if (!tab) return []
+    return tab.type === 'terminal'
+      ? [tab.paneId, ...getAllLeaves(tab.layout).map((leaf) => leaf.paneId)]
+      : [tab.paneId]
+  },
+})
+const stopForegroundGainSubscription = onAppForegroundGain(evaluateActiveRead)
 const { loadedPlugins, loadAll, getPluginContext, pluginList, allCommands } = usePluginLoader()
 const { isMobile } = useIsMobile()
 
 // Workspace filtering
-const { workspaces, activeWorkspaceId, activeWorkspacePath, activeWorkspaceName, matchWorkspace, activateWorkspace } = useWorkspaces()
+const { workspaces, activeWorkspaceId, activeWorkspacePath, activeWorkspaceName, matchWorkspace, activateWorkspace, cancelPendingWorkspaceActivation } = useWorkspaces()
+const activeWorkspace = computed(() => workspaces.value.find((w) => w.id === activeWorkspaceId.value))
 
 const visibleTabList = computed(() => {
   const list = tabList.value.filter((info) => {
@@ -372,6 +420,7 @@ const visibleTabList = computed(() => {
 /** Aggregated per-tab unread notification severity (rolls up all leaves of a split tab). */
 const tabIndicators = computed(() => {
   const result: Record<string, string> = {}
+  if (!presentationSettings.channels.tab_indicator) return result
   for (const tab of tabs.value) {
     const paneIds = tab.type === 'terminal'
       ? [tab.paneId, ...getAllLeaves(tab.layout).map((l) => l.paneId)]
@@ -463,7 +512,7 @@ async function onOverviewNewTabSsh(connectionId: string, initialCwd?: string) {
     const result = await apiCreateSshTab(connectionId, initialCwd)
     const existing = tabs.value.find((t) => t.type === 'terminal' && t.paneId === result.tab_id)
     if (existing) {
-      activePaneId.value = result.tab_id
+      commitLocalActivePane(result.tab_id)
       persist()
       nextTick(() => focusActive())
       return
@@ -483,7 +532,7 @@ async function onOverviewNewTabSsh(connectionId: string, initialCwd?: string) {
       previewKind: 'web',
       connectionId,
     })
-    activePaneId.value = result.tab_id
+    commitLocalActivePane(result.tab_id)
     persist()
     nextTick(() => focusActive())
   } catch (e) {
@@ -655,6 +704,7 @@ function onDividerDragEnd(tab: Tab) {
 
 let persistTimer: ReturnType<typeof setTimeout> | null = null
 function persistNow() {
+  if (typeof localStorage === "undefined") return
   const state = tabs.value.map((t) => {
     if (t.type === 'terminal') {
       return {
@@ -696,17 +746,19 @@ window.addEventListener('beforeunload', (e) => {
 
 const DEFAULT_PREVIEW_URL = ''
 
-async function newTab(cwd?: string) {
+function newTab(cwd?: string): Promise<void>
+function newTab(cwd: string, argv: string[], title?: string): Promise<string>
+async function newTab(cwd?: string, argv?: string[], title?: string): Promise<string | void> {
   try {
     // Remote workspace: open an SSH terminal and cd into the workspace's remote path.
     const activeWs = workspaces.value.find((w) => w.id === activeWorkspaceId.value)
-    if (activeWs?.connection_id) {
+    if (!argv && activeWs?.connection_id) {
       const result = await apiCreateSshTab(activeWs.connection_id, activeWs.path)
       await onSshConnect(result)
-      return
+      return result.pane_id
     }
     const effectiveCwd = cwd ?? activeWorkspacePath.value
-    const result = await apiCreateTab(effectiveCwd)
+    const result = await apiCreateTab(effectiveCwd, argv, title)
     // Dedup: broadcast_sync echoes back to sender — tab_created handler may
     // have already added this tab if the sync message arrived before the
     // REST response.
@@ -716,10 +768,11 @@ async function newTab(cwd?: string) {
       if (result.cwd && existing.type === 'terminal' && !existing.cwd) {
         existing.cwd = result.cwd
       }
-      activePaneId.value = result.tab_id
+      if (title && existing.type === 'terminal') existing.customTitle = title
+      commitLocalActivePane(result.tab_id)
       persist()
       nextTick(() => focusActive())
-      return
+      return result.pane_id
     }
     const layout = ensureSplitRoot(result.layout)
     tabs.value.push({
@@ -734,13 +787,17 @@ async function newTab(cwd?: string) {
       previewAddress: '',
       previewUrl: '',
       previewKind: 'web',
+      customTitle: title,
       cwd: result.cwd,
     })
-    activePaneId.value = result.tab_id
+    commitLocalActivePane(result.tab_id)
     persist()
     nextTick(() => focusActive())
+    return result.pane_id
   } catch (e) {
     console.error('Failed to create tab:', e)
+    if (argv) throw e
+    return ''
   }
 }
 
@@ -759,7 +816,7 @@ function onNewMenuAction(type: 'new-tab' | 'split-h' | 'split-v' | 'broadcast' |
   }
 }
 
-async function activateTab(tabId: string) {
+function resolveTab(tabId: string): Tab | undefined {
   // Try tab-level paneId first, then search by leaf paneId
   let tab = tabs.value.find((t) => t.paneId === tabId)
   if (!tab) {
@@ -768,37 +825,175 @@ async function activateTab(tabId: string) {
       return !!findLeaf(t.layout, tabId)
     })
   }
-  if (!tab) return
+  return tab
+}
 
-  // Switch workspace if the tab belongs to a different one
-  const targetWs = tab.type === 'terminal'
+function resolveTabWorkspace(tab: Tab) {
+  return tab.type === 'terminal'
     ? matchWorkspace(tab.cwd ?? '', tab.connectionId, tab.workspaceId)
     : tab.workspaceId ? workspaces.value.find((w) => w.id === tab.workspaceId) ?? null : null
-  if (targetWs && targetWs.id !== activeWorkspaceId.value) {
-    await activateWorkspace(targetWs.id)
-  }
+}
 
-  activePaneId.value = tab.paneId
-
+function clearResolvedTabNotifications(tab: Tab, reason: 'tab_activate' | 'goto' = 'tab_activate') {
   // Clear notifications for this tab on activation (terminal: tab-level + all leaves; plugin: tab-level)
   const activatedPaneIds = tab.type === 'terminal'
     ? [tab.paneId, ...getAllLeaves(tab.layout).map((l) => l.paneId)]
     : [tab.paneId]
-  notif.clearForPaneIds(activatedPaneIds)
+  notif.clearForPaneIds(activatedPaneIds, reason)
+}
+
+function commitLocalActivePane(paneId: string) {
+  // User-initiated local navigation participates in latest-wins ordering so it supersedes any in-flight supervised hop.
+  nextRevealNavGen()
+  activePaneId.value = paneId
+}
+
+async function scrollActiveTabIntoView(targetPaneId: string, navGen: number) {
+  await nextTick()
+  if (navGen !== currentRevealNavGen()) return
+  if (tabBarRef.value?.scrollTabIntoView(targetPaneId)) return
+  await nextTick()
+  if (navGen !== currentRevealNavGen()) return
+  tabBarRef.value?.scrollTabIntoView(targetPaneId)
+}
+
+async function activateTab(tabId: string, opts?: { defer?: boolean }): Promise<boolean> {
+  const gen = nextRevealNavGen()
+  const defer = opts?.defer === true
+  let tab = resolveTab(tabId)
+  if (!tab) return false
+
+  // Switch workspace if the tab belongs to a different one. Terminal tabs
+  // force a switch when filtered out of the current view; plugin tabs stay
+  // visible regardless, so only switch when the tab carries an explicit ws.
+  const targetWs = resolveTabWorkspace(tab)
+  const needsSwitch = tab.type === 'terminal'
+    ? (targetWs?.id ?? null) !== activeWorkspaceId.value
+    : targetWs && targetWs.id !== activeWorkspaceId.value
+  if (needsSwitch) {
+    try {
+      const committed = await activateWorkspace(targetWs?.id ?? null)
+      if (!committed) return false
+    } catch {
+      return false
+    }
+    if (gen !== currentRevealNavGen()) return false
+    tab = resolveTab(tabId)
+    if (!tab) return false
+  } else {
+    cancelPendingWorkspaceActivation()
+  }
+
+  if (!defer) {
+    activePaneId.value = tab.paneId
+    clearResolvedTabNotifications(tab)
+  }
 
   if (tab.type === 'terminal') {
     try {
       await apiActivatePane(tab.paneId, tab.activePaneId)
     } catch (e) {
+      if (defer) return false
       console.error('Failed to activate pane:', e)
     }
+    if (gen !== currentRevealNavGen()) return false
   }
+
+  if (!defer) {
+    persist()
+    nextTick(() => focusActive())
+    void scrollActiveTabIntoView(tab.paneId, gen)
+    return gen === currentRevealNavGen()
+  }
+
+  if (gen !== currentRevealNavGen()) return false
+  const live = resolveTab(tabId)
+  if (!live) return false
+  activePaneId.value = live.paneId
+  clearResolvedTabNotifications(live)
   persist()
   nextTick(() => focusActive())
+  void scrollActiveTabIntoView(live.paneId, gen)
+  return true
+}
+
+async function revealPane(paneId: string): Promise<boolean> {
+  const gen = nextRevealNavGen()
+  let tab = resolveTab(paneId)
+  if (!tab) return false
+
+  // Terminal tabs force a switch when filtered out of the current view
+  // (targetWs may be null → deactivate). Plugin tabs stay visible regardless,
+  // so only switch when they carry an explicit workspace id.
+  const targetWs = resolveTabWorkspace(tab)
+  const needsSwitch = tab.type === 'terminal'
+    ? (targetWs?.id ?? null) !== activeWorkspaceId.value
+    : targetWs && targetWs.id !== activeWorkspaceId.value
+  if (needsSwitch) {
+    try {
+      const committed = await activateWorkspace(targetWs?.id ?? null)
+      if (!committed) return false
+    } catch {
+      return false
+    }
+    if (gen !== currentRevealNavGen()) return false
+    tab = resolveTab(paneId)
+    if (!tab) return false
+  } else {
+    cancelPendingWorkspaceActivation()
+  }
+
+  await nextTick()
+  if (gen !== currentRevealNavGen()) return false
+  tab = resolveTab(paneId)
+  if (!tab) return false
+
+  // Desktop renders a horizontal tab-strip; wait for the target tab element to
+  // exist before scrolling it into view. Mobile has no #tabs-list DOM, so skip
+  // this gate entirely — otherwise reveal-goto would always no-op on touch /
+  // narrow viewports (hasTab() can never succeed there).
+  if (!isMobile.value) {
+    let tabElementFound = false
+    for (let attempt = 0; attempt < 5; attempt++) {
+      if (tabBarRef.value?.hasTab(tab.paneId)) {
+        tabElementFound = true
+        break
+      }
+      if (attempt < 4) {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        if (gen !== currentRevealNavGen()) return false
+      }
+    }
+    if (!tabElementFound) return false
+    if (gen !== currentRevealNavGen()) return false
+    tab = resolveTab(paneId)
+    if (!tab) return false
+  }
+
+  if (tab.type === 'terminal') {
+    try {
+      await apiActivatePane(tab.paneId, tab.activePaneId)
+    } catch {
+      return false
+    }
+    // The backend pointer may transiently lag a newer navigation, like rapid activateTab clicks.
+    if (gen !== currentRevealNavGen()) return false
+  }
+
+  tab = resolveTab(paneId)
+  if (!tab) return false
+
+  activePaneId.value = tab.paneId
+  clearResolvedTabNotifications(tab, 'goto')
+  persist()
+  nextTick(() => focusActive())
+
+  tabBarRef.value?.scrollTabIntoView(tab.paneId)
+  return true
 }
 
 // Wire up toast notification direct-jump handler
-notif.setGoToPaneHandler((paneId: string) => activateTab(paneId))
+notif.setGoToPaneHandler((paneId: string) => revealPane(paneId))
 
 function reorderTab(fromId: string, toId: string) {
   session.reorderTab(fromId, toId)
@@ -874,8 +1069,6 @@ async function closeTab(tabId: string) {
   const closedPaneIds = tab.type === 'terminal'
     ? [tab.paneId, ...getAllLeaves(tab.layout).map((l) => l.paneId)]
     : [tab.paneId]
-  notif.clearForPaneIds(closedPaneIds)
-
   // Invalidate plugin preview cache when closing a plugin tab
   if (tab.type === 'plugin') {
     invalidatePluginPreview(tab.paneId)
@@ -895,6 +1088,8 @@ async function closeTab(tabId: string) {
     }
   }
 
+  notif.clearForPaneIds(closedPaneIds, 'tab_close')
+
   // Remove tab from local array
   const idx = tabs.value.findIndex((t) => t.paneId === tabId)
   if (idx === -1) return
@@ -909,6 +1104,9 @@ async function closeTab(tabId: string) {
 
   if (activePaneId.value === tabId) {
     const newIdx = Math.min(idx, tabs.value.length - 1)
+    // Close-induced reselection is the newest navigation: supersede any in-flight
+    // deferred/supervised hop so a late older-generation commit cannot clobber it.
+    nextRevealNavGen()
     activePaneId.value = tabs.value[newIdx].paneId
   }
 
@@ -955,6 +1153,22 @@ function onTitleChange(paneId: string, title: string) {
       persist()
     }
   }
+}
+
+function onShellInfo(paneId: string, shellType: string) {
+  // 步骤1：找到终端 Pane 所属的标签页和叶子节点。
+  let matchingLeaf: LeafPane | null = null
+  for (let tabIndex = 0; tabIndex < tabs.value.length; tabIndex += 1) {
+    const candidateTab = tabs.value[tabIndex]
+    if (candidateTab.type !== 'terminal') continue
+    matchingLeaf = findLeaf(candidateTab.layout, paneId)
+    if (matchingLeaf) break
+  }
+  if (!matchingLeaf || matchingLeaf.shell_type === shellType) return
+
+  // 步骤2：保存后端识别出的 shell，供运行代码等功能生成正确命令。
+  matchingLeaf.shell_type = shellType
+  persist()
 }
 
 function onPreviewLink(leafPaneId: string, url: string) {
@@ -1065,6 +1279,30 @@ function onTerminalInsertText(e: Event) {
   if (send) send(text)
 }
 
+function onTerminalRunCode(e: Event) {
+  // 步骤1：读取文件路径和当前活动终端。
+  const path = (e as CustomEvent<{ path: string }>).detail?.path
+  if (!path || !activePaneId.value) return
+
+  let activeTerminalTab: TerminalTab | null = null
+  for (let tabIndex = 0; tabIndex < tabs.value.length; tabIndex += 1) {
+    const candidateTab = tabs.value[tabIndex]
+    if (candidateTab.paneId === activePaneId.value && candidateTab.type === 'terminal') {
+      activeTerminalTab = candidateTab
+      break
+    }
+  }
+  if (!activeTerminalTab) return
+
+  const activeLeaf = findLeaf(activeTerminalTab.layout, activeTerminalTab.activePaneId)
+  const send = getSendFn()
+  if (!activeLeaf || !send) return
+
+  // 步骤2：按活动 shell 生成命令，并发送回车立即执行。
+  const command = buildRunCodeCommand(path, activeLeaf.shell_type ?? '')
+  if (command) send(`${command}\r`)
+}
+
 function onLinkActivate() {
   linkJustActivated = true
 }
@@ -1128,7 +1366,7 @@ async function onSshConnect(result: { tab_id: string; pane_id: string; layout: a
         existing.workspaceId = activeWorkspaceId.value
       }
     }
-    activePaneId.value = result.tab_id
+    commitLocalActivePane(result.tab_id)
     persist()
     nextTick(() => focusActive())
     return
@@ -1149,7 +1387,7 @@ async function onSshConnect(result: { tab_id: string; pane_id: string; layout: a
     connectionId: resolvedConnectionId,
     workspaceId: activeWorkspaceId.value ?? undefined,
   })
-  activePaneId.value = result.tab_id
+  commitLocalActivePane(result.tab_id)
   persist()
   nextTick(() => focusActive())
 }
@@ -1196,7 +1434,7 @@ function openPlugin(pluginId: string) {
       workspaceId: activeWorkspaceId.value ?? undefined,
     }
     tabs.value.push(newTab)
-    activePaneId.value = paneId
+    commitLocalActivePane(paneId)
     syncWs.sendSync({ type: 'activate_tab', pane_id: paneId })
     persist()
     nextTick(() => focusActive())
@@ -1241,22 +1479,190 @@ window.__dinotty_terminal_api = {
     const tab = tabs.value.find((t) => t.paneId === activePaneId.value)
     return tab?.type === 'terminal' ? tab.activePaneId : ''
   },
+  async createTerminalTab(opts: { cwd: string; argv: string[]; title?: string }) {
+    const ws = matchWorkspace(opts.cwd)
+    const targetId = ws?.id ?? null
+    if (targetId !== activeWorkspaceId.value) await activateWorkspace(targetId)
+    return newTab(opts.cwd, opts.argv, opts.title)
+  },
 }
 // Test hooks for P3 verification (focusActive + isComposing guard).
 window.__dinotty_test_focus_active = focusActive
 window.__dinotty_test_is_composing = (paneId: string) => termRefs[paneId]?.isComposing() ?? false
+const PLUGIN_NOTIFY_RETRY_DELAYS_MS = [1000, 2000, 4000] as const
+const BRIDGE_MAX_CONCURRENT = 3
+const BRIDGE_QUEUE_CAP = 64
+
+interface PluginNotifyBridgeJob {
+  readonly requestId: string
+  readonly body: string
+}
+
+const pluginNotifyBridgeQueue: PluginNotifyBridgeJob[] = []
+const pluginNotifyBridgeRetryTimers = new Map<
+  ReturnType<typeof setTimeout>,
+  (shouldContinue: boolean) => void
+>()
+const pluginNotifyBridgeAbortControllers = new Set<AbortController>()
+let pluginNotifyBridgeActiveJobs = 0
+let pluginNotifyBridgeDisposed = false
+let pluginNotifyBridgeOverflowDropped = 0
+let pluginNotifyBridgeOverflowWarnScheduled = false
+
+function waitForPluginNotifyRetry(delayMs: number) {
+  if (pluginNotifyBridgeDisposed) return Promise.resolve(false)
+  return new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => {
+      pluginNotifyBridgeRetryTimers.delete(timer)
+      resolve(!pluginNotifyBridgeDisposed)
+    }, delayMs)
+    pluginNotifyBridgeRetryTimers.set(timer, resolve)
+  })
+}
+
+async function runPluginNotifyBridgeJob(job: PluginNotifyBridgeJob) {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      await getApiBase()
+      if (pluginNotifyBridgeDisposed) return
+
+      const controller = new AbortController()
+      pluginNotifyBridgeAbortControllers.add(controller)
+      let response: Awaited<ReturnType<typeof authFetch>>
+      try {
+        response = await authFetch(apiUrl('/api/notify'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: job.body,
+          signal: controller.signal,
+        })
+      } finally {
+        pluginNotifyBridgeAbortControllers.delete(controller)
+      }
+      if (pluginNotifyBridgeDisposed) return
+
+      const responseBody = await response.json().catch(() => null)
+      if (pluginNotifyBridgeDisposed) return
+
+      if (response.status === 200) {
+        const accepted =
+          responseBody?.status === 'accepted' ||
+          (typeof responseBody?.eventSeq === 'string' &&
+            (typeof responseBody?.notifId === 'string' || typeof responseBody?.paneId === 'string'))
+        if (accepted || responseBody?.status === 'suppressed') return
+        console.error('[notification] plugin notify returned an unexpected 200 response')
+        return
+      }
+
+      if (response.status === 503) {
+        if (attempt < PLUGIN_NOTIFY_RETRY_DELAYS_MS.length) {
+          if (!(await waitForPluginNotifyRetry(PLUGIN_NOTIFY_RETRY_DELAYS_MS[attempt]))) return
+          continue
+        }
+        break
+      }
+
+      console.error(`[notification] plugin notify failed with HTTP ${response.status}`)
+      return
+    } catch (error) {
+      if (pluginNotifyBridgeDisposed) return
+      if (attempt < PLUGIN_NOTIFY_RETRY_DELAYS_MS.length) {
+        if (!(await waitForPluginNotifyRetry(PLUGIN_NOTIFY_RETRY_DELAYS_MS[attempt]))) return
+        continue
+      }
+      console.error('[notification] plugin notify retry exhausted', error)
+      break
+    }
+  }
+
+  if (pluginNotifyBridgeDisposed) return
+  const request = JSON.parse(job.body) as {
+    type: 'info' | 'warning' | 'error'
+    title: string
+    body: string
+  }
+  console.error('[notification] plugin notify retry exhausted; inserting locally')
+  pushNotification({
+    type: request.type,
+    title: request.title,
+    body: request.body,
+    source: 'plugin',
+  })
+}
+
+function pumpPluginNotifyBridgeQueue() {
+  while (
+    !pluginNotifyBridgeDisposed &&
+    pluginNotifyBridgeActiveJobs < BRIDGE_MAX_CONCURRENT &&
+    pluginNotifyBridgeQueue.length > 0
+  ) {
+    const job = pluginNotifyBridgeQueue.shift()!
+    pluginNotifyBridgeActiveJobs++
+    void runPluginNotifyBridgeJob(job).finally(() => {
+      pluginNotifyBridgeActiveJobs--
+      pumpPluginNotifyBridgeQueue()
+    })
+  }
+}
+
+function enqueuePluginNotifyBridgeJob(job: PluginNotifyBridgeJob) {
+  if (pluginNotifyBridgeDisposed) return
+  if (pluginNotifyBridgeQueue.length >= BRIDGE_QUEUE_CAP) {
+    pluginNotifyBridgeQueue.shift()
+    pluginNotifyBridgeOverflowDropped++
+    if (!pluginNotifyBridgeOverflowWarnScheduled) {
+      pluginNotifyBridgeOverflowWarnScheduled = true
+      queueMicrotask(() => {
+        pluginNotifyBridgeOverflowWarnScheduled = false
+        if (pluginNotifyBridgeDisposed) {
+          pluginNotifyBridgeOverflowDropped = 0
+          return
+        }
+        const dropped = pluginNotifyBridgeOverflowDropped
+        pluginNotifyBridgeOverflowDropped = 0
+        console.warn(
+          `[notification] plugin notify bridge queue full; evicted ${dropped} oldest pending ${dropped === 1 ? 'job' : 'jobs'}`
+        )
+      })
+    }
+  }
+  pluginNotifyBridgeQueue.push(job)
+  pumpPluginNotifyBridgeQueue()
+}
+
+function disposePluginNotifyBridge() {
+  pluginNotifyBridgeDisposed = true
+  pluginNotifyBridgeQueue.length = 0
+  pluginNotifyBridgeOverflowDropped = 0
+  for (const [timer, resolve] of pluginNotifyBridgeRetryTimers) {
+    clearTimeout(timer)
+    resolve(false)
+  }
+  pluginNotifyBridgeRetryTimers.clear()
+  for (const controller of pluginNotifyBridgeAbortControllers) controller.abort()
+  pluginNotifyBridgeAbortControllers.clear()
+}
+
 window.__dinotty_ui_notify = (
   message: string,
   level?: 'info' | 'warn' | 'error',
   title?: string
 ) => {
   const type = level === 'error' ? 'error' : level === 'warn' ? 'warning' : 'info'
-  pushNotification({
-    type,
-    title: title ?? 'Plugin',
-    body: message,
-    source: 'plugin',
+  const requestId = mintNotificationRequestId()
+  const job = Object.freeze({
+    requestId,
+    body: JSON.stringify({
+      clientId: getNotificationClientId(),
+      requestId,
+      source: 'plugin',
+      type,
+      title: title ?? 'Plugin',
+      body: message,
+    }),
   })
+
+  enqueuePluginNotifyBridgeJob(job)
 }
 window.__dinotty_ui_confirm = (message: string) => uiConfirm(message)
 window.__dinotty_open_plugin = openPlugin
@@ -1363,7 +1769,10 @@ const paletteCommands = computed<Command[]>(() => {
 function onGlobalKeydown(e: KeyboardEvent) {
   const cmd = e.metaKey || e.ctrlKey
   const altAsCmd = appSettings.windowsAltAsCmd && isWindowsClient
-  const appCmd = (cmd || (altAsCmd && e.altKey)) && !(altAsCmd && e.ctrlKey && e.altKey)
+  // On Windows, Ctrl+Alt is AltGr (a layout-character modifier), never an app command —
+  // exclude it regardless of Alt-as-Cmd so AltGr keeps producing its character. macOS
+  // (isWindowsClient=false) is unaffected.
+  const appCmd = (cmd || (altAsCmd && e.altKey)) && !(isWindowsClient && e.ctrlKey && e.altKey)
   if (!appCmd) return
 
   const keyActions: Record<string, () => void> = {
@@ -1394,6 +1803,7 @@ function onGlobalKeydown(e: KeyboardEvent) {
       termRefs[tab.activePaneId]?.toggleSearch()
     },
     missionControl: () => openOverview(),
+    superviseTabs: () => void supervise((id) => activateTab(id, { defer: true })),
     sshConnect: () => sshPanelRef.value?.open(),
     fontSizeUp: () => adjustActiveTerminalFontSize(1),
     fontSizeDown: () => adjustActiveTerminalFontSize(-1),
@@ -1503,6 +1913,7 @@ onMounted(async () => {
   window.addEventListener('resize', onOrientationChange)
   window.addEventListener('terminal-insert-path', onTerminalInsertPath)
   window.addEventListener('terminal-insert-text', onTerminalInsertText)
+  window.addEventListener('terminal-run-code', onTerminalRunCode)
   if (window.visualViewport) {
     naturalVH = window.visualViewport.height
     window.visualViewport.addEventListener('resize', onViewportResize)
@@ -1615,6 +2026,11 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  stopForegroundGainSubscription()
+  disposePluginNotifyBridge()
+  disposeNotificationPresentationScheduler()
+  clearActiveReadContext()
+  clearToastInstance()
   unlistenWindowClose?.()
   document.removeEventListener('keydown', onGlobalKeydown)
   document.removeEventListener('terminal-scroll', onTerminalScroll)
@@ -1622,6 +2038,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', onOrientationChange)
   window.removeEventListener('terminal-insert-path', onTerminalInsertPath)
   window.removeEventListener('terminal-insert-text', onTerminalInsertText)
+  window.removeEventListener('terminal-run-code', onTerminalRunCode)
   if (window.visualViewport) {
     window.visualViewport.removeEventListener('resize', onViewportResize)
   }

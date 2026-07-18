@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Stub WebSocket - useNotification() triggers connectWs() on first call.
 vi.stubGlobal(
@@ -31,11 +31,14 @@ vi.mock('../composables/apiBase', () => ({
 
 import { settings } from '../composables/useSettings'
 import {
+  __dispatchServerMessageForTest,
+  __resetForTest,
   useNotification,
   pushNotification,
   setToastInstance,
   type NotificationItem,
 } from '../composables/useNotification'
+import { useNotificationPresentation } from '../composables/useNotificationPresentation'
 
 const toastSpy = vi.fn()
 
@@ -44,7 +47,7 @@ function setConfig(overrides: Record<string, unknown> = {}) {
     enabled: true,
     osc_notify: true,
     bell: { enabled: true },
-    channels: { sound: false, vibration: false, panel: false },
+    channels: { sound: false, vibration: false, panel: true, tab_indicator: false },
     sounds: {},
     ...overrides,
   }
@@ -60,12 +63,20 @@ function unreadByPane(): Record<string, string> {
 
 describe('pushNotification - plugin notify path', () => {
   beforeEach(() => {
-    // Clear module-level state between tests.
-    const notif = useNotification()
-    notif.clearAll()
+    vi.useFakeTimers()
+    __resetForTest()
     setConfig()
+    const presentation = useNotificationPresentation().settings
+    presentation.coalesce_window_ms = 0
+    presentation.channels.sound = false
+    presentation.channels.vibration = false
     toastSpy.mockClear()
     setToastInstance(toastSpy)
+  })
+
+  afterEach(() => {
+    __resetForTest()
+    vi.useRealTimers()
   })
 
   it('appends item to notifications array', () => {
@@ -82,8 +93,25 @@ describe('pushNotification - plugin notify path', () => {
     expect(Object.keys(unreadByPane())).toHaveLength(0)
   })
 
-  it('DOES set unreadByPane when paneId is present (terminal-style)', () => {
+  it('keeps unreadByPane authoritative even when a local push carries paneId', () => {
     pushNotification({ type: 'error', body: 'with pane', paneId: 'pane-1' })
+    expect(unreadByPane()['pane-1']).toBeUndefined()
+
+    __dispatchServerMessageForTest({
+      type: 'snapshot',
+      epoch: 'test-epoch',
+      revision: '1',
+      panes: [
+        {
+          paneId: 'pane-1',
+          latestEventSeq: '1',
+          readThroughSeq: '0',
+          firstUnreadAt: 1,
+          severity: 'error',
+        },
+      ],
+      notifs: [],
+    })
     expect(unreadByPane()['pane-1']).toBe('error')
   })
 
@@ -115,11 +143,26 @@ describe('pushNotification - plugin notify path', () => {
     expect(listNotifications()).toHaveLength(100)
   })
 
-  it('shows toast even when channels.panel is false (plugin notify not gated by panel)', () => {
+  it('stores plugin history without showing a toast when popup=false and panel=true', () => {
     toastSpy.mockClear()
-    setConfig({ channels: { sound: false, vibration: false, panel: false } })
-    pushNotification({ type: 'info', body: 'should still toast', source: 'plugin' })
-    expect(toastSpy).toHaveBeenCalled()
+    const channels = useNotificationPresentation().settings.channels
+    channels.popup = false
+    channels.panel = true
+    pushNotification({ type: 'info', body: 'history only', source: 'plugin' })
+    vi.runAllTimers()
+    expect(toastSpy).not.toHaveBeenCalled()
+    expect(listNotifications()).toHaveLength(1)
+  })
+
+  it('shows a plugin toast and still stores history regardless of panel setting (history is not toggleable)', () => {
+    toastSpy.mockClear()
+    const channels = useNotificationPresentation().settings.channels
+    channels.popup = true
+    channels.panel = false
+    pushNotification({ type: 'info', body: 'toast only', source: 'plugin' })
+    vi.runAllTimers()
+    expect(toastSpy).toHaveBeenCalledOnce()
+    expect(listNotifications()).toHaveLength(1)
   })
 
   it('does NOT show toast when master enabled=false', () => {

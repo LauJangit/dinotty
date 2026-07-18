@@ -3,6 +3,7 @@ import { ref, computed, nextTick } from 'vue'
 import type { Tab, TerminalTab, PluginTab } from '../types/pane'
 import type { TabInfo } from '../components/terminal/TabBar.vue'
 import { findLeaf, findFirstLeaf, getAllLeaves } from '../types/pane'
+import { useWorkspaces } from '../composables/useWorkspaces'
 
 export const useSessionStore = defineStore('session', () => {
   // ── State ──────────────────────────────────────────────
@@ -15,18 +16,41 @@ export const useSessionStore = defineStore('session', () => {
   /** Currently active tab (or undefined) */
   const activeTab = computed(() => tabs.value.find((t) => t.paneId === activePaneId.value))
 
+  const { workspaces, matchWorkspace } = useWorkspaces()
+
+  function buildWorkspace(ws: { id: string; abbr?: string; name: string; color?: string; connection_id?: string }): TabInfo['workspace'] {
+    const fallback = Array.from(ws.name).slice(0, 3).join('')
+    return {
+      id: ws.id,
+      abbr: ws.abbr || fallback || undefined,
+      name: ws.name,
+      color: ws.color,
+      remote: !!ws.connection_id,
+    }
+  }
+
   /** Tab list for TabBar component */
   const tabList = computed<TabInfo[]>(() =>
-    tabs.value.map((t, i) => ({
-      paneId: t.paneId,
-      title:
-        t.type === 'terminal'
-          ? (t.customTitle ?? findLeaf(t.layout, t.activePaneId)?.title ?? 'Terminal')
-          : t.title,
-      index: i + 1,
-      type: t.type,
-      shellType: t.type === 'terminal' ? findLeaf(t.layout, t.activePaneId)?.shell_type : undefined,
-    }))
+    tabs.value.map((t, i) => {
+      const info: TabInfo = {
+        paneId: t.paneId,
+        title:
+          t.type === 'terminal'
+            ? (t.customTitle ?? findLeaf(t.layout, t.activePaneId)?.title ?? 'Terminal')
+            : t.title,
+        index: i + 1,
+        type: t.type,
+        shellType: t.type === 'terminal' ? findLeaf(t.layout, t.activePaneId)?.shell_type : undefined,
+      }
+      if (t.type === 'terminal') {
+        const ws = matchWorkspace(t.cwd ?? '', t.connectionId, t.workspaceId)
+        if (ws) info.workspace = buildWorkspace(ws)
+      } else if (t.workspaceId) {
+        const ws = workspaces.value.find((w) => w.id === t.workspaceId)
+        if (ws) info.workspace = buildWorkspace(ws)
+      }
+      return info
+    })
   )
 
   /** Type of the currently active tab */

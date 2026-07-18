@@ -91,6 +91,7 @@ fn settings_monitor_defaults() {
 fn settings_notification_defaults() {
     let settings: Settings = serde_json::from_str(r"{}").unwrap();
     assert!(settings.notification.enabled);
+    assert!(!settings.notification.idle_reminder);
 }
 
 #[test]

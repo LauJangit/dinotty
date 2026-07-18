@@ -129,6 +129,20 @@
       </span>
     </div>
 
+    <div v-if="toolbarQuickKeyDefs.length" v-show="textInputFocused" class="mkb-toolbar mkb-toolbar-quick-row">
+      <div class="mkb-toolbar-quick-strip">
+        <MkbKey
+          v-for="(key, i) in toolbarQuickKeyDefs"
+          :key="`${key.l}-${key.s ?? key.sp ?? i}-${i}`"
+          class="mkb-toolbar-quick-key"
+          :k="key"
+          :state="modState"
+          @key-press="onKeyPress"
+          @special="onSpecial"
+        />
+      </div>
+    </div>
+
     <div v-if="phoneUploading" class="mkb-upload-progress">
       <div class="mkb-upload-progress-track">
         <div class="mkb-upload-progress-fill" :style="{ width: `${phoneUploadProgress}%` }"></div>
@@ -310,7 +324,7 @@ import {
 } from '../../composables/useSettings'
 import { useI18n } from '../../composables/useI18n'
 import { useHistory } from '../../composables/useHistory'
-import { mapActionKeys } from '../../utils/actionKeyDef'
+import { actionKeyToKeyDef, mapActionKeys } from '../../utils/actionKeyDef'
 import {
   Keyboard,
   SquareTerminal,
@@ -649,6 +663,10 @@ const actionFollowingRows = computed(() => {
 
 const pasteSupported = computed(
   () => window.isSecureContext && typeof navigator.clipboard?.readText === 'function'
+)
+
+const toolbarQuickKeyDefs = computed(() =>
+  (settings.toolbar_quick_keys ?? []).slice(0, 5).map((key) => actionKeyToKeyDef(key))
 )
 
 const actionArrowUp: KeyDef = { l: '↑', s: '\x1b[A', cls: 'mkb-mod mkb-action-arrow', repeat: true }

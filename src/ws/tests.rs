@@ -97,3 +97,20 @@ fn server_msg_shell_info_serializes() {
     assert!(json.contains(r#""type":"shell_info""#));
     assert!(json.contains(r#""shell_type":"zsh""#));
 }
+
+#[test]
+fn notification_protocol_version_is_fail_closed() {
+    assert_eq!(notification_protocol_version(None), 0);
+    assert_eq!(notification_protocol_version(Some("malformed-1.0")), 0);
+    assert_eq!(notification_protocol_version(Some("0")), 0);
+    assert_eq!(notification_protocol_version(Some("1")), MIN_PROTOCOL_VERSION);
+    assert_eq!(notification_protocol_version(Some("garbage")), 0);
+
+    assert!(notification_protocol_version(None) < MIN_PROTOCOL_VERSION);
+    assert!(notification_protocol_version(Some("0")) < MIN_PROTOCOL_VERSION);
+    assert_eq!(CLOSE_UPGRADE_REQUIRED, 4001);
+
+    // The parser verdict reaches the Close(4001, "protocol_upgrade_required") branch in
+    // handle_notification_socket. A real upgrade, Ping/Pong, Close handshake, and DRAIN_STALL
+    // exercise require a live socket and are intentionally deferred to the QA-stage E2E suite.
+}

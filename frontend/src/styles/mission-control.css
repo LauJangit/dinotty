@@ -637,36 +637,17 @@
   }
 }
 
-/* ── Empty workspace panel ───────────────────────────────── */
-.mc-ws-empty-panel {
-  flex: 1;
+/* ── "Add tab" card (trailing slot in mission control grid) ── */
+.mc-card-add .mc-card-header {
+  min-height: 36px;
+}
+.mc-card-add .mc-card-preview {
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  padding: 24px;
+  color: var(--fg-muted);
+  transition: color 0.15s;
 }
-.mc-ws-empty-panel-text {
-  font-size: 13px;
-  color: var(--text-muted, #888);
-  text-align: center;
-}
-.mc-ws-empty-panel-btn {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  border: 1px dashed var(--border);
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-muted, #888);
-  font: inherit;
-  font-size: 14px;
-  cursor: pointer;
-  transition: color 0.15s, border-color 0.15s;
-}
-.mc-ws-empty-panel-btn:hover {
+.mc-card-add:hover:not(.focused) .mc-card-preview {
   color: var(--accent);
-  border-color: var(--accent);
 }

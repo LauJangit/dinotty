@@ -52,6 +52,22 @@
         </div>
         <p class="settings-hint">{{ t('settings.virtualKeyboard.hint') }}</p>
       </section>
+
+      <section class="settings-section">
+        <h3>{{ t('settings.workspaceBadge') }}</h3>
+        <div class="settings-row">
+          <label>{{ t('settings.workspaceBadge.show') }}</label>
+          <label class="toggle">
+            <input
+              type="checkbox"
+              :checked="wsBadgeEffective"
+              @change="onWsBadgeToggle($event)"
+            />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+        <p class="settings-hint">{{ t('settings.workspaceBadge.hint') }}</p>
+      </section>
     </div>
 
     <div class="settings-group">
@@ -243,7 +259,7 @@
       </CollapsibleSection>
     </div>
 
-    <CollapsibleSection :title="t('settings.group.filesFolders')" level="group" :default-open="true">
+    <CollapsibleSection :title="t('settings.group.filesFolders')" level="group">
       <section class="settings-section">
         <div class="settings-row">
           <label>{{ t('settings.uploads.defaultDir') }}</label>
@@ -423,7 +439,7 @@
       </section>
     </div>
 
-    <CollapsibleSection :title="t('settings.log')" level="group" default-open>
+    <CollapsibleSection :title="t('settings.log')" level="group">
       <section class="settings-section">
         <div class="settings-row">
           <label>{{ t('settings.log.enabled') }}</label>
@@ -489,6 +505,7 @@ import { Eye, EyeOff, Copy, Check, Pencil, RefreshCw, Save, X, FolderOpen } from
 import { invoke } from '@tauri-apps/api/core'
 import { useSettings } from '../../composables/useSettings'
 import { useI18n } from '../../composables/useI18n'
+import { useIsMobile } from '../../composables/useIsMobile'
 import { uiConfirm } from '../../composables/useConfirm'
 import CollapsibleSection from './CollapsibleSection.vue'
 import { copyToClipboard } from '../../utils/clipboard'
@@ -507,7 +524,17 @@ import type { UploadResponse } from '../../types/uploads'
 const emit = defineEmits<{ 'token-changed': [] }>()
 const { settings, saveSettings } = useSettings()
 const { t } = useI18n()
+const { isMobile } = useIsMobile()
 const toast = useToast()
+
+const wsBadgeEffective = computed(
+  () => settings.show_workspace_badge_on_tab ?? isMobile.value
+)
+
+function onWsBadgeToggle(e: Event) {
+  settings.show_workspace_badge_on_tab = (e.target as HTMLInputElement).checked
+  saveSettings()
+}
 
 const accessUrl = ref('')
 const logModalVisible = ref(false)
