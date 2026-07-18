@@ -33,6 +33,7 @@ export interface SettingsData {
   recent_files: RecentEntry[]
   recent_urls: RecentEntry[]
   action_keyboard: ActionKeyboardConfig | null
+  toolbar_quick_keys: ActionKey[]
   upload_dir: string
   default_base_dir?: string | null
   default_workspace_root?: string | null
@@ -234,6 +235,7 @@ export const settings = reactive<SettingsData>({
   recent_files: [],
   recent_urls: [],
   action_keyboard: null,
+  toolbar_quick_keys: [],
   upload_dir: '',
   upload_cap_mb: 200,
   upload_file_cap_mb: 0,
@@ -338,6 +340,7 @@ export function useSettings() {
 }
 
 function restoreActionIcons() {
+  // Toolbar quick keys are plain user-defined labels/sends; do not attach default icons.
   const cfg = settings.action_keyboard
   if (!cfg?.rows) return
   // Build a lookup from send → icon using DEFAULT_ACTION_KEYBOARD

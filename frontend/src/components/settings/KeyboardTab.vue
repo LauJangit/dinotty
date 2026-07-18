@@ -226,6 +226,40 @@
         </button>
       </div>
 
+      <h4>工具栏快捷键 / Toolbar Quick Keys</h4>
+      <p class="settings-hint">移动网页输入框聚焦时显示，最多 5 个。</p>
+      <div class="ak-wysiwyg">
+        <div class="ak-wyg-row-outer">
+          <div class="mkb-row-wrap">
+            <div class="mkb-row">
+              <div
+                v-for="(key, ki) in toolbarQuickKeys"
+                :key="akItemKey(key)"
+                class="ak-wyg-slot"
+                :style="toolbarPreviewSlotStyle"
+              >
+                <div class="mkb-btn ak-wyg-key" :class="[previewToolbarDef(key).cls]">
+                  <span class="ak-wyg-label" @click="editToolbarQuickKey(ki)">{{
+                    previewLabel(key)
+                  }}</span>
+                  <button type="button" class="ak-key-del" @click.stop="removeToolbarQuickKey(ki)">
+                    ✕
+                  </button>
+                </div>
+              </div>
+              <button
+                type="button"
+                class="mkb-btn mkb-mod ak-wyg-add-key"
+                :disabled="toolbarQuickKeys.length >= 5"
+                @click="addToolbarQuickKey"
+              >
+                +
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Edit modal -->
       <div v-if="akEdit" class="ak-modal-backdrop" @click.self="akEdit = null">
         <div class="ak-modal">
@@ -276,7 +310,9 @@
             <input type="checkbox" v-model="akEdit.repeat" /> {{ t('settings.repeatHold') }}
           </label>
           <div class="ak-modal-actions">
-            <button class="settings-save" @click="saveActionKey">{{ t('settings.save') }}</button>
+            <button class="settings-save" :disabled="!akCanSave" @click="saveActionKey">
+              {{ t('settings.save') }}
+            </button>
             <button class="shortcut-add" @click="akEdit = null">{{ t('settings.cancel') }}</button>
           </div>
         </div>
@@ -537,10 +573,17 @@ const actionRows = computed(() => {
   return (settings.action_keyboard ?? DEFAULT_ACTION_KEYBOARD).rows
 })
 
+const toolbarQuickKeys = computed(() => settings.toolbar_quick_keys ?? [])
+const toolbarPreviewSlotStyle = { flexGrow: 1, flexBasis: '0', minWidth: '0' }
+
 function previewDef(ri: number, ki: number) {
   const rows = actionRows.value
   const bottom = ri === rows.length - 1
   return actionKeyToKeyDef(rows[ri][ki], bottom ? { bottomIdx: ki } : undefined)
+}
+
+function previewToolbarDef(key: ActionKey) {
+  return actionKeyToKeyDef(key)
 }
 
 function akPreviewSlotStyle(ri: number, ki: number) {
@@ -582,6 +625,12 @@ function ensureActionKeyboard() {
   }
 }
 
+function ensureToolbarQuickKeys() {
+  if (!Array.isArray(settings.toolbar_quick_keys)) {
+    settings.toolbar_quick_keys = []
+  }
+}
+
 function addActionRow() {
   ensureActionKeyboard()
   settings.action_keyboard!.rows.push([])
@@ -612,6 +661,42 @@ function resolveAutoEnterForEdit(key: ActionKey): boolean {
 function removeActionKey(ri: number, ki: number) {
   ensureActionKeyboard()
   settings.action_keyboard!.rows[ri].splice(ki, 1)
+}
+
+function addToolbarQuickKey() {
+  ensureToolbarQuickKeys()
+  if (settings.toolbar_quick_keys.length >= 5) return
+  akEdit.value = {
+    scope: 'toolbar',
+    ri: -1,
+    ki: settings.toolbar_quick_keys.length,
+    label: '',
+    sendRaw: '',
+    style: '',
+    repeat: false,
+    auto_enter: true,
+  }
+}
+
+function editToolbarQuickKey(ki: number) {
+  ensureToolbarQuickKeys()
+  const key = settings.toolbar_quick_keys[ki]
+  if (!key) return
+  akEdit.value = {
+    scope: 'toolbar',
+    ri: -1,
+    ki,
+    label: key.label,
+    sendRaw: escapeForDisplay(key.send),
+    style: key.style || '',
+    repeat: key.repeat || false,
+    auto_enter: resolveAutoEnterForEdit(key),
+  }
+}
+
+function removeToolbarQuickKey(ki: number) {
+  ensureToolbarQuickKeys()
+  settings.toolbar_quick_keys.splice(ki, 1)
 }
 
 const akKeyIds = new WeakMap<ActionKey, string>()
@@ -661,7 +746,10 @@ function akResizePointerDown(ri: number, ki: number, e: PointerEvent) {
   window.addEventListener('pointercancel', end)
 }
 
+type AkEditScope = 'action' | 'toolbar'
+
 const akEdit = ref<{
+  scope: AkEditScope
   ri: number
   ki: number
   label: string
@@ -673,9 +761,16 @@ const akEdit = ref<{
 const akRecording = ref(false)
 const recordFocusSinkRef = ref<HTMLElement | null>(null)
 
+const akCanSave = computed(() => {
+  if (!akEdit.value) return false
+  if (akEdit.value.scope !== 'toolbar') return true
+  return akEdit.value.label.trim().length > 0 && unescapeFromDisplay(akEdit.value.sendRaw).length > 0
+})
+
 function editActionKey(ri: number, ki: number) {
   const key = actionRows.value[ri][ki]
   akEdit.value = {
+    scope: 'action',
     ri,
     ki,
     label: key.label,
@@ -687,15 +782,26 @@ function editActionKey(ri: number, ki: number) {
 }
 
 function saveActionKey() {
-  if (!akEdit.value) return
-  ensureActionKeyboard()
+  if (!akEdit.value || !akCanSave.value) return
   const { ri, ki, label, sendRaw, style, repeat, auto_enter } = akEdit.value
-  const key = settings.action_keyboard!.rows[ri][ki]
-  key.label = label
-  key.send = unescapeFromDisplay(sendRaw)
-  key.style = style || undefined
-  key.repeat = repeat || undefined
-  key.auto_enter = auto_enter
+  const next: ActionKey = {
+    label: akEdit.value.scope === 'toolbar' ? label.trim() : label,
+    send: unescapeFromDisplay(sendRaw),
+    style: style || undefined,
+    repeat: repeat || undefined,
+    auto_enter,
+  }
+  if (akEdit.value.scope === 'toolbar') {
+    ensureToolbarQuickKeys()
+    if (ki < settings.toolbar_quick_keys.length) {
+      settings.toolbar_quick_keys[ki] = next
+    } else if (settings.toolbar_quick_keys.length < 5) {
+      settings.toolbar_quick_keys.push(next)
+    }
+  } else {
+    ensureActionKeyboard()
+    Object.assign(settings.action_keyboard!.rows[ri][ki], next)
+  }
   akEdit.value = null
 }
 
