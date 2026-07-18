@@ -20,7 +20,7 @@
             class="settings-row kb-shortcut-row"
             :data-kb-id="def.id"
           >
-            <label><span class="kb-icon">{{ def.icon }}</span> {{ t(def.titleKey) }}</label>
+            <label><component :is="def.icon" :size="14" class="kb-icon" /> {{ t(def.titleKey) }}</label>
             <div class="kb-shortcut-ctrl">
               <span v-if="kbRecording !== def.id" class="kb-keys">
                 <kbd v-for="(k, i) in formatBinding(getBinding(def.id), def.kind ?? 'app')" :key="i">{{ k }}</kbd>
@@ -42,7 +42,7 @@
             class="settings-row kb-shortcut-row"
             :data-kb-id="def.id"
           >
-            <label><span class="kb-icon">{{ def.icon }}</span> {{ t(def.titleKey) }}</label>
+            <label><component :is="def.icon" :size="14" class="kb-icon" /> {{ t(def.titleKey) }}</label>
             <div class="kb-shortcut-ctrl">
               <span v-if="kbRecording !== def.id" class="kb-keys">
                 <kbd v-for="(k, i) in formatBinding(getBinding(def.id), def.kind ?? 'app')" :key="i">{{ k }}</kbd>
@@ -63,7 +63,7 @@
               class="settings-row kb-shortcut-row"
               :data-kb-id="def.id"
             >
-              <label><span class="kb-icon">{{ def.icon }}</span> {{ t(def.titleKey) }}</label>
+              <label><component :is="def.icon" :size="14" class="kb-icon" /> {{ t(def.titleKey) }}</label>
               <div class="kb-shortcut-ctrl">
                 <span v-if="kbRecording !== def.id" class="kb-keys">
                   <kbd v-for="(k, i) in formatBinding(getBinding(def.id), def.kind ?? 'app')" :key="i">{{ k }}</kbd>
@@ -89,7 +89,7 @@
             class="settings-row kb-shortcut-row"
             :data-kb-id="def.id"
           >
-            <label><span class="kb-icon">{{ def.icon }}</span> {{ t(def.titleKey) }}</label>
+            <label><component :is="def.icon" :size="14" class="kb-icon" /> {{ t(def.titleKey) }}</label>
             <div class="kb-shortcut-ctrl">
               <span v-if="kbRecording !== def.id" class="kb-keys">
                 <kbd v-for="(k, i) in formatBinding(getBinding(def.id), def.kind ?? 'app')" :key="i">{{ k }}</kbd>
@@ -115,7 +115,7 @@
           :data-kb-id="def.id"
         >
           <label
-            ><span class="kb-icon">{{ def.icon }}</span> {{ t(def.titleKey) }}</label
+            ><component :is="def.icon" :size="14" class="kb-icon" /> {{ t(def.titleKey) }}</label
           >
           <div class="kb-shortcut-ctrl">
             <span v-if="kbRecording !== def.id" class="kb-keys">
@@ -1196,10 +1196,13 @@ function unescapeFromDisplay(s: string): string {
   font-style: italic;
 }
 .kb-icon {
-  display: inline-block;
-  width: 24px;
-  text-align: center;
-  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: var(--fg-muted);
 }
 .kb-stop {
   color: #ef4444 !important;
