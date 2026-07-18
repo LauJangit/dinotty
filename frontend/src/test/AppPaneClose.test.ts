@@ -246,6 +246,7 @@ import { settings } from '../composables/useSettings'
 import { useUiStore } from '../stores/uiStore'
 import { useSessionStore } from '../stores/sessionStore'
 import { useWorkspaces } from '../composables/useWorkspaces'
+import { currentRevealNavGen } from '../utils/navGen'
 import type { Tab } from '../types/pane'
 
 // Spec: openspec/changes/confirm-before-close-tab/spec.md
@@ -650,6 +651,19 @@ describe('App.vue - onClosePane routes through confirmation gate', () => {
     await nextTick()
 
     expect(mocks.clearForPaneIds).not.toHaveBeenCalled()
+  })
+
+  it('advances reveal navigation when closing the active tab selects its replacement', async () => {
+    const wrapper = await mountWithTabs()
+    const session = useSessionStore()
+    session.addTab({ ...session.tabs[0], paneId: 'tab-survivor' }, false)
+    const navGenBeforeClose = currentRevealNavGen()
+
+    await (wrapper.vm as any).closeTab('tab-1')
+    await nextTick()
+
+    expect(currentRevealNavGen()).toBe(navGenBeforeClose + 1)
+    expect(session.activePaneId).toBe('tab-survivor')
   })
 })
 

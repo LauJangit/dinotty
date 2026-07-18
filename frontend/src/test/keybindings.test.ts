@@ -64,7 +64,9 @@ function keyEvent(key: string, init: KeyboardEventInit = {}) {
 
 function dispatchWindowsAppBinding(event: KeyboardEvent, id: string, action: () => void) {
   const binding = useKeybindings().getBinding(id)
-  const appCommand = event.ctrlKey || (settings.windowsAltAsCmd && event.altKey)
+  const appCommand =
+    (event.ctrlKey || (settings.windowsAltAsCmd && event.altKey)) &&
+    !(event.ctrlKey && event.altKey)
   if (appCommand && keyEventMatchesBinding(event, binding)) action()
 }
 
@@ -225,6 +227,21 @@ describe('unified keybindings', () => {
     dispatchWindowsAppBinding(keyEvent('`', { code: 'Backquote' }), 'superviseTabs', dispatch)
 
     expect(dispatch).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects Windows Ctrl+Alt AltGr while preserving plain Ctrl app shortcuts', () => {
+    settings.windowsAltAsCmd = false
+    const dispatch = vi.fn()
+
+    dispatchWindowsAppBinding(
+      keyEvent('t', { ctrlKey: true, altKey: true }),
+      'newTab',
+      dispatch
+    )
+    dispatchWindowsAppBinding(keyEvent('t', { ctrlKey: true }), 'newTab', dispatch)
+    dispatchWindowsAppBinding(keyEvent('t', { altKey: true }), 'newTab', dispatch)
+
+    expect(dispatch).toHaveBeenCalledOnce()
   })
 
   it('does not match terminal bindings hand-edited to reserved Ctrl+Shift+C/V', () => {
