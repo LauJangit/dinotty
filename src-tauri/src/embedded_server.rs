@@ -649,6 +649,8 @@ pub fn run_server(
                     .put(plugin::plugin_storage_set)
                     .delete(plugin::plugin_storage_delete),
             )
+            .route("/api/plugins/:id/crypto/hash", post(plugin::plugin_crypto_hash))
+            .route("/api/plugins/:id/crypto/hmac", post(plugin::plugin_crypto_hmac))
             .route("/api/plugins/:id/*path", get(plugin::plugin_asset))
             .route("/api/proxy", any(proxy::external_proxy_handler))
             .route("/preview/:port", any(proxy::proxy_handler_root))

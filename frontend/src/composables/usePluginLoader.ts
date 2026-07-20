@@ -10,6 +10,29 @@ const dynamicImport: (url: string) => Promise<any> = new Function('url', 'return
   url: string
 ) => Promise<any>
 
+// ─── Binary helpers for ctx.crypto ──────────────────────────────────────────
+
+function toBytes(data: string | Uint8Array): Uint8Array {
+  if (typeof data === 'string') return new TextEncoder().encode(data)
+  return data
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let bin = ''
+  const chunk = 0x8000
+  for (let i = 0; i < bytes.length; i += chunk) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + chunk))
+  }
+  return btoa(bin)
+}
+
+function base64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64)
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+  return out
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface PluginManifest {
@@ -104,6 +127,25 @@ export interface PluginContext {
     list(): Promise<ProcessInfo[]>
     stop(pid: number): Promise<void>
     stopAll(): Promise<void>
+  }
+
+  /**
+   * Cryptographic helpers backed by the server. Use these instead of
+   * `crypto.subtle` so plugins keep working in non-secure HTTP contexts
+   * (e.g. `http://192.168.x.x`) where Web Crypto is unavailable.
+   */
+  crypto: {
+    hash(
+      algorithm: 'sha1' | 'sha256' | 'sha384' | 'sha512' | 'md5',
+      data: string | Uint8Array
+    ): Promise<Uint8Array>
+    hmac(
+      algorithm: 'sha1' | 'sha256' | 'sha384' | 'sha512' | 'md5',
+      key: Uint8Array | string,
+      data: string | Uint8Array
+    ): Promise<Uint8Array>
+    toHex(bytes: Uint8Array): string
+    fromHex(hex: string): Uint8Array
   }
 }
 
@@ -301,6 +343,43 @@ function createPluginContext(pluginId: string): PluginContext {
     },
   }
 
+  const crypto: PluginContext['crypto'] = {
+    async hash(algorithm, data) {
+      const dataB64 = bytesToBase64(toBytes(data))
+      const res = await authFetch(apiUrl(`/api/plugins/${pluginId}/crypto/hash`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ algorithm, data: dataB64 }),
+      })
+      if (!res.ok) throw new Error(`crypto.hash(${algorithm}) failed: ${res.status}`)
+      const { bytes } = await res.json()
+      return base64ToBytes(bytes)
+    },
+    async hmac(algorithm, key, data) {
+      const keyB64 = bytesToBase64(toBytes(key))
+      const dataB64 = bytesToBase64(toBytes(data))
+      const res = await authFetch(apiUrl(`/api/plugins/${pluginId}/crypto/hmac`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ algorithm, key: keyB64, data: dataB64 }),
+      })
+      if (!res.ok) throw new Error(`crypto.hmac(${algorithm}) failed: ${res.status}`)
+      const { bytes } = await res.json()
+      return base64ToBytes(bytes)
+    },
+    toHex(bytes) {
+      let hex = ''
+      for (let i = 0; i < bytes.length; i++) hex += bytes[i].toString(16).padStart(2, '0')
+      return hex
+    },
+    fromHex(hex) {
+      const clean = hex.length % 2 === 0 ? hex : hex.slice(0, -1)
+      const out = new Uint8Array(clean.length / 2)
+      for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.substr(i * 2, 2), 16)
+      return out
+    },
+  }
+
   const context: PluginContext = {
     reactive,
     ref,
@@ -311,6 +390,7 @@ function createPluginContext(pluginId: string): PluginContext {
     h,
     exec,
     process,
+    crypto,
     terminal: window.__dinotty_terminal_api ?? {
       send() {},
       activePaneId: () => null,

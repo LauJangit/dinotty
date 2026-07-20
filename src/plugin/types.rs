@@ -68,6 +68,29 @@ pub struct ExecResult {
 }
 
 #[derive(Deserialize)]
+pub struct CryptoHashRequest {
+    pub algorithm: String,
+    pub data: String,
+}
+
+#[derive(Serialize)]
+pub struct CryptoHashResponse {
+    pub bytes: String,
+}
+
+#[derive(Deserialize)]
+pub struct CryptoHmacRequest {
+    pub algorithm: String,
+    pub key: String,
+    pub data: String,
+}
+
+#[derive(Serialize)]
+pub struct CryptoHmacResponse {
+    pub bytes: String,
+}
+
+#[derive(Deserialize)]
 pub struct DevLinkRequest {
     pub path: String,
 }

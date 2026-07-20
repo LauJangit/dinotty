@@ -880,6 +880,8 @@ async fn main() {
                     .put(plugin::plugin_storage_set)
                     .delete(plugin::plugin_storage_delete),
             )
+            .route("/api/plugins/:id/crypto/hash", post(plugin::plugin_crypto_hash))
+            .route("/api/plugins/:id/crypto/hmac", post(plugin::plugin_crypto_hmac))
             .route("/api/plugins/:id/*path", get(plugin::plugin_asset))
             // Agent API + Token management + MCP — protected by agent token middleware
             .merge(
