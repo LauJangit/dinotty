@@ -243,6 +243,14 @@
       @new-tab-ssh="onOverviewNewTabSsh"
       @rename-tab="onOverviewRenameTab"
     />
+
+    <MultiSelectPicker
+      :visible="cursorPickerVisible"
+      :title="t('palette.addCursors')"
+      :items="cursorPickerItems"
+      @confirm="onCursorPickerConfirm"
+      @cancel="cursorPickerVisible = false"
+    />
   </div>
 </template>
 
@@ -270,6 +278,7 @@ import ConfirmCloseDialog from './components/ui/ConfirmCloseDialog.vue'
 import ConfirmModal from './components/ui/ConfirmModal.vue'
 import { confirmState, uiConfirm, confirmResolve, confirmCancel } from './composables/useConfirm'
 import PromptModal from './components/ui/PromptModal.vue'
+import MultiSelectPicker from './components/ui/MultiSelectPicker.vue'
 import { promptState, promptResolve, promptCancel } from './composables/usePrompt'
 import PreviewPanel from './components/preview/PreviewPanel.vue'
 import CommandBookmarks from './components/command/CommandBookmarks.vue'
@@ -294,6 +303,8 @@ import { isTauri, tauriInvoke } from './composables/useTransport'
 import { isTouchDevice, setActivePaneId } from './composables/useTerminal'
 import { useI18n } from './composables/useI18n'
 import { keyEventMatchesBinding, useKeybindings } from './composables/useKeybindings'
+import { getEditor, getActiveLeaf } from './composables/useEditorRegistry'
+import { useCursorGroup, type SearchMatch, type PickerItem } from './composables/useCursorGroup'
 import { useSplitPane } from './composables/useSplitPane'
 import { useSuperviseTabs } from './composables/useSuperviseTabs'
 import { useSyncWebSocket } from './composables/useSyncWebSocket'
@@ -371,6 +382,10 @@ function setPreviewPanelRef(el: any) {
 const bookmarksRef = ref<InstanceType<typeof CommandBookmarks>>()
 const serverListRef = ref<InstanceType<typeof ServerList>>()
 const sshPanelRef = ref<InstanceType<typeof SshHostsPanel>>()
+const cursorPickerVisible = ref(false)
+const cursorPickerItems = ref<PickerItem[]>([])
+const cursorPickerMatches = ref<Map<string, SearchMatch>>(new Map())
+const cursorGroupApi = useCursorGroup()
 const sshAuthVisible = ref(false)
 const sshAuthHost = ref('')
 const sshAuthPaneId = ref('')
@@ -380,7 +395,8 @@ const { getBinding, formatBinding } = useKeybindings()
 const notif = useNotification()
 const presentationSettings = useNotificationPresentation().settings
 const { supervise } = useSuperviseTabs()
-const clearToastInstance = setToastInstance(useToast())
+const toast = useToast()
+const clearToastInstance = setToastInstance(toast)
 const clearActiveReadContext = setActiveReadContext({
   getActiveFocusedPaneId: () =>
     activeTab.value?.type === 'terminal' ? activeTab.value.activePaneId : null,
@@ -1731,6 +1747,13 @@ const paletteCommands = computed<Command[]>(() => {
       action: () => openPreview(),
     },
     {
+      icon: '⠿',
+      title: t('palette.addCursors'),
+      subtitle: t('palette.addCursorsDesc'),
+      kbd: formatBinding(getBinding('addCursorsInFiles')),
+      action: () => triggerAddCursors(),
+    },
+    {
       icon: '⇄',
       title: t('palette.sshConnect'),
       subtitle: t('palette.sshConnectDesc'),
@@ -1810,12 +1833,98 @@ const keyActions: Record<string, () => void> = {
   fontSizeUp: () => adjustActiveTerminalFontSize(1),
   fontSizeDown: () => adjustActiveTerminalFontSize(-1),
   fontSizeReset: () => adjustActiveTerminalFontSize(0),
+  addCursorsInFiles: () => triggerAddCursors(),
 }
 
 function dispatchAppAction(id: string) {
   if (!APP_ACTION_IDS.has(id)) return
   if (id === 'closeTab') lastTabCloseShortcutAt = Date.now()
   keyActions[id]?.()
+}
+
+async function triggerAddCursors() {
+  const leafId = getActiveLeaf()
+  if (!leafId) return
+  const editor = getEditor(leafId)
+  if (!editor) return
+  const selection = editor.getSelection()
+  const model = editor.getModel()
+  let query = ''
+  if (selection && !selection.isEmpty() && model) {
+    query = model.getValueInRange(selection)
+  } else {
+    const pos = editor.getPosition()
+    if (pos && model) {
+      const word = model.getWordAtPosition(pos)
+      if (word) query = model.getValueInRange({
+        startLineNumber: pos.lineNumber,
+        startColumn: word.startColumn,
+        endLineNumber: pos.lineNumber,
+        endColumn: word.endColumn,
+      })
+    }
+  }
+  if (!query) return
+
+  const tab = tabs.value.find((t) => t.paneId === activePaneId.value)
+  const paneId = tab?.type === 'terminal' ? tab.activePaneId : null
+  if (!paneId) return
+
+  try {
+    await getApiBase()
+    const res = await authFetch(apiUrl('/api/workspace/search'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pane_id: paneId, path: '.', query }),
+    })
+    if (res.status === 502) {
+      const j = await res.json().catch(() => ({}))
+      const message = j.error ? t('errors.rgNotInstalled') : t('errors.rgNotInstalled')
+      toast.error(message)
+      return
+    }
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}))
+      toast.error(j.error || `search failed (${res.status})`)
+      return
+    }
+    const data = await res.json()
+    const matches: SearchMatch[] = data.matches ?? []
+    if (matches.length === 0) {
+      toast.info(t('multiSelect.empty'))
+      return
+    }
+
+    const matchMap = new Map<string, SearchMatch>()
+    cursorPickerItems.value = matches.map((m, i) => {
+      const id = `${m.filePath}:${m.line}:${m.column}:${i}`
+      matchMap.set(id, m)
+      return {
+        id,
+        label: `${m.filePath}:${m.line}`,
+        detail: m.lineText.trim().slice(0, 100),
+      }
+    })
+    cursorPickerMatches.value = matchMap
+    cursorPickerVisible.value = true
+  } catch (err) {
+    toast.error(`search error: ${(err as Error).message}`)
+  }
+}
+
+async function onCursorPickerConfirm(selectedIds: string[]) {
+  cursorPickerVisible.value = false
+  const matches: SearchMatch[] = []
+  for (const id of selectedIds) {
+    const m = cursorPickerMatches.value.get(id)
+    if (m) matches.push(m)
+  }
+  if (matches.length === 0) return
+  try {
+    await cursorGroupApi.createGroupFromSearch(matches)
+  } catch (err) {
+    toast.error(`create group failed: ${(err as Error).message}`)
+  }
 }
 
 function onGlobalKeydown(e: KeyboardEvent) {
