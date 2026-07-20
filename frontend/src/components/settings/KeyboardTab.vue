@@ -811,7 +811,7 @@ function bottomPreviewDef(ri: number, ki: number) {
 const bottomEnterPreviewDef = computed(() => actionKeyToKeyDef(actionBottom.value.enter))
 
 function footerStructuralClass(key: ActionKey) {
-  return Array.from(key.label).length === 1 ? 'mkb-action-arrow' : 'mkb-action-btn'
+  return key.shape === 'arrow' ? 'mkb-action-arrow' : 'mkb-action-btn'
 }
 
 function akPreviewSlotStyle(ri: number, ki: number) {

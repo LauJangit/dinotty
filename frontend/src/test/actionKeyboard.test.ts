@@ -79,6 +79,25 @@ describe('actionKeyToKeyDef action display', () => {
     expect(def.l).toBe('My New Tab')
     expect(def).not.toHaveProperty('icon')
   })
+
+  it('marks an unsupported action key as disabled with the action id in the label', () => {
+    const def = actionKeyToKeyDef({
+      label: 'Ignored',
+      kind: 'action',
+      action: 'no-such-action',
+    })
+
+    expect(def.disabled).toBe(true)
+    expect(def.cls).toContain('mkb-disabled')
+    expect(def.l).toContain('no-such-action')
+  })
+
+  it('marks an action key with no action id as disabled', () => {
+    const def = actionKeyToKeyDef({ label: '', kind: 'action' })
+
+    expect(def.disabled).toBe(true)
+    expect(def.cls).toContain('mkb-disabled')
+  })
 })
 
 describe('action keyboard drop threshold', () => {
@@ -221,6 +240,21 @@ describe('normalizeActionKeyboard', () => {
     expect(keys.map((key) => key.display)).toEqual(['icon', 'text', undefined, undefined])
     expect(keys[2]).not.toHaveProperty('display')
     expect(keys[3]).not.toHaveProperty('display')
+  })
+
+  it('keeps valid shape values and drops bogus or absent values without defaults', () => {
+    const keys = [
+      { label: 'arrow', send: '\x1b[A', shape: 'arrow' },
+      { label: 'button', send: 'yes\r', shape: 'button' },
+      { label: 'bogus', send: 'no\r', shape: 'wide' },
+      { label: 'absent', send: 'go\r' },
+    ] as unknown as ActionKey[]
+
+    normalize({ rows: [keys] })
+
+    expect(keys.map((key) => key.shape)).toEqual(['arrow', 'button', undefined, undefined])
+    expect(keys[2]).not.toHaveProperty('shape')
+    expect(keys[3]).not.toHaveProperty('shape')
   })
 
   it('keeps action-kind keys with missing or blank action unchanged', () => {

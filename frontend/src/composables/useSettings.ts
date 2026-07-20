@@ -184,6 +184,7 @@ export interface ActionKey {
   display?: 'icon' | 'text'
   send?: string
   style?: string
+  shape?: 'arrow' | 'button'
   repeat?: boolean
   special?: string
   auto_enter?: boolean
@@ -204,11 +205,11 @@ export interface ActionKeyboardConfig {
 
 export const DEFAULT_ACTION_BOTTOM: ActionBottomCluster = {
   rows: [
-    [ { label: 'yes',      send: 'yes\r',      grow: 1 },
-      { label: 'no',       send: 'no\r',       grow: 1 },
-      { label: '↑',        send: '\x1b[A', repeat: true, grow: 1 } ],
-    [ { label: 'continue', send: 'continue\r', grow: 2 },
-      { label: '↓',        send: '\x1b[B', repeat: true, grow: 1 } ],
+    [ { label: 'yes',      send: 'yes\r',      grow: 1, shape: 'button' },
+      { label: 'no',       send: 'no\r',       grow: 1, shape: 'button' },
+      { label: '↑',        send: '\x1b[A', repeat: true, grow: 1, shape: 'arrow' } ],
+    [ { label: 'continue', send: 'continue\r', grow: 2, shape: 'button' },
+      { label: '↓',        send: '\x1b[B', repeat: true, grow: 1, shape: 'arrow' } ],
   ],
   enter: { label: '↵', kind: 'send', send: '\r' },
   enter_width: 0.28,
@@ -252,6 +253,8 @@ function normalizeActionKey(key: ActionKey): void {
   }
 
   if (key.display !== 'icon' && key.display !== 'text') delete key.display
+
+  if (key.shape !== 'arrow' && key.shape !== 'button') delete key.shape
 
   if (key.kind !== 'action' || typeof key.action !== 'string' || key.action.trim() === '') return
   delete key.send
@@ -336,11 +339,7 @@ export function resetActionKeyboard(): void {
 }
 
 export function ensureBottom(): ActionBottomCluster {
-  if (
-    !settings.action_keyboard ||
-    typeof settings.action_keyboard !== 'object' ||
-    Array.isArray(settings.action_keyboard)
-  ) {
+  if (!settings.action_keyboard) {
     settings.action_keyboard = {
       rows: DEFAULT_ACTION_KEYBOARD.rows.map((row) => row.map((key) => ({ ...key }))),
     }

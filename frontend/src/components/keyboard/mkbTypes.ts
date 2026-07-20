@@ -10,6 +10,7 @@ export interface KeyDef {
   repeat?: boolean // key repeat
   icon?: object // lucide icon component
   aria?: string // accessible name
+  disabled?: boolean // render as inert (unsupported action, etc.)
 }
 
 export interface ModState {

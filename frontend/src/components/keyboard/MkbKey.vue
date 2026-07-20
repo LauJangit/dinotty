@@ -55,7 +55,7 @@ const emit = defineEmits<{
   special: [sp: string]
 }>()
 
-const isDisabled = computed(() => props.k.cls?.split(/\s+/).includes('mkb-disabled') ?? false)
+const isDisabled = computed(() => props.k.disabled === true)
 
 const isModActive = computed(() => {
   const sp = props.k.sp

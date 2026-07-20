@@ -1,10 +1,8 @@
 import type { ActionKey } from '../composables/useSettings'
 import type { KeyDef } from '../components/keyboard/mkbTypes'
 import { Bookmark } from 'lucide-vue-next'
-import { useI18n } from '../composables/useI18n'
+import { t } from '../composables/useI18n'
 import { getAppAction } from './appActionCatalog'
-
-const { t } = useI18n()
 
 export function normalizeCaretSend(send: string): string {
   if (send.length !== 2 || send[0] !== '^') return send
@@ -35,6 +33,7 @@ export function actionKeyToKeyDef(ak: ActionKey, opts?: { bottomIdx?: number }):
       : {
           l: ak.action ? `${t('actionKb.unsupported')}: ${ak.action}` : t('actionKb.unsupported'),
           cls: `${cls} mkb-disabled`,
+          disabled: true,
         }
     if (ak.grow != null && ak.grow > 0) def.g = ak.grow
     return def

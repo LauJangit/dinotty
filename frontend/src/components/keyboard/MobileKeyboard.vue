@@ -668,7 +668,7 @@ function mapActionFooterRow(row: ActionKey[]): KeyDef[] {
   return mapActionKeys(row, false).map((def, i) =>
     withActionFooterClass(
       def,
-      Array.from(row[i].label).length === 1 ? 'mkb-action-arrow' : 'mkb-action-btn',
+      row[i].shape === 'arrow' ? 'mkb-action-arrow' : 'mkb-action-btn',
     )
   )
 }

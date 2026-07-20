@@ -868,6 +868,8 @@ pub struct ActionKey {
     #[serde(default)]
     pub style: Option<String>,
     #[serde(default)]
+    pub shape: Option<String>,
+    #[serde(default)]
     pub repeat: bool,
     #[serde(default)]
     pub special: Option<String>,
@@ -897,6 +899,9 @@ impl Serialize for ActionKey {
         }
         if let Some(style) = &self.style {
             map.serialize_entry("style", style)?;
+        }
+        if let Some(shape) = &self.shape {
+            map.serialize_entry("shape", shape)?;
         }
         if let Some(grow) = &self.grow {
             map.serialize_entry("grow", grow)?;
@@ -941,6 +946,10 @@ fn normalize_action_key(key: &mut ActionKey) {
         key.display = None;
     }
 
+    if !matches!(key.shape.as_deref(), Some("arrow" | "button")) {
+        key.shape = None;
+    }
+
     let is_valid_action = key.kind.as_deref() == Some("action")
         && key.action.as_deref().is_some_and(|action| !action.trim().is_empty());
     if is_valid_action {
@@ -959,6 +968,7 @@ fn default_action_enter(label: String) -> ActionKey {
         display: None,
         send: "\r".to_string(),
         style: None,
+        shape: None,
         repeat: false,
         special: None,
         auto_enter: false,

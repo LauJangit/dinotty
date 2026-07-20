@@ -699,6 +699,29 @@ fn action_keyboard_normalize_is_idempotent_for_active_and_snapshot_slots() {
 }
 
 #[test]
+fn action_keyboard_normalize_keeps_valid_shape_and_drops_bogus() {
+    let mut config = parse_action_keyboard(
+        r#"{
+            "rows":[[
+                {"label":"arrow","send":"up","shape":"arrow"},
+                {"label":"button","send":"yes\r","shape":"button"},
+                {"label":"bogus","send":"no\r","shape":"wide"}
+            ]]
+        }"#,
+    );
+    config.normalize();
+
+    assert_eq!(config.rows[0][0].shape.as_deref(), Some("arrow"));
+    assert_eq!(config.rows[0][1].shape.as_deref(), Some("button"));
+    assert_eq!(config.rows[0][2].shape, None);
+
+    let wire = serde_json::to_value(&config).unwrap();
+    assert_eq!(wire["rows"][0][0]["shape"], "arrow");
+    assert_eq!(wire["rows"][0][1]["shape"], "button");
+    assert!(wire["rows"][0][2].get("shape").is_none());
+}
+
+#[test]
 fn clamp_theme_on_put_rejects_base_names_from_hidden() {
     let mut settings = Settings {
         hidden_builtins: ["dark", "nord", "light", "dracula", "nord"]
