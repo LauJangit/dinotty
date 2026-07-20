@@ -833,6 +833,7 @@ async fn main() {
             .route("/api/workspace/git-stage-lines", post(workspace::workspace_git_stage_lines))
             .route("/api/workspace/git-revert-lines", post(workspace::workspace_git_revert_lines))
             .route("/api/workspace/syntax-check", post(workspace::workspace_syntax_check))
+            .route("/api/workspace/search", post(workspace::workspace_search))
             // Workspace management
             .route(
                 "/api/workspaces",
