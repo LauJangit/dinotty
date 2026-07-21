@@ -6,7 +6,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use std::{ffi::OsString, fs, path::Path};
+use std::{ffi::OsString, fmt::Write, fs, path::Path};
 use tempfile::TempDir;
 use tokio::sync::RwLock;
 
@@ -414,10 +414,10 @@ fn parse_rg_json_skips_non_match_types() {
 fn parse_rg_json_respects_max() {
     let mut stdout = String::new();
     for i in 0..10 {
-        stdout.push_str(&format!(
-            r#"{{"type":"match","data":{{"path":{{"text":"f{i}.rs"}},"lines":{{"text":"x\n"}},"line_number":1,"absolute_offset":0,"submatches":[{{"match":{{"text":"x"}},"start":0,"end":1}}]}}}}
-"#
-        ));
+        let _ = writeln!(
+            stdout,
+            r#"{{"type":"match","data":{{"path":{{"text":"f{i}.rs"}},"lines":{{"text":"x\n"}},"line_number":1,"absolute_offset":0,"submatches":[{{"match":{{"text":"x"}},"start":0,"end":1}}]}}}}"#
+        );
     }
     let matches = parse_rg_json(&stdout, 3);
     assert_eq!(matches.len(), 3);
