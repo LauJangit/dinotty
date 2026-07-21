@@ -299,12 +299,16 @@ export function useSyncWebSocket(opts: {
           nextTick(() => focusActive())
         }
       } else if (msg.type === 'tab_closed') {
-        let tabIdx = tabs.value.findIndex((t) => t.type === 'terminal' && t.paneId === msg.pane_id)
-        if (tabIdx === -1) {
-          tabIdx = tabs.value.findIndex(
-            (t) => t.type === 'terminal' && !!findLeaf(t.layout, msg.pane_id)
-          )
-        }
+        // Match by tab paneId only. The backend always broadcasts
+        // `tab_closed` with the tab's paneId (a.k.a. tab_id), never a leaf
+        // paneId. A previous fallback that searched layouts by leaf paneId
+        // was liable to remove the wrong tab after a Mode A merge: the src
+        // plugin tab's paneId equals its leaf paneId, so once the plugin leaf
+        // was inserted into the dst tab the fallback would find and destroy
+        // the dst tab.
+        const tabIdx = tabs.value.findIndex(
+          (t) => t.type === 'terminal' && t.paneId === msg.pane_id
+        )
         if (tabIdx !== -1) {
           const tab = tabs.value[tabIdx] as TerminalTab
           for (const leaf of getAllLeaves(tab.layout)) {
@@ -335,13 +339,25 @@ export function useSyncWebSocket(opts: {
           }
         }
       } else if (msg.type === 'layout_updated') {
-        const targetTab = tabs.value.find((t) => {
-          if (t.type !== 'terminal') return false
-          if (t.paneId === msg.pane_id) return true
+        // Two-pass match: prefer paneId, fall back to leaf overlap only if no
+        // paneId match. A single-pass `find()` with OR-ed conditions can pick
+        // the wrong tab during Mode A merge: after the src tab's leaves are
+        // spliced into dst, src also matches the leaf-overlap check. If src
+        // is iterated first, it gets selected as `targetTab`, and the filter
+        // below then removes dst (its leaves are now in src). When
+        // `TabClosed(src)` arrives next, src is also removed - both tabs
+        // vanish. Prioritizing paneId match avoids this.
+        let targetTab = tabs.value.find(
+          (t): t is TerminalTab => t.type === 'terminal' && t.paneId === msg.pane_id
+        )
+        if (!targetTab) {
           const incomingLeafIds = getAllLeaves(msg.layout).map((l: any) => l.paneId)
-          const localLeafIds = getAllLeaves(t.layout).map((l) => l.paneId)
-          return incomingLeafIds.some((id: string) => localLeafIds.includes(id))
-        }) as TerminalTab | undefined
+          targetTab = tabs.value.find((t): t is TerminalTab => {
+            if (t.type !== 'terminal') return false
+            const localLeafIds = getAllLeaves(t.layout).map((l) => l.paneId)
+            return incomingLeafIds.some((id: string) => localLeafIds.includes(id))
+          })
+        }
         if (targetTab) {
           const incomingLeafIds = getAllLeaves(msg.layout).map((l: any) => l.paneId)
           const localLeafIds = getAllLeaves(targetTab.layout).map((l) => l.paneId)

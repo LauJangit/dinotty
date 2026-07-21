@@ -535,11 +535,21 @@ fn insert_subtree_right_target_in_leaf() {
     let subtree = leaf("new");
     let result = insert_subtree_into_layout(&layout, "target", "right", subtree).unwrap();
     assert_eq!(result.get("type").unwrap(), "split");
-    assert_eq!(result.get("direction").unwrap(), "right");
+    // "right" is a position hint; the stored `direction` field is the axis.
+    assert_eq!(result.get("direction").unwrap(), "horizontal");
     let children = result.get("children").unwrap().as_array().unwrap();
     assert_eq!(children.len(), 2);
     assert_eq!(children[0].get("paneId").unwrap(), "target");
     assert_eq!(children[1].get("paneId").unwrap(), "new");
+}
+
+#[test]
+fn insert_subtree_top_normalizes_to_vertical() {
+    let layout = leaf("target");
+    let subtree = leaf("new");
+    let result = insert_subtree_into_layout(&layout, "target", "top", subtree).unwrap();
+    assert_eq!(result.get("type").unwrap(), "split");
+    assert_eq!(result.get("direction").unwrap(), "vertical");
 }
 
 #[test]

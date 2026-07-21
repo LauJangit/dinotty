@@ -327,9 +327,30 @@ export function genSplitId(): string {
   return 's-' + randomId()
 }
 
+/** Map any position/axis direction string onto the axis union type.
+ *
+ * Backend `insert_subtree_into_layout` historically stored `"left"` /
+ * `"right"` / `"top"` / `"bottom"` as the split `direction` field (now
+ * normalized on write, but localStorage may still hold legacy values).
+ * Frontend `SplitContainer` / `SplitDivider` only handle `"horizontal"` /
+ * `"vertical"`, so we coerce here on read to self-heal stale data. */
+function normalizeDirection(direction: string | undefined): 'horizontal' | 'vertical' {
+  return direction === 'vertical' || direction === 'top' || direction === 'bottom'
+    ? 'vertical'
+    : 'horizontal'
+}
+
+/** Recursively ensure every split node has a valid axis direction. */
+function normalizeSplitTree(layout: PaneLayout): void {
+  if (layout.type !== 'split') return
+  layout.direction = normalizeDirection(layout.direction)
+  for (const child of layout.children) normalizeSplitTree(child)
+}
+
 /** Ensure a SplitPane has an id (for deserialized/migrated data) */
 export function ensureSplitId(split: SplitPane): SplitPane {
   if (!split.id) split.id = genSplitId()
+  normalizeSplitTree(split)
   return split
 }
 

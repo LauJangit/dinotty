@@ -435,10 +435,19 @@ fn insert_non_terminal_pane(
     new_leaf: serde_json::Value,
     new_pane_id: &str,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let Some(tab_val) = manager.tab_layouts.get(tab_id) else {
-        return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "tab not found" }))));
+    // NOTE: must drop the DashMap Ref before `manager.insert_tab` writes back
+    // to the same shard, otherwise the read lock blocks the write lock and the
+    // handler deadlocks. Use `match` so the Ref is dropped at the end of the
+    // expression, not held for the rest of the function.
+    let tab_val = match manager.tab_layouts.get(tab_id) {
+        Some(v) => v.value().clone(),
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": "tab not found" })),
+            ))
+        }
     };
-    let tab_val = tab_val.value().clone();
 
     let Some(layout) = tab_val.get("layout") else {
         return Err((

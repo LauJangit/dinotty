@@ -224,8 +224,18 @@ export function useSplitPane(opts: {
       ) as TerminalTab | undefined
       if (dst) {
         dst.layout = ensureSplitRoot(result.layout)
+        // Reconcile paneMru so the newly-merged leaves are tracked and the
+        // active pane is marked most-recent. Without this, focus shortcuts
+        // (focusNext/Prev/Neighbor) would skip the merged panes until the
+        // next layout_updated broadcast arrives to fix it.
+        dst.paneMru = reconcilePaneMru(
+          touchPaneMru(dst.paneMru, result.active_pane_id),
+          getAllLeaves(dst.layout).map((leaf) => leaf.paneId),
+          result.active_pane_id
+        )
         dst.activePaneId = result.active_pane_id
         setActivePaneId(dst.activePaneId)
+        activePaneId.value = dst.paneId
       }
       // Remove source tab locally (backend already removed + broadcasted TabClosed)
       const srcIdx = tabs.value.findIndex((t) => t.paneId === srcTabId)
@@ -300,28 +310,47 @@ export function useSplitPane(opts: {
       // Push locally with inherited fields so the new tab lands in the
       // same workspace as its source. The TabCreated broadcast will
       // find this existing entry and skip pushing a duplicate.
-      tabs.value.push({
-        type: 'terminal',
-        paneId: result.new_tab_id,
-        layout: ensureSplitRoot({
-          type: 'leaf',
-          paneId: result.pane_id,
-          title: 'Terminal',
-          ratio: 1,
-          zoomed: false,
-        }),
-        activePaneId: result.pane_id,
-        paneMru: [result.pane_id],
-        broadcastMode: false,
-        broadcastActivity: 0,
-        previewVisible: false,
-        previewAddress: '',
-        previewUrl: '',
-        previewKind: 'web',
-        cwd: inheritedCwd,
-        connectionId: inheritedConnectionId,
-        workspaceId: inheritedWorkspaceId,
-      })
+      //
+      // Dedup guard: if the TabCreated broadcast arrived before the REST
+      // response, the sync WS handler already pushed this tab. Filling in
+      // inherited cwd/connectionId/workspaceId on the existing entry instead
+      // of pushing again prevents duplicate tabs (visible as the "multiple
+      // tabs in default workspace" symptom after pane->tab-blank drop).
+      const existing = tabs.value.find(
+        (t) => t.type === 'terminal' && t.paneId === result.new_tab_id
+      ) as TerminalTab | undefined
+      if (existing) {
+        if (inheritedCwd && !existing.cwd) existing.cwd = inheritedCwd
+        if (inheritedConnectionId && !existing.connectionId) {
+          existing.connectionId = inheritedConnectionId
+        }
+        if (inheritedWorkspaceId && !existing.workspaceId) {
+          existing.workspaceId = inheritedWorkspaceId
+        }
+      } else {
+        tabs.value.push({
+          type: 'terminal',
+          paneId: result.new_tab_id,
+          layout: ensureSplitRoot({
+            type: 'leaf',
+            paneId: result.pane_id,
+            title: 'Terminal',
+            ratio: 1,
+            zoomed: false,
+          }),
+          activePaneId: result.pane_id,
+          paneMru: [result.pane_id],
+          broadcastMode: false,
+          broadcastActivity: 0,
+          previewVisible: false,
+          previewAddress: '',
+          previewUrl: '',
+          previewKind: 'web',
+          cwd: inheritedCwd,
+          connectionId: inheritedConnectionId,
+          workspaceId: inheritedWorkspaceId,
+        })
+      }
       setActivePaneId(result.pane_id)
       activePaneId.value = result.new_tab_id
       persist()

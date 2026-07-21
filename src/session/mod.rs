@@ -870,6 +870,21 @@ pub fn ensure_leaf_kind(layout: serde_json::Value) -> serde_json::Value {
     }
 }
 
+/// Normalize a split `direction` field to `"horizontal"` / `"vertical"`.
+///
+/// Frontend's `SplitContainer` and `SplitDivider` only handle these two values.
+/// Legacy callers (cross-tab merge, non-terminal pane insertion) pass
+/// `"left"` / `"right"` / `"top"` / `"bottom"` to express position; that
+/// position is used to decide child ordering, but the stored `direction`
+/// field must be the axis. This helper also tolerates `"horizontal"` /
+/// `"vertical"` inputs so callers can pass either form.
+fn normalize_split_direction(direction: &str) -> &'static str {
+    match direction {
+        "top" | "bottom" | "vertical" => "vertical",
+        _ => "horizontal",
+    }
+}
+
 /// Insert a new pane into the layout tree by splitting the target pane.
 /// Returns the updated layout, or None if the target pane was not found.
 #[must_use]
@@ -914,7 +929,7 @@ pub fn insert_subtree_into_layout(
                 Some(serde_json::json!({
                     "type": "split",
                     "id": split_id,
-                    "direction": direction,
+                    "direction": normalize_split_direction(direction),
                     "children": [first, second],
                     "ratios": [0.5, 0.5],
                 }))
@@ -924,6 +939,7 @@ pub fn insert_subtree_into_layout(
         }
         "split" => {
             let parent_dir = layout.get("direction")?.as_str()?;
+            let parent_dir_axis = normalize_split_direction(parent_dir);
             let children = layout.get("children")?.as_array()?;
             let mut new_children: Vec<serde_json::Value> = Vec::new();
             let mut found = false;
@@ -939,7 +955,11 @@ pub fn insert_subtree_into_layout(
                     // direction as the parent, splice its children into the parent.
                     if changed
                         && updated.get("type").and_then(|t| t.as_str()) == Some("split")
-                        && updated.get("direction").and_then(|d| d.as_str()) == Some(parent_dir)
+                        && updated
+                            .get("direction")
+                            .and_then(|d| d.as_str())
+                            .map(normalize_split_direction)
+                            == Some(parent_dir_axis)
                     {
                         if let Some(inner_children) =
                             updated.get("children").and_then(|c| c.as_array())
@@ -1030,6 +1050,7 @@ fn insert_pane_into_layout_inner(
         }
         "split" => {
             let parent_dir = layout.get("direction")?.as_str()?;
+            let parent_dir_axis = normalize_split_direction(parent_dir);
             let children = layout.get("children")?.as_array()?;
             let mut new_children: Vec<serde_json::Value> = Vec::new();
             let mut found = false;
@@ -1050,7 +1071,11 @@ fn insert_pane_into_layout_inner(
                     // (insert its children as siblings instead of nesting)
                     if changed
                         && updated.get("type").and_then(|t| t.as_str()) == Some("split")
-                        && updated.get("direction").and_then(|d| d.as_str()) == Some(parent_dir)
+                        && updated
+                            .get("direction")
+                            .and_then(|d| d.as_str())
+                            .map(normalize_split_direction)
+                            == Some(parent_dir_axis)
                     {
                         if let Some(inner_children) =
                             updated.get("children").and_then(|c| c.as_array())
