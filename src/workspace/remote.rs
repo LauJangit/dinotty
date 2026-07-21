@@ -465,8 +465,16 @@ pub async fn remote_put_file(session: Arc<Session>, q: PanePathQuery, content: S
     if sftp.canonicalize(&parent).await.is_err() {
         return json_err(StatusCode::NOT_FOUND, "parent directory not found");
     }
-    match sftp.write(&target, content.as_bytes()).await {
-        Ok(()) => {}
+    match sftp.create(&target).await {
+        Ok(mut file) => {
+            use tokio::io::AsyncWriteExt;
+            if let Err(e) = file.write_all(content.as_bytes()).await {
+                return sftp_err(e);
+            }
+            if let Err(e) = file.shutdown().await {
+                return sftp_err(e);
+            }
+        }
         Err(e) => return sftp_err(e),
     }
     Json(serde_json::json!({ "ok": true })).into_response()
@@ -749,15 +757,29 @@ pub async fn remote_upload(
             }
         }
         tracing::info!("remote_upload: writing {} ({} bytes) to {:?}", base, data.len(), path);
-        match sftp.write(&path, &data).await {
-            Ok(()) => {
+        // sftp.write() uses OpenFlags::WRITE alone (no CREATE), so it fails with
+        // NoSuchFile when uploading a new file. Use create() (CREATE|TRUNCATE|WRITE)
+        // + write_all + shutdown so new files are created and existing ones overwritten.
+        match sftp.create(&path).await {
+            Ok(mut file) => {
+                use tokio::io::AsyncWriteExt;
+                if let Err(e) = file.write_all(&data).await {
+                    tracing::warn!("remote_upload: write {} failed: {}", base, e);
+                    errors.push(format!("write {base}: {e}"));
+                    continue;
+                }
+                if let Err(e) = file.shutdown().await {
+                    tracing::warn!("remote_upload: close {} failed: {}", base, e);
+                    errors.push(format!("close {base}: {e}"));
+                    continue;
+                }
                 let rel = path.trim_start_matches('/');
                 tracing::info!("remote_upload: saved {}", rel);
                 saved.push(rel.to_string());
             }
             Err(e) => {
-                tracing::warn!("remote_upload: write {} failed: {}", base, e);
-                errors.push(format!("write {base}: {e}"));
+                tracing::warn!("remote_upload: create {} failed: {}", base, e);
+                errors.push(format!("create {base}: {e}"));
             }
         }
     }
