@@ -1965,6 +1965,7 @@ const keyActions: Record<string, () => void> = {
   sshConnect: () => sshPanelRef.value?.open(),
   fontSizeUp: () => adjustActiveTerminalFontSize(1),
   fontSizeDown: () => adjustActiveTerminalFontSize(-1),
+  reloadApp: () => reloadApp(),
   fontSizeReset: () => adjustActiveTerminalFontSize(0),
   addCursorsInFiles: () => triggerAddCursors(),
 }
