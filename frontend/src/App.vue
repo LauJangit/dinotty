@@ -20,6 +20,7 @@
       :active-workspace-color="activeWorkspaceColor"
       @activate="activateTab"
       @close="requestCloseTab"
+      @close-tabs="onCloseTabsBulk"
       @action="onNewMenuAction"
       @reorder="reorderTab"
       @merge-tab-into-pane="onMergeTabIntoPane"
@@ -242,6 +243,7 @@
       @close="overviewOpen = false"
       @activate="onOverviewActivate"
       @close-tab="onOverviewCloseTab"
+      @close-tabs="onCloseTabsBulk"
       @new-tab="onOverviewNewTab"
       @new-tab-ssh="onOverviewNewTabSsh"
       @rename-tab="onOverviewRenameTab"
@@ -531,6 +533,14 @@ function onOverviewActivate(paneId: string) {
 
 function onOverviewCloseTab(tabId: string) {
   requestCloseTab(tabId)
+}
+
+async function onCloseTabsBulk(paneIds: string[]) {
+  // Confirmation already happened in the caller; close directly, bypass per-tab confirm.
+  // Reverse order keeps successor selection stable.
+  for (const id of [...paneIds].reverse()) {
+    await closeTab(id)
+  }
 }
 
 async function onOverviewNewTab(cwd?: string) {
