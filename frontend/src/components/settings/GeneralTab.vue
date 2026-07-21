@@ -75,7 +75,7 @@
         <div class="access-url-row">
           <div class="access-url-display">
             <span class="access-url-text">{{ accessUrl }}</span>
-            <button class="access-url-copy" @click="copyAccessUrl" :title="t('settings.copyUrl')">
+            <button class="access-url-copy" @click="copyAccessUrl()" :title="t('settings.copyUrl')">
               {{ copied ? '✓' : '⧉' }}
             </button>
           </div>
@@ -106,15 +106,15 @@
             <EyeOff v-if="tokenVisible" :size="14" /><Eye v-else :size="14" />
           </button>
           <template v-if="!tokenEditing">
-            <button class="icon-btn" @click="copyToken" :title="t('settings.token.copy')">
+            <button class="icon-btn" @click="copyToken()" :title="t('settings.token.copy')">
               <Check v-if="tokenCopied" :size="14" /><Copy v-else :size="14" />
             </button>
-            <button class="icon-btn" @click="startEditToken" :title="t('settings.token.edit')">
+            <button class="icon-btn" @click="startEditToken()" :title="t('settings.token.edit')">
               <Pencil :size="14" />
             </button>
             <button
               class="icon-btn danger"
-              @click="regenerateToken"
+              @click="regenerateToken()"
               :title="t('settings.token.regenerate')"
             >
               <RefreshCw :size="14" />
@@ -123,13 +123,13 @@
           <template v-else>
             <button
               class="icon-btn"
-              @click="saveToken"
+              @click="saveToken()"
               :disabled="customToken.trim().length < 8 || tokenSaving"
               :title="t('settings.token.save')"
             >
               <Save :size="14" />
             </button>
-            <button class="icon-btn" @click="cancelEditToken" :title="t('settings.token.cancel')">
+            <button class="icon-btn" @click="cancelEditToken()" :title="t('settings.token.cancel')">
               <X :size="14" />
             </button>
           </template>
@@ -271,7 +271,7 @@
               v-if="isTauri()"
               class="icon-btn"
               type="button"
-              @click="pickDefaultBaseDir"
+              @click="pickDefaultBaseDir()"
             >
               <FolderOpen :size="14" />
               {{ t('settings.uploads.pickDir') }}
@@ -291,7 +291,7 @@
               v-if="isTauri()"
               class="icon-btn"
               type="button"
-              @click="pickDefaultWorkspaceRoot"
+              @click="pickDefaultWorkspaceRoot()"
             >
               <FolderOpen :size="14" />
               {{ t('settings.uploads.pickDir') }}
@@ -307,14 +307,14 @@
               class="shortcut-input upload-dir-input"
               data-testid="upload-dir-input"
               :placeholder="uploadDirPlaceholder"
-              @change="onUploadSettingsChange"
-              @blur="refreshUploadStatus"
+              @change="onUploadSettingsChange()"
+              @blur="refreshUploadStatus()"
             />
             <button
               v-if="isTauri()"
               class="icon-btn"
               type="button"
-              @click="pickUploadDir"
+              @click="pickUploadDir()"
               :disabled="!!uploadBusy"
             >
               <FolderOpen :size="14" />
@@ -332,7 +332,7 @@
             type="number"
             min="0"
             class="shortcut-input upload-number-input"
-            @change="onUploadSettingsChange"
+            @change="onUploadSettingsChange()"
           />
         </div>
         <div class="settings-row">
@@ -342,7 +342,7 @@
             type="number"
             min="0"
             class="shortcut-input upload-number-input"
-            @change="onUploadSettingsChange"
+            @change="onUploadSettingsChange()"
           />
         </div>
         <p class="settings-hint">{{ t('settings.uploads.fileCapUnlimited') }}</p>
@@ -353,20 +353,20 @@
             type="number"
             min="0"
             class="shortcut-input upload-number-input"
-            @change="onUploadSettingsChange"
+            @change="onUploadSettingsChange()"
           />
         </div>
         <div class="upload-actions">
           <button
             class="icon-btn"
             data-testid="restore-upload-default"
-            @click="restoreDefaultUploadDir"
+            @click="restoreDefaultUploadDir()"
             :disabled="!!uploadBusy"
           >
             <RefreshCw :size="14" />
             {{ t('settings.uploads.restoreDefault') }}
           </button>
-          <button class="icon-btn danger" @click="clearUploads" :disabled="!!uploadBusy">
+          <button class="icon-btn danger" @click="clearUploads()" :disabled="!!uploadBusy">
             {{
               uploadBusy === 'clear' ? t('settings.uploads.clearing') : t('settings.uploads.clear')
             }}
@@ -374,7 +374,7 @@
           <button
             v-if="uploadStatus.foreign"
             class="icon-btn"
-            @click="adoptUploads"
+            @click="adoptUploads()"
             :disabled="!!uploadBusy"
           >
             {{
@@ -469,7 +469,7 @@
             />
           </div>
           <div style="margin-top: 12px">
-            <button class="icon-btn" @click="viewLog">{{ t('settings.log.view') }}</button>
+            <button class="icon-btn" @click="viewLog()">{{ t('settings.log.view') }}</button>
           </div>
         </template>
       </section>
@@ -481,7 +481,7 @@
         <div class="log-modal-header">
           <h3>{{ t('settings.log.viewTitle') }}</h3>
           <div class="log-modal-actions">
-            <button class="icon-btn" @click="refreshLog">{{ t('settings.log.refresh') }}</button>
+            <button class="icon-btn" @click="refreshLog()">{{ t('settings.log.refresh') }}</button>
             <button class="icon-btn" @click="logModalVisible = false">
               {{ t('settings.log.close') }}
             </button>
@@ -496,30 +496,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
-import QRCode from 'qrcode'
+import { computed, ref } from 'vue'
 import { Eye, EyeOff, Copy, Check, Pencil, RefreshCw, Save, X, FolderOpen } from 'lucide-vue-next'
-import { invoke } from '@tauri-apps/api/core'
 import { useSettings } from '../../composables/useSettings'
 import type { WorkspaceBadgeMode } from '../../composables/useSettings'
 import { useI18n } from '../../composables/useI18n'
 import { useIsMobile } from '../../composables/useIsMobile'
 import { resolveWorkspaceBadgeMode } from '../../composables/useWorkspaceBadgeMode'
-import { uiConfirm } from '../../composables/useConfirm'
 import CollapsibleSection from './CollapsibleSection.vue'
 import SegmentedControl from '../ui/SegmentedControl.vue'
-import { copyToClipboard } from '../../utils/clipboard'
 import { useToast } from 'vue-toastification'
 import { isTauri } from '../../composables/useTransport'
-import {
-  apiUrl,
-  authFetch,
-  getAuthToken,
-  setAuthToken,
-  getApiBase,
-  fetchServerToken,
-} from '../../composables/apiBase'
-import type { UploadResponse } from '../../types/uploads'
+import { useUploadManagement } from '../../composables/useUploadManagement'
+import { useTokenManagement } from '../../composables/useTokenManagement'
+import { useAccessUrl } from '../../composables/useAccessUrl'
 
 const emit = defineEmits<{ 'token-changed': [] }>()
 const { settings, saveSettings } = useSettings()
@@ -542,288 +532,51 @@ function onWsBadgeModeChange(value: string) {
   saveSettings()
 }
 
-const accessUrl = ref('')
-const logModalVisible = ref(false)
-const logContent = ref('')
-const logLoading = ref(false)
-const copied = ref(false)
-const qrCanvasRef = ref<HTMLCanvasElement | null>(null)
-const currentToken = ref('')
-const uploadBusy = ref<'' | 'status' | 'clear' | 'adopt'>('')
-const uploadStatus = ref({ managed: false, foreign: false, empty: true })
-const uploadDirError = ref('')
+const upload = useUploadManagement({ settings, saveSettings, toast, t })
+const {
+  uploadBusy,
+  uploadStatus,
+  uploadDirError,
+  uploadStatusLabel,
+  uploadDirPlaceholder,
+  refreshUploadStatus,
+  onUploadSettingsChange,
+  pickUploadDir,
+  pickDefaultBaseDir,
+  pickDefaultWorkspaceRoot,
+  restoreDefaultUploadDir,
+  clearUploads,
+  adoptUploads,
+} = upload
+const token = useTokenManagement({ t, onTokenChanged: () => emit('token-changed') })
+const {
+  currentToken,
+  tokenVisible,
+  tokenCopied,
+  customToken,
+  tokenSaving,
+  tokenError,
+  tokenEditing,
+  tokenInputRef,
+  copyToken,
+  startEditToken,
+  cancelEditToken,
+  saveToken,
+  regenerateToken,
+} = token
+const accessUrlApi = useAccessUrl({ t })
+const {
+  accessUrl,
+  logModalVisible,
+  logContent,
+  logLoading,
+  copied,
+  qrCanvasRef,
+  copyAccessUrl,
+  viewLog,
+  refreshLog,
+} = accessUrlApi
 
-const uploadStatusLabel = computed(() => {
-  if (uploadStatus.value.foreign) return t('settings.uploads.statusForeign')
-  if (uploadStatus.value.managed) return t('settings.uploads.statusManaged')
-  return t('settings.uploads.statusUnknown')
-})
-
-const uploadDirPlaceholder = computed(() => {
-  const platform = (navigator.platform || '').toLowerCase()
-  const userAgent = (navigator.userAgent || '').toLowerCase()
-  if (platform.startsWith('win') || userAgent.includes('windows')) return '%TEMP%\\dinotty'
-  if (platform.includes('mac') || userAgent.includes('mac os')) return '$TMPDIR/dinotty'
-  return '/tmp/dinotty'
-})
-
-function setUploadStatus(data: UploadResponse) {
-  uploadDirError.value = ''
-  uploadStatus.value = {
-    managed: !!data.managed,
-    foreign: !!data.foreign,
-    empty: !!data.empty,
-  }
-}
-
-function errorStatus(err: unknown): number | undefined {
-  if (typeof err !== 'object' || err === null || !('status' in err)) return undefined
-  const status = Number((err as { status: unknown }).status)
-  return Number.isFinite(status) ? status : undefined
-}
-
-async function postUploadsStatus() {
-  const res = await authFetch(apiUrl('/api/uploads'), { method: 'GET' })
-  if (!res.ok) throw { status: res.status }
-  return (await res.json()) as UploadResponse
-}
-
-async function refreshUploadStatus() {
-  if (uploadBusy.value) return
-  uploadBusy.value = 'status'
-  try {
-    setUploadStatus(await postUploadsStatus())
-    uploadDirError.value = ''
-  } catch (err) {
-    uploadDirError.value = errorStatus(err) === 400 ? t('settings.uploads.dirInvalid') : ''
-    uploadStatus.value = { managed: false, foreign: false, empty: true }
-  } finally {
-    uploadBusy.value = ''
-  }
-}
-
-async function onUploadSettingsChange() {
-  if (!Number.isFinite(settings.upload_cap_mb as number)) settings.upload_cap_mb = 0
-  if (!Number.isFinite(settings.upload_file_cap_mb as number)) settings.upload_file_cap_mb = 0
-  if (!Number.isFinite(settings.upload_cap_count as number)) settings.upload_cap_count = 0
-  await saveSettings()
-  await refreshUploadStatus()
-}
-
-async function pickUploadDir() {
-  try {
-    const dir = await invoke<string | null>('pick_upload_dir')
-    if (!dir) return
-    settings.upload_dir = dir
-    await onUploadSettingsChange()
-  } catch {
-    uploadDirError.value = t('settings.uploads.dirInvalid')
-  }
-}
-
-async function pickDefaultBaseDir() {
-  const dir = await invoke<string | null>('pick_workspace_dir', { base: settings.default_base_dir || undefined })
-  if (!dir) return
-  settings.default_base_dir = dir
-  await saveSettings()
-}
-
-async function pickDefaultWorkspaceRoot() {
-  const dir = await invoke<string | null>('pick_workspace_dir', { base: settings.default_workspace_root || undefined })
-  if (!dir) return
-  settings.default_workspace_root = dir
-  await saveSettings()
-}
-
-async function restoreDefaultUploadDir() {
-  try {
-    const res = await authFetch(apiUrl('/api/uploads/default-dir'), { method: 'GET' })
-    if (!res.ok) throw new Error(`default upload dir failed: ${res.status}`)
-    const data = (await res.json()) as { default_dir?: string }
-    if (!data.default_dir) return
-    settings.upload_dir = data.default_dir
-    await onUploadSettingsChange()
-  } catch {
-    uploadDirError.value = t('settings.uploads.dirInvalid')
-  }
-}
-
-async function clearUploads() {
-  uploadBusy.value = 'clear'
-  try {
-    const res = await authFetch(apiUrl('/api/uploads/clear'), { method: 'POST' })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    setUploadStatus((await res.json()) as UploadResponse)
-    toast.success(t('settings.uploads.clearDone'))
-  } catch {
-    toast.error(t('settings.uploads.clearFailed'))
-    uploadBusy.value = ''
-    await refreshUploadStatus()
-  } finally {
-    uploadBusy.value = ''
-  }
-}
-
-async function adoptUploads() {
-  uploadBusy.value = 'adopt'
-  try {
-    const res = await authFetch(apiUrl('/api/uploads/adopt'), { method: 'POST' })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    setUploadStatus((await res.json()) as UploadResponse)
-    toast.success(t('settings.uploads.adoptDone'))
-  } catch {
-    toast.error(t('settings.uploads.adoptFailed'))
-    uploadBusy.value = ''
-    await refreshUploadStatus()
-  } finally {
-    uploadBusy.value = ''
-  }
-}
-
-function onUploadStatusEvent(ev: Event) {
-  setUploadStatus((ev as CustomEvent<UploadResponse>).detail ?? {})
-}
-
-watch([accessUrl, qrCanvasRef], ([url, canvas]) => {
-  if (url && canvas) {
-    QRCode.toCanvas(canvas, url, {
-      width: 160,
-      margin: 2,
-      color: { dark: '#C7C7C7', light: '#00000000' },
-    })
-  }
-})
-
-async function fetchAccessUrl() {
-  try {
-    await getApiBase()
-    const res = await authFetch(apiUrl('/api/info'))
-    const info = await res.json()
-    accessUrl.value = `http://${info.lan_ip}:${info.port}`
-  } catch {
-    const { hostname } = window.location
-    const host = hostname === 'localhost' ? '127.0.0.1' : hostname
-    const port = window.location.port
-    accessUrl.value = `http://${host}${port ? ':' + port : ''}`
-  }
-}
-
-async function refreshAccessUrlAndQr() {
-  await fetchAccessUrl()
-}
-
-onMounted(async () => {
-  await fetchAccessUrl()
-  currentToken.value = (await fetchServerToken()) || getAuthToken()
-  await refreshUploadStatus()
-})
-
-// Re-fetch IP when network changes (e.g. WiFi switch)
-function onNetworkChange() {
-  refreshAccessUrlAndQr()
-}
-
-// Also refresh when user comes back to the tab (handles seamless WiFi switches)
-function onVisibilityChange() {
-  if (document.visibilityState === 'visible') {
-    refreshAccessUrlAndQr()
-  }
-}
-
-onMounted(() => {
-  window.addEventListener('online', onNetworkChange)
-  document.addEventListener('visibilitychange', onVisibilityChange)
-  window.addEventListener('dinotty-upload-status', onUploadStatusEvent)
-})
-onUnmounted(() => {
-  window.removeEventListener('online', onNetworkChange)
-  document.removeEventListener('visibilitychange', onVisibilityChange)
-  window.removeEventListener('dinotty-upload-status', onUploadStatusEvent)
-})
-
-async function copyAccessUrl() {
-  await copyToClipboard(accessUrl.value)
-  copied.value = true
-  setTimeout(() => {
-    copied.value = false
-  }, 2000)
-}
-
-// Token management
-const tokenVisible = ref(false)
-const tokenCopied = ref(false)
-const customToken = ref('')
-const tokenSaving = ref(false)
-const tokenError = ref('')
-const tokenEditing = ref(false)
-const tokenInputRef = ref<HTMLInputElement | null>(null)
-
-async function copyToken() {
-  await copyToClipboard(currentToken.value)
-  tokenCopied.value = true
-  setTimeout(() => {
-    tokenCopied.value = false
-  }, 2000)
-}
-
-function startEditToken() {
-  customToken.value = ''
-  tokenEditing.value = true
-  tokenError.value = ''
-  nextTick(() => tokenInputRef.value?.focus())
-}
-
-function cancelEditToken() {
-  customToken.value = ''
-  tokenEditing.value = false
-  tokenError.value = ''
-}
-
-async function saveToken() {
-  const val = customToken.value.trim()
-  if (val.length < 8) return
-  await applyNewToken(val)
-  tokenEditing.value = false
-  customToken.value = ''
-}
-
-async function regenerateToken() {
-  if (!(await uiConfirm(t('settings.token.confirmRegenerate'), {
-    title: t('settings.token.regenerate'),
-    confirmText: t('settings.token.regenerate'),
-    cancelText: t('filePreview.cancel'),
-  }))) return
-  const buf = new Uint8Array(32)
-  crypto.getRandomValues(buf)
-  const token = Array.from(buf)
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
-  await applyNewToken(token)
-}
-
-async function applyNewToken(token: string) {
-  tokenSaving.value = true
-  tokenError.value = ''
-  try {
-    const res = await authFetch(apiUrl('/api/token'), {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token }),
-    })
-    if (res.ok) {
-      setAuthToken(token)
-      emit('token-changed')
-    } else {
-      tokenError.value = t('settings.token.saveFailed')
-    }
-  } catch {
-    tokenError.value = t('settings.token.saveFailed')
-  } finally {
-    tokenSaving.value = false
-  }
-}
-
-// IP whitelist
 const newIp = ref('')
 
 function onAllowedOriginsInput(e: Event) {
@@ -849,27 +602,6 @@ function addIp() {
 
 function removeIp(idx: number) {
   settings.ip_whitelist.splice(idx, 1)
-}
-
-async function viewLog() {
-  logModalVisible.value = true
-  await refreshLog()
-}
-
-async function refreshLog() {
-  logLoading.value = true
-  try {
-    const res = await authFetch(apiUrl('/api/log'))
-    if (res.ok) {
-      logContent.value = await res.text()
-    } else {
-      logContent.value = t('settings.log.noLog')
-    }
-  } catch {
-    logContent.value = t('settings.log.noLog')
-  } finally {
-    logLoading.value = false
-  }
 }
 </script>
 
