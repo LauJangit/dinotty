@@ -1,4 +1,5 @@
 use super::*;
+use crate::notification::{CLOSE_UPGRADE_REQUIRED, MIN_PROTOCOL_VERSION};
 
 #[test]
 fn client_msg_input_deserializes() {

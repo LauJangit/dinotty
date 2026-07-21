@@ -1,4 +1,4 @@
-#![allow(clippy::items_after_test_module)]
+use std::sync::Arc;
 
 use axum::{
     extract::{Path, State},
@@ -6,122 +6,16 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use serde::{Deserialize, Deserializer};
-use std::path::PathBuf;
-use std::sync::Arc;
 
 use crate::pty;
-use crate::session::{self, SessionManager, SshSessionParams, SyncMsg};
+use crate::session::{self, SessionManager, SyncMsg};
 use crate::settings::SettingsState;
-use crate::ssh;
 
-// ─── Request/Response types ────────────────────────────────────────
-
-#[derive(Deserialize)]
-pub struct SplitPaneRequest {
-    pub pane_id: String,
-    pub direction: String, // "horizontal" or "vertical"
-    /// When true, always create a local PTY even if the source pane is SSH.
-    #[serde(default)]
-    pub force_local: bool,
-    /// Optional CWD override for the new pane (used with `force_local`).
-    #[serde(default)]
-    pub cwd: Option<String>,
-}
-
-#[derive(Deserialize)]
-pub struct UpdateLayoutRequest {
-    pub layout: serde_json::Value,
-    pub active_pane_id: String,
-}
-
-#[derive(Deserialize)]
-pub struct CreateTabRequest {
-    #[serde(default)]
-    pub cwd: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_optional_argv")]
-    pub argv: Option<Vec<String>>,
-    #[serde(default)]
-    pub title: Option<String>,
-}
-
-#[derive(Deserialize)]
-pub struct CreatePluginPaneRequest {
-    pub plugin_id: String,
-    pub target_pane_id: String,
-    pub direction: String,
-}
-
-#[derive(Deserialize)]
-pub struct CreateFilesPaneRequest {
-    pub path: String,
-    pub target_pane_id: String,
-    pub direction: String,
-}
-
-#[derive(Deserialize)]
-pub struct CreateWebPaneRequest {
-    pub url: String,
-    pub target_pane_id: String,
-    pub direction: String,
-}
-
-#[derive(Deserialize)]
-pub struct MovePaneRequest {
-    pub source_tab_id: String,
-    /// When present, Mode B (single pane move). When absent, Mode A (whole tab as subtree).
-    #[serde(default)]
-    pub source_pane_id: Option<String>,
-    pub target_pane_id: String,
-    pub direction: String,
-}
-
-#[derive(Deserialize)]
-pub struct ExtractPaneRequest {
-    pub source_tab_id: String,
-    pub pane_id: String,
-}
-
-#[derive(Deserialize)]
-pub struct CreatePluginTabRequest {
-    pub plugin_id: String,
-    #[serde(default)]
-    pub title: Option<String>,
-    /// Optional tab ID to reuse (used when migrating frontend-only plugin
-    /// tabs so they gain a backend `tab_layouts` entry without changing
-    /// paneId). If omitted, a new UUID is generated.
-    #[serde(default)]
-    pub tab_id: Option<String>,
-}
-
-fn deserialize_optional_argv<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Vec::<String>::deserialize(deserializer).map(Some)
-}
-
-fn validate_create_tab_request(req: &CreateTabRequest) -> Result<Option<PathBuf>, String> {
-    if let Some(argv) = req.argv.as_ref() {
-        if argv.is_empty() {
-            return Err("argv must be a non-empty array".to_string());
-        }
-        if argv[0].is_empty() {
-            return Err("argv[0] must be a non-empty string".to_string());
-        }
-        if argv.iter().any(|arg| arg.contains('\0')) {
-            return Err("argv entries must not contain NUL bytes".to_string());
-        }
-    }
-
-    req.cwd.as_ref().map(PathBuf::from).map_or(Ok(None), |cwd| {
-        if cwd.is_dir() {
-            Ok(Some(cwd))
-        } else {
-            Err("cwd must exist and be a directory".to_string())
-        }
-    })
-}
+use super::types::{
+    validate_create_tab_request, CreateFilesPaneRequest, CreatePluginPaneRequest,
+    CreatePluginTabRequest, CreateTabRequest, CreateWebPaneRequest, ExtractPaneRequest,
+    MovePaneRequest, SplitPaneRequest, UpdateLayoutRequest,
+};
 
 // ─── GET /api/tabs ─────────────────────────────────────────────────
 
@@ -233,33 +127,6 @@ pub async fn create_tab(
     .into_response()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{validate_create_tab_request, CreateTabRequest};
-
-    fn request(argv: Vec<&str>) -> CreateTabRequest {
-        CreateTabRequest {
-            cwd: None,
-            argv: Some(argv.into_iter().map(str::to_string).collect()),
-            title: None,
-        }
-    }
-
-    #[test]
-    fn create_tab_argv_requires_non_empty_program() {
-        assert!(validate_create_tab_request(&request(vec![])).is_err());
-        assert!(validate_create_tab_request(&request(vec![""])).is_err());
-        assert!(validate_create_tab_request(&request(vec!["claude", ""])).is_ok());
-        assert!(validate_create_tab_request(&request(vec!["claude", "--resume"])).is_ok());
-    }
-
-    #[test]
-    fn create_tab_argv_rejects_nul_bytes() {
-        assert!(validate_create_tab_request(&request(vec!["claude\0", "--resume"])).is_err());
-        assert!(validate_create_tab_request(&request(vec!["claude", "--resume\0"])).is_err());
-    }
-}
-
 // ─── DELETE /api/tabs/{tab_id} ─────────────────────────────────────
 
 #[allow(clippy::unused_async)]
@@ -340,7 +207,7 @@ pub async fn split_pane(
         .and_then(|s| s.cwd_state.lock().ok().map(|state| state.cwd.clone()));
 
     let (_session, _shell_type) = if req.force_local {
-        // Force local PTY — use explicit cwd if provided, otherwise inherit from source
+        // Force local PTY - use explicit cwd if provided, otherwise inherit from source
         let local_cwd = req.cwd.map(std::path::PathBuf::from).or(source_cwd);
         match pty::create_session(&manager, &new_pane_id, Some(&tab_id), None, local_cwd, None) {
             Ok(x) => x,
@@ -354,8 +221,8 @@ pub async fn split_pane(
             }
         }
     } else if let Some(params) = ssh_params {
-        // Source is an SSH session — create a new SSH connection to the same host
-        match ssh::create_ssh_session(&manager, &new_pane_id, params, None).await {
+        // Source is an SSH session - create a new SSH connection to the same host
+        match crate::ssh::create_ssh_session(&manager, &new_pane_id, params, None).await {
             Ok(x) => x,
             Err(e) => {
                 tracing::error!("Failed to create SSH session for split: {}", e);
@@ -367,7 +234,7 @@ pub async fn split_pane(
             }
         }
     } else {
-        // Local PTY — inherit CWD from source pane
+        // Local PTY - inherit CWD from source pane
         match pty::create_session(&manager, &new_pane_id, Some(&tab_id), None, source_cwd, None) {
             Ok(x) => x,
             Err(e) => {
@@ -1139,156 +1006,4 @@ pub async fn update_layout(
     });
 
     Json(serde_json::json!({ "ok": true })).into_response()
-}
-
-// ─── POST /api/tabs/ssh/quick ────────────────────────────────────
-
-pub async fn create_ssh_quick_tab(
-    State(manager): State<Arc<SessionManager>>,
-    Json(req): Json<ssh::SshConnectRequest>,
-) -> impl IntoResponse {
-    let tab_id = uuid::Uuid::new_v4().to_string();
-    let pane_id = uuid::Uuid::new_v4().to_string();
-
-    let params = req.to_params();
-
-    // 创建 SSH 会话
-    let (_session, _shell_type) = match ssh::create_ssh_session(&manager, &pane_id, params, None)
-        .await
-    {
-        Ok(x) => x,
-        Err(e) => {
-            tracing::error!("Failed to create SSH session: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e })))
-                .into_response();
-        }
-    };
-
-    // 创建初始布局
-    let layout = serde_json::json!({
-        "type": "leaf",
-        "paneId": pane_id,
-        "title": format!("{}@{}", req.username, req.host),
-        "shell_type": "ssh",
-        "ratio": 1,
-        "zoomed": false,
-    });
-
-    // 存储 tab
-    manager.insert_tab(
-        tab_id.clone(),
-        serde_json::json!({
-            "layout": layout,
-            "active_pane_id": pane_id,
-        }),
-    );
-
-    // 设为活动 tab
-    *manager.active_pane_id.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
-        Some(pane_id.clone());
-
-    // 广播
-    manager.broadcast_sync(&SyncMsg::TabCreated {
-        tab_id: tab_id.clone(),
-        pane_id: pane_id.clone(),
-        layout: Some(layout.clone()),
-        cwd: None,
-        connection_id: req.profile_id.clone(),
-    });
-
-    Json(serde_json::json!({
-        "tab_id": tab_id,
-        "pane_id": pane_id,
-        "layout": layout,
-        "connection_id": req.profile_id,
-    }))
-    .into_response()
-}
-
-// ─── POST /api/tabs/ssh ──────────────────────────────────────────
-
-pub async fn create_ssh_tab(
-    State((manager, settings)): State<(Arc<SessionManager>, SettingsState)>,
-    Json(req): Json<ssh::SshProfileConnectRequest>,
-) -> impl IntoResponse {
-    let tab_id = uuid::Uuid::new_v4().to_string();
-    let pane_id = uuid::Uuid::new_v4().to_string();
-
-    // 从 settings 查找 profile
-    let params = {
-        let settings = settings.read().await;
-        let profile = settings.ssh_profiles.iter().find(|p| p.id == req.profile_id);
-        match profile {
-            Some(profile) => SshSessionParams {
-                host: profile.host.clone(),
-                port: profile.port,
-                username: profile.username.clone(),
-                auth_method: profile.auth_method.clone(),
-                default_command: profile.default_command.clone(),
-                profile_id: Some(profile.id.clone()),
-                initial_cwd: req.initial_cwd.clone(),
-            },
-            None => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    Json(serde_json::json!({ "error": "profile not found" })),
-                )
-                    .into_response();
-            }
-        }
-    };
-
-    let tab_title = format!("{}@{}", params.username, params.host);
-
-    // 创建 SSH 会话
-    let (_session, _shell_type) = match ssh::create_ssh_session(&manager, &pane_id, params, None)
-        .await
-    {
-        Ok(x) => x,
-        Err(e) => {
-            tracing::error!("Failed to create SSH session: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e })))
-                .into_response();
-        }
-    };
-
-    // 创建初始布局
-    let layout = serde_json::json!({
-        "type": "leaf",
-        "paneId": pane_id,
-        "title": tab_title,
-        "shell_type": "ssh",
-        "ratio": 1,
-        "zoomed": false,
-    });
-
-    // 存储 tab
-    manager.insert_tab(
-        tab_id.clone(),
-        serde_json::json!({
-            "layout": layout,
-            "active_pane_id": pane_id,
-        }),
-    );
-
-    // 设为活动 tab
-    *manager.active_pane_id.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
-        Some(pane_id.clone());
-
-    // 广播
-    manager.broadcast_sync(&SyncMsg::TabCreated {
-        tab_id: tab_id.clone(),
-        pane_id: pane_id.clone(),
-        layout: Some(layout.clone()),
-        cwd: None,
-        connection_id: Some(req.profile_id.clone()),
-    });
-
-    Json(serde_json::json!({
-        "tab_id": tab_id,
-        "pane_id": pane_id,
-        "layout": layout,
-        "connection_id": req.profile_id,
-    }))
-    .into_response()
 }

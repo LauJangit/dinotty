@@ -6,9 +6,19 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use std::{ffi::OsString, fmt::Write, fs, path::Path};
+use axum_extra::extract::Multipart;
+use std::{
+    ffi::OsString,
+    fmt::Write,
+    fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use tempfile::TempDir;
 use tokio::sync::RwLock;
+
+use crate::session::SessionManager;
+use crate::settings::{default_upload_dir, Settings, SettingsState};
 
 #[test]
 fn normalize_join_rejects_parent_dir() {

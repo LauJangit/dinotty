@@ -1,80 +1,39 @@
-#![allow(clippy::too_many_lines)]
-use crate::event_bus::EventBus;
-use crate::settings::SshAuthMethod;
+mod backend;
+mod cwd;
+mod layout;
+mod manager;
+
+pub use backend::{PendingSshAuth, SessionBackend, SshAuthPrompt, SshCmd, SshSessionParams};
+pub use cwd::CwdState;
+pub use layout::{
+    collect_leaf_pane_ids, collect_terminal_leaf_pane_ids, ensure_leaf_kind,
+    extract_leaf_from_layout, first_leaf_id, insert_pane_into_layout,
+    insert_pane_into_layout_with_info, insert_subtree_into_layout, remove_pane_from_layout,
+};
+pub use manager::{SessionManager, SessionStatus, SyncClient, SyncMsg, TabInfo};
+
+#[cfg(test)]
+pub(crate) use cwd::{find_subslice, parse_title_cwd, sniff_cwd_from_title_osc, OSC_SNIFF_CAP};
+#[cfg(test)]
+pub(crate) use manager::parse_reap_secs;
+
 use crate::vt_screen::VirtualScreen;
-use dashmap::DashMap;
-use portable_pty::{Child, MasterPty};
-use serde::Serialize;
 use std::{
     io::Write,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{
-        atomic::{AtomicU16, AtomicU64, Ordering},
-        Arc, Mutex, OnceLock,
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
     },
-    time::Instant,
 };
 use tokio::sync::{mpsc, watch};
 use tracing::info;
-
-/// SSH 会话参数，用于分屏时复用连接信息
-#[derive(Clone, Debug)]
-pub struct SshSessionParams {
-    pub host: String,
-    pub port: u16,
-    pub username: String,
-    pub auth_method: SshAuthMethod,
-    pub default_command: Option<String>,
-    /// The `SshProfile.id` when created from a saved profile. `None` for quick-connect.
-    pub profile_id: Option<String>,
-    /// Initial remote directory to `cd` into after the shell starts.
-    /// When `None` or empty, the shell starts in the remote `$HOME`.
-    pub initial_cwd: Option<String>,
-}
-
-/// Session 的传输后端
-pub enum SessionBackend {
-    /// 本地 PTY
-    Local {
-        writer: Box<dyn Write + Send>,
-        master: Box<dyn MasterPty + Send>,
-        child: Box<dyn Child + Send + Sync>,
-    },
-    /// SSH 远程连接 — channel 已移至 reader task，此处仅保留标记
-    Ssh,
-    /// Backend resources were already dropped after the child exited.
-    Exited,
-}
-
-/// Commands sent from Session methods to the SSH reader/writer task.
-pub enum SshCmd {
-    /// Write input data to the SSH channel
-    Input(Vec<u8>),
-    /// Resize the SSH channel
-    Resize(u16, u16),
-    /// Close the SSH channel
-    Close,
-}
 
 /// Force-flush buffered synchronized output at this limit (256KB).
 /// Prevents massive single payloads that freeze the frontend UI thread.
 const SYNC_BUFFER_LIMIT: usize = 256 * 1024;
 /// Maximum size of a single chunk sent to clients during flush.
 const FLUSH_CHUNK_SIZE: usize = 64 * 1024;
-
-fn parse_reap_secs(raw: Option<String>) -> u64 {
-    raw.and_then(|v| v.parse::<u64>().ok()).unwrap_or(5_400)
-}
-
-pub enum SessionStatus {
-    Connected,
-    Detached { since: Instant },
-}
-
-pub struct CwdState {
-    pub cwd: PathBuf,
-    pub sniff_buf: Vec<u8>,
-}
 
 #[derive(Default)]
 pub struct SyncState {
@@ -103,7 +62,7 @@ pub enum SessionClientEvent {
     /// DEC mode 2026 transaction boundary. `SyncBegin` is enqueued BEFORE any
     /// subsequent Output (which is buffered while synchronized output is
     /// active); `SyncEnd` is enqueued AFTER that buffer is drained, so the
-    /// on-wire order is [buffered Output chunks] → `SyncEnd` → [post-sync live
+    /// on-wire order is [buffered Output chunks] -> `SyncEnd` -> [post-sync live
     /// Output]. Frontend uses these to divert Output into a transaction buffer
     /// and write it to xterm as a single batch, eliminating per-chunk
     /// intermediate rAF repaints during a synchronized redraw.
@@ -367,8 +326,8 @@ impl Session {
     /// `snapshot_pending` flag so future `broadcast()` Output is delivered
     /// normally (and lands after `ReplayEnd` due to mpsc FIFO).
     ///
-    /// Wire order per client: [`ReplayBegin`] → [scrollback chunks] → [snapshot]
-    /// → [`ReplayEnd`] → [post-snapshot live Output]. Frontend diverts the
+    /// Wire order per client: [`ReplayBegin`] -> [scrollback chunks] -> [snapshot]
+    /// -> [`ReplayEnd`] -> [post-snapshot live Output]. Frontend diverts the
     /// chunks into its transaction buffer and writes them to xterm as a single
     /// batch on `ReplayEnd`, eliminating the settle-ladder / `ResizeObserver`
     /// mid-write interrupts that caused refresh-misalign (P2).
@@ -377,7 +336,7 @@ impl Session {
     /// to this client during the snapshot sequence; holding the screen lock
     /// blocks PTY reader from feeding new bytes during `snapshot()`. Bytes that
     /// were already in `output_rx` when this method started MAY be processed by
-    /// broadcast after we release — their effect is in the snapshot, so the
+    /// broadcast after we release - their effect is in the snapshot, so the
     /// client could double-paint them briefly. Full dedup requires the seq
     /// system (proposal 2); MV accepts the rare glitch.
     ///
@@ -389,9 +348,9 @@ impl Session {
         cols: u16,
         rows: u16,
     ) -> Result<(), String> {
-        // PTY + size + screen resize (async — uses backend lock). Resize also
+        // PTY + size + screen resize (async - uses backend lock). Resize also
         // breaks sync mode if active (apply_and_broadcast_resize / Step 1b),
-        // but resize_async does not break sync itself — handle that here.
+        // but resize_async does not break sync itself - handle that here.
         if self.is_sync_active() {
             self.set_sync_mode(false);
         }
@@ -413,7 +372,7 @@ impl Session {
         };
 
         // Enqueue replay sequence directly to the client's mpsc::Sender.
-        // Bypasses send_chunk_to_clients' snapshot_pending check — control
+        // Bypasses send_chunk_to_clients' snapshot_pending check - control
         // events and snapshot chunks must reach the client even while pending.
         let _ = tx.try_send(SessionClientEvent::ReplayBegin { cols, rows });
         for chunk in scrollback_chunks {
@@ -424,7 +383,7 @@ impl Session {
 
         // Clear snapshot_pending AFTER ReplayEnd is enqueued. broadcast() that
         // runs after we release the clients lock will see snapshot_pending=false
-        // and enqueue post-snapshot Output normally — it lands after ReplayEnd
+        // and enqueue post-snapshot Output normally - it lands after ReplayEnd
         // in the mpsc FIFO, preserving wire order.
         if let Some(client) = clients.iter().find(|c| c.id == client_id) {
             client.snapshot_pending.store(false, Ordering::Relaxed);
@@ -479,7 +438,7 @@ impl Session {
         //
         // We flush BEFORE resizing so clients receive the pre-resize buffered
         // output at the old dimensions, then the resize event, then
-        // post-resize output at the new dimensions — coherent ordering.
+        // post-resize output at the new dimensions - coherent ordering.
         if self.is_sync_active() {
             tracing::debug!("apply_and_broadcast_resize: breaking sync mode for resize, pane=?");
             self.set_sync_mode(false);
@@ -520,7 +479,7 @@ impl Session {
         let home = remote_home_guard.as_ref().unwrap_or(&default_home);
         let mut state = self.cwd_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let CwdState { ref mut cwd, ref mut sniff_buf } = *state;
-        sniff_cwd_from_title_osc(sniff_buf, data, home, cwd);
+        cwd::sniff_cwd_from_title_osc(sniff_buf, data, home, cwd);
     }
 
     /// Replace the input channel, closing the old one (if any) so the previous
@@ -530,7 +489,7 @@ impl Session {
         let (tx, rx) = mpsc::unbounded_channel();
         let old =
             self.input_tx.lock().unwrap_or_else(std::sync::PoisonError::into_inner).replace(tx);
-        drop(old); // close old sender → old write task's recv() returns None
+        drop(old); // close old sender -> old write task's recv() returns None
         rx
     }
 
@@ -555,7 +514,7 @@ impl Session {
     /// Send a chunk to all clients via non-blocking `try_send`.
     /// Channel-full messages are dropped (not the client) to keep the PTY reader
     /// non-blocking. Closed channels are pruned. Clients with `snapshot_pending`
-    /// = true are skipped — their Output is captured by the upcoming snapshot
+    /// = true are skipped - their Output is captured by the upcoming snapshot
     /// and sending it live would double-paint.
     fn send_chunk_to_clients(clients: &mut Vec<ClientEndpoint>, chunk: &str) {
         clients.retain(|client| !client.tx.is_closed());
@@ -699,977 +658,6 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         self.kill_backend_sync();
-    }
-}
-
-const OSC_SNIFF_CAP: usize = 32768;
-
-fn sniff_cwd_from_title_osc(buf: &mut Vec<u8>, chunk: &[u8], home: &Path, cwd: &mut PathBuf) {
-    buf.extend_from_slice(chunk);
-    if buf.len() > OSC_SNIFF_CAP {
-        let drop = buf.len() - OSC_SNIFF_CAP;
-        buf.drain(..drop);
-    }
-    let needle = b"\x1b]0;";
-    while let Some(i) = find_subslice(buf, needle) {
-        let payload_start = i + needle.len();
-        let bel_pos = buf[payload_start..].iter().position(|&b| b == 0x07);
-        let st_pos = buf[payload_start..].windows(2).position(|w| w == b"\x1b\\");
-        let rel = match (bel_pos, st_pos) {
-            (Some(a), Some(b)) => a.min(b),
-            (Some(a), None) => a,
-            (None, Some(b)) => b,
-            (None, None) => break,
-        };
-        let terminator_len = if st_pos == Some(rel) { 2 } else { 1 };
-        let title_end = payload_start + rel;
-        let title = String::from_utf8_lossy(&buf[payload_start..title_end]);
-        if let Some(p) = parse_title_cwd(&title, home) {
-            // canonicalize resolves symlinks on the local filesystem. For SSH
-            // sessions the path is remote and canonicalize fails - fall back
-            // to the raw path so cwd tracking still works.
-            *cwd = p.canonicalize().unwrap_or(p);
-        }
-        buf.drain(..title_end + terminator_len);
-    }
-}
-
-fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|window| window == needle)
-}
-
-#[must_use]
-pub fn collect_leaf_pane_ids(layout: &serde_json::Value) -> Vec<String> {
-    let mut ids = Vec::new();
-    collect_leaf_ids_recursive(layout, &mut ids);
-    ids
-}
-
-/// # Panics
-/// May panic if the JSON tree structure is unexpectedly malformed.
-#[must_use]
-pub fn remove_pane_from_layout(
-    node: &serde_json::Value,
-    pane_id: &str,
-) -> Option<serde_json::Value> {
-    let node_type = node.get("type")?.as_str()?;
-    match node_type {
-        "leaf" => {
-            if node.get("paneId")?.as_str()? == pane_id {
-                None
-            } else {
-                Some(node.clone())
-            }
-        }
-        "split" => {
-            let children = node.get("children")?.as_array()?;
-            let new_children: Vec<serde_json::Value> =
-                children.iter().filter_map(|c| remove_pane_from_layout(c, pane_id)).collect();
-            match new_children.len() {
-                0 => None,
-                _ if new_children.len() == children.len() => {
-                    // Children count unchanged — but a child may have changed internally
-                    // (e.g. a nested split collapsed). Always use the updated children.
-                    let mut result = node.clone();
-                    result["children"] = serde_json::Value::Array(new_children);
-                    Some(result)
-                }
-                1 => {
-                    // Single-child split is degenerate — collapse by returning the child directly
-                    Some(
-                        new_children
-                            .into_iter()
-                            .next()
-                            .unwrap_or_else(|| unreachable!("checked len == 1")),
-                    )
-                }
-                _ => {
-                    let mut result = node.clone();
-                    result["children"] = serde_json::Value::Array(new_children);
-                    // Rebalance ratios evenly
-                    let n = result["children"]
-                        .as_array()
-                        .unwrap_or_else(|| unreachable!("just assigned as array"))
-                        .len();
-                    #[allow(clippy::cast_precision_loss)]
-                    let ratio = 1.0 / f64::from(u32::try_from(n).unwrap_or(1));
-                    result["ratios"] = serde_json::Value::Array(
-                        (0..n).map(|_| serde_json::Value::from(ratio)).collect(),
-                    );
-                    Some(result)
-                }
-            }
-        }
-        _ => Some(node.clone()),
-    }
-}
-
-/// Find and return a clone of the leaf node matching `pane_id`, preserving
-/// all its original fields (kind, pluginId, path, url, title, etc.).
-/// Used by move/extract handlers to relocate an existing leaf verbatim.
-#[must_use]
-pub fn extract_leaf_from_layout(
-    node: &serde_json::Value,
-    pane_id: &str,
-) -> Option<serde_json::Value> {
-    let node_type = node.get("type")?.as_str()?;
-    match node_type {
-        "leaf" => {
-            if node.get("paneId")?.as_str()? == pane_id {
-                Some(node.clone())
-            } else {
-                None
-            }
-        }
-        "split" => {
-            let children = node.get("children")?.as_array()?;
-            children.iter().find_map(|c| extract_leaf_from_layout(c, pane_id))
-        }
-        _ => None,
-    }
-}
-
-fn collect_leaf_ids_recursive(node: &serde_json::Value, ids: &mut Vec<String>) {
-    if let Some(node_type) = node.get("type").and_then(|v| v.as_str()) {
-        if node_type == "leaf" {
-            if let Some(pane_id) = node.get("paneId").and_then(|v| v.as_str()) {
-                ids.push(pane_id.to_string());
-            }
-        } else if node_type == "split" {
-            if let Some(children) = node.get("children").and_then(|v| v.as_array()) {
-                for child in children {
-                    collect_leaf_ids_recursive(child, ids);
-                }
-            }
-        }
-    }
-}
-
-/// Returns the kind of a leaf node, defaulting to `"terminal"` when absent
-/// (for backward compatibility with layouts created before `kind` was introduced).
-fn leaf_kind(node: &serde_json::Value) -> &str {
-    node.get("kind").and_then(|v| v.as_str()).unwrap_or("terminal")
-}
-
-/// Collect `pane_ids` of leaves that require a PTY session (`kind=terminal` or absent).
-/// Leaves with `kind=plugin|files|web` have no PTY and are excluded.
-#[must_use]
-pub fn collect_terminal_leaf_pane_ids(layout: &serde_json::Value) -> Vec<String> {
-    let mut ids = Vec::new();
-    collect_terminal_leaf_ids_recursive(layout, &mut ids);
-    ids
-}
-
-fn collect_terminal_leaf_ids_recursive(node: &serde_json::Value, ids: &mut Vec<String>) {
-    if let Some(node_type) = node.get("type").and_then(|v| v.as_str()) {
-        if node_type == "leaf" {
-            if leaf_kind(node) == "terminal" {
-                if let Some(pane_id) = node.get("paneId").and_then(|v| v.as_str()) {
-                    ids.push(pane_id.to_string());
-                }
-            }
-        } else if node_type == "split" {
-            if let Some(children) = node.get("children").and_then(|v| v.as_array()) {
-                for child in children {
-                    collect_terminal_leaf_ids_recursive(child, ids);
-                }
-            }
-        }
-    }
-}
-
-/// Recursively ensure every leaf node carries a `kind` field. Leaves without
-/// `kind` are tagged `"terminal"` (backward compatibility). Returns a new tree.
-#[must_use]
-pub fn ensure_leaf_kind(layout: serde_json::Value) -> serde_json::Value {
-    match layout.get("type").and_then(|v| v.as_str()) {
-        Some("leaf") => {
-            if layout.get("kind").is_none() {
-                let mut result = layout;
-                if let Some(obj) = result.as_object_mut() {
-                    obj.insert("kind".to_string(), serde_json::json!("terminal"));
-                }
-                result
-            } else {
-                layout
-            }
-        }
-        Some("split") => {
-            let mut result = layout;
-            if let Some(children) = result.get_mut("children").and_then(|c| c.as_array_mut()) {
-                let new_children: Vec<serde_json::Value> =
-                    children.drain(..).map(ensure_leaf_kind).collect();
-                *children = new_children;
-            }
-            result
-        }
-        _ => layout,
-    }
-}
-
-/// Normalize a split `direction` field to `"horizontal"` / `"vertical"`.
-///
-/// Frontend's `SplitContainer` and `SplitDivider` only handle these two values.
-/// Legacy callers (cross-tab merge, non-terminal pane insertion) pass
-/// `"left"` / `"right"` / `"top"` / `"bottom"` to express position; that
-/// position is used to decide child ordering, but the stored `direction`
-/// field must be the axis. This helper also tolerates `"horizontal"` /
-/// `"vertical"` inputs so callers can pass either form.
-fn normalize_split_direction(direction: &str) -> &'static str {
-    match direction {
-        "top" | "bottom" | "vertical" => "vertical",
-        _ => "horizontal",
-    }
-}
-
-/// Insert a new pane into the layout tree by splitting the target pane.
-/// Returns the updated layout, or None if the target pane was not found.
-#[must_use]
-#[allow(clippy::cast_precision_loss)]
-pub fn insert_pane_into_layout(
-    layout: &serde_json::Value,
-    target_pane_id: &str,
-    direction: &str,
-    new_pane_id: &str,
-) -> Option<serde_json::Value> {
-    insert_pane_into_layout_inner(layout, target_pane_id, direction, new_pane_id, None, None)
-}
-
-/// Insert a subtree (split or leaf) into the layout by splitting the target
-/// pane. The target leaf is wrapped in a new split node containing
-/// `[subtree, target]` when `direction=left|top` (subtree first), or
-/// `[target, subtree]` otherwise. The subtree's internal structure is
-/// preserved as-is. Used for "drag whole tab as subtree" (mode A).
-///
-/// When the parent split has the same `direction` as the new split, the new
-/// split's children are flattened into the parent (mirrors
-/// `insert_pane_into_layout_inner` behavior).
-#[must_use]
-#[allow(clippy::cast_precision_loss)]
-pub fn insert_subtree_into_layout(
-    layout: &serde_json::Value,
-    target_pane_id: &str,
-    direction: &str,
-    subtree: serde_json::Value,
-) -> Option<serde_json::Value> {
-    let node_type = layout.get("type")?.as_str()?;
-    match node_type {
-        "leaf" => {
-            let pane_id = layout.get("paneId")?.as_str()?;
-            if pane_id == target_pane_id {
-                let existing_leaf = layout.clone();
-                let split_id = uuid::Uuid::new_v4().to_string();
-                let (first, second) = match direction {
-                    "left" | "top" => (subtree, existing_leaf),
-                    _ => (existing_leaf, subtree),
-                };
-                Some(serde_json::json!({
-                    "type": "split",
-                    "id": split_id,
-                    "direction": normalize_split_direction(direction),
-                    "children": [first, second],
-                    "ratios": [0.5, 0.5],
-                }))
-            } else {
-                Some(layout.clone())
-            }
-        }
-        "split" => {
-            let parent_dir = layout.get("direction")?.as_str()?;
-            let parent_dir_axis = normalize_split_direction(parent_dir);
-            let children = layout.get("children")?.as_array()?;
-            let mut new_children: Vec<serde_json::Value> = Vec::new();
-            let mut found = false;
-            for child in children {
-                if let Some(updated) =
-                    insert_subtree_into_layout(child, target_pane_id, direction, subtree.clone())
-                {
-                    let changed = found || updated != *child;
-                    if changed {
-                        found = true;
-                    }
-                    // Flatten: if the updated child became a split with the same
-                    // direction as the parent, splice its children into the parent.
-                    if changed
-                        && updated.get("type").and_then(|t| t.as_str()) == Some("split")
-                        && updated
-                            .get("direction")
-                            .and_then(|d| d.as_str())
-                            .map(normalize_split_direction)
-                            == Some(parent_dir_axis)
-                    {
-                        if let Some(inner_children) =
-                            updated.get("children").and_then(|c| c.as_array())
-                        {
-                            new_children.extend(inner_children.iter().cloned());
-                            continue;
-                        }
-                    }
-                    new_children.push(updated);
-                }
-            }
-            if !found {
-                return Some(layout.clone());
-            }
-            let mut result = layout.clone();
-            let n = new_children.len();
-            let ratio = 1.0 / f64::from(u32::try_from(n).unwrap_or(1));
-            for child in &mut new_children {
-                if let Some(obj) = child.as_object_mut() {
-                    obj.insert("ratio".to_string(), serde_json::json!(ratio));
-                }
-            }
-            result["children"] = serde_json::Value::Array(new_children);
-            let ratios: Vec<serde_json::Value> = (0..n).map(|_| serde_json::json!(ratio)).collect();
-            result["ratios"] = serde_json::json!(ratios);
-            Some(result)
-        }
-        _ => Some(layout.clone()),
-    }
-}
-
-/// Like `insert_pane_into_layout` but allows specifying `title` and `shell_type` for the new leaf.
-#[must_use]
-pub fn insert_pane_into_layout_with_info(
-    layout: &serde_json::Value,
-    target_pane_id: &str,
-    direction: &str,
-    new_pane_id: &str,
-    title: &str,
-    shell_type: &str,
-) -> Option<serde_json::Value> {
-    insert_pane_into_layout_inner(
-        layout,
-        target_pane_id,
-        direction,
-        new_pane_id,
-        Some(title),
-        Some(shell_type),
-    )
-}
-
-fn insert_pane_into_layout_inner(
-    layout: &serde_json::Value,
-    target_pane_id: &str,
-    direction: &str,
-    new_pane_id: &str,
-    title: Option<&str>,
-    shell_type: Option<&str>,
-) -> Option<serde_json::Value> {
-    let node_type = layout.get("type")?.as_str()?;
-    match node_type {
-        "leaf" => {
-            let pane_id = layout.get("paneId")?.as_str()?;
-            if pane_id == target_pane_id {
-                // Found the target — wrap in a new split node
-                let mut new_leaf = serde_json::json!({
-                    "type": "leaf",
-                    "paneId": new_pane_id,
-                    "title": title.unwrap_or("Terminal"),
-                    "ratio": 1,
-                    "zoomed": false,
-                });
-                if let Some(st) = shell_type {
-                    new_leaf["shell_type"] = serde_json::json!(st);
-                }
-                let existing_leaf = layout.clone();
-                let split_id = uuid::Uuid::new_v4().to_string();
-                Some(serde_json::json!({
-                    "type": "split",
-                    "id": split_id,
-                    "direction": direction,
-                    "children": [existing_leaf, new_leaf],
-                    "ratios": [0.5, 0.5],
-                }))
-            } else {
-                Some(layout.clone())
-            }
-        }
-        "split" => {
-            let parent_dir = layout.get("direction")?.as_str()?;
-            let parent_dir_axis = normalize_split_direction(parent_dir);
-            let children = layout.get("children")?.as_array()?;
-            let mut new_children: Vec<serde_json::Value> = Vec::new();
-            let mut found = false;
-            for child in children {
-                if let Some(updated) = insert_pane_into_layout_inner(
-                    child,
-                    target_pane_id,
-                    direction,
-                    new_pane_id,
-                    title,
-                    shell_type,
-                ) {
-                    let changed = found || updated != *child;
-                    if changed {
-                        found = true;
-                    }
-                    // If the child became a split with the same direction, flatten it
-                    // (insert its children as siblings instead of nesting)
-                    if changed
-                        && updated.get("type").and_then(|t| t.as_str()) == Some("split")
-                        && updated
-                            .get("direction")
-                            .and_then(|d| d.as_str())
-                            .map(normalize_split_direction)
-                            == Some(parent_dir_axis)
-                    {
-                        if let Some(inner_children) =
-                            updated.get("children").and_then(|c| c.as_array())
-                        {
-                            new_children.extend(inner_children.iter().cloned());
-                            continue;
-                        }
-                    }
-                    new_children.push(updated);
-                }
-            }
-            if !found {
-                return Some(layout.clone());
-            }
-            let mut result = layout.clone();
-            // Redistribute ratios equally among all children after insertion
-            let n = new_children.len();
-            let ratio = 1.0 / f64::from(u32::try_from(n).unwrap_or(1));
-            for child in &mut new_children {
-                if let Some(obj) = child.as_object_mut() {
-                    obj.insert("ratio".to_string(), serde_json::json!(ratio));
-                }
-            }
-            result["children"] = serde_json::Value::Array(new_children);
-            let ratios: Vec<serde_json::Value> = (0..n).map(|_| serde_json::json!(ratio)).collect();
-            result["ratios"] = serde_json::json!(ratios);
-            Some(result)
-        }
-        _ => Some(layout.clone()),
-    }
-}
-
-pub fn first_leaf_id(node: &serde_json::Value) -> Option<String> {
-    let node_type = node.get("type")?.as_str()?;
-    match node_type {
-        "leaf" => node.get("paneId")?.as_str().map(String::from),
-        "split" => {
-            let children = node.get("children")?.as_array()?;
-            for child in children {
-                if let Some(id) = first_leaf_id(child) {
-                    return Some(id);
-                }
-            }
-            None
-        }
-        _ => None,
-    }
-}
-
-fn parse_title_cwd(title: &str, home: &Path) -> Option<PathBuf> {
-    let at = title.rfind('@')?;
-    let tail = title.get(at + 1..)?;
-    let colon = tail.find(':')?;
-    let path_part = tail.get(colon + 1..)?.trim();
-    if path_part.is_empty() {
-        return None;
-    }
-    let path = if let Some(rest) = path_part.strip_prefix("~/") {
-        home.join(rest)
-    } else if path_part == "~" {
-        home.to_path_buf()
-    } else if Path::new(path_part).is_absolute() {
-        PathBuf::from(path_part)
-    } else {
-        home.join(path_part)
-    };
-    Some(path)
-}
-
-pub struct SyncClient {
-    pub id: String,
-    pub tx: mpsc::UnboundedSender<String>,
-}
-
-/// Recursively check if a JSON layout tree contains a leaf with the given `pane_id`.
-fn layout_has_pane(layout: &serde_json::Value, pane_id: &str) -> bool {
-    if let Some(pid) = layout.get("paneId").and_then(|v| v.as_str()) {
-        if pid == pane_id {
-            return true;
-        }
-    }
-    if let Some(children) = layout.get("children").and_then(|v| v.as_array()) {
-        for child in children {
-            if layout_has_pane(child, pane_id) {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// SSH keyboard-interactive auth prompt
-#[derive(Clone, Debug, serde::Serialize)]
-pub struct SshAuthPrompt {
-    pub prompt: String,
-    pub echo: bool,
-}
-
-/// Pending SSH keyboard-interactive auth state
-///
-/// Channel flow:
-/// - SSH handler → `prompts_tx` → `prompts_rx` → sync WS → frontend
-/// - frontend → sync WS → `responses_tx` → `responses_rx` → SSH handler
-pub struct PendingSshAuth {
-    pub prompts_tx: mpsc::UnboundedSender<Vec<SshAuthPrompt>>,
-    pub prompts_rx: tokio::sync::Mutex<mpsc::UnboundedReceiver<Vec<SshAuthPrompt>>>,
-    pub responses_tx: mpsc::UnboundedSender<Vec<String>>,
-    pub responses_rx: tokio::sync::Mutex<mpsc::UnboundedReceiver<Vec<String>>>,
-}
-
-pub struct SessionManager {
-    pub sessions: DashMap<String, Arc<Session>>,
-    pub sync_clients: Arc<Mutex<Vec<SyncClient>>>,
-    pub active_pane_id: Arc<Mutex<Option<String>>>,
-    pub tab_layouts: DashMap<String, serde_json::Value>,
-    pub pending_ssh_auth: DashMap<String, PendingSshAuth>,
-    pub tab_order: Mutex<Vec<String>>,
-    pub event_bus: EventBus,
-    notify_port: AtomicU16,
-    /// Set once (via `register_notifier`) so any authoritative pane-removal site — including
-    /// natural PTY/SSH exit, which never goes through `kill_and_remove` — can notify the
-    /// attention ledger without threading a notifier handle through every call site.
-    notifier: OnceLock<Arc<crate::notification::NotificationBroadcast>>,
-}
-
-#[derive(Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum SyncMsg {
-    TabList {
-        tabs: Vec<TabInfo>,
-        active_pane_id: Option<String>,
-    },
-    TabCreated {
-        tab_id: String,
-        pane_id: String,
-        layout: Option<serde_json::Value>,
-        cwd: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        connection_id: Option<String>,
-    },
-    TabClosed {
-        pane_id: String,
-    },
-    TabActivated {
-        pane_id: String,
-    },
-    LayoutUpdated {
-        pane_id: String,
-        layout: serde_json::Value,
-        active_pane_id: String,
-    },
-    PluginChanged {
-        plugin_id: String,
-        change: String,
-    },
-    ProcessExited {
-        plugin_id: String,
-        pid: u32,
-        exit_code: Option<i32>,
-    },
-    CommandFinished {
-        pane_id: String,
-        command: String,
-        exit_code: i32,
-        duration_ms: u64,
-        stdout: String,
-        method: String,
-    },
-    WorkspaceCreated {
-        workspace: crate::workspace_mgmt::Workspace,
-    },
-    WorkspaceUpdated {
-        workspace: crate::workspace_mgmt::Workspace,
-    },
-    WorkspaceDeleted {
-        id: String,
-    },
-    WorkspaceActivated {
-        id: Option<String>,
-    },
-    WorkspaceReordered {
-        ids: Vec<String>,
-    },
-    WorkspaceList {
-        workspaces: Vec<crate::workspace_mgmt::Workspace>,
-        active_workspace_id: Option<String>,
-    },
-}
-
-#[derive(Serialize, Clone)]
-pub struct TabInfo {
-    pub tab_id: String,
-    pub pane_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub layout: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub active_pane_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<String>,
-    /// The `SshProfile.id` if this tab is an SSH session created from a profile.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub connection_id: Option<String>,
-}
-
-impl Default for SessionManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl SessionManager {
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            sessions: DashMap::new(),
-            sync_clients: Arc::new(Mutex::new(Vec::new())),
-            active_pane_id: Arc::new(Mutex::new(None)),
-            tab_layouts: DashMap::new(),
-            tab_order: Mutex::new(Vec::new()),
-            pending_ssh_auth: DashMap::new(),
-            event_bus: EventBus::new(),
-            notify_port: AtomicU16::new(0),
-            notifier: OnceLock::new(),
-        }
-    }
-
-    /// Notifies the attention ledger that `pane_id` was authoritatively removed, if a notifier
-    /// has been registered (via `register_notifier`). No-op otherwise (e.g. in unit tests that
-    /// construct a bare `SessionManager`).
-    pub(crate) fn pane_closed_notify(&self, pane_id: &str) {
-        if let Some(notifier) = self.notifier.get() {
-            notifier.pane_closed(pane_id);
-        }
-    }
-
-    #[must_use]
-    pub fn notify_port(&self) -> u16 {
-        self.notify_port.load(Ordering::Relaxed)
-    }
-
-    pub fn set_notify_port(&self, port: u16) {
-        self.notify_port.store(port, Ordering::Relaxed);
-    }
-
-    /// Insert a tab layout and record its order position.
-    pub fn insert_tab(&self, tab_id: String, value: serde_json::Value) {
-        let mut order = self.tab_order.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if !order.contains(&tab_id) {
-            order.push(tab_id.clone());
-        }
-        drop(order);
-        self.tab_layouts.insert(tab_id, value);
-    }
-
-    /// Remove a tab layout and its order entry.
-    pub fn remove_tab(&self, tab_id: &str) {
-        self.tab_layouts.remove(tab_id);
-        let mut order = self.tab_order.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        order.retain(|id| id != tab_id);
-    }
-
-    /// Check if a `pane_id` belongs to any registered tab layout.
-    /// Used to prevent creating fallback PTY sessions for SSH panes.
-    pub fn is_pane_in_any_tab(&self, pane_id: &str) -> bool {
-        for entry in &self.tab_layouts {
-            if let Some(layout) = entry.value().get("layout") {
-                if layout_has_pane(layout, pane_id) {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    /// # Panics
-    /// Panics if `SyncMsg` serialization fails (should be infallible).
-    #[allow(clippy::expect_used)]
-    pub fn broadcast_sync(&self, msg: &SyncMsg) {
-        let json = serde_json::to_string(msg).expect("serialization is infallible");
-        let mut clients =
-            self.sync_clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        clients.retain(|c| c.tx.send(json.clone()).is_ok());
-    }
-
-    /// Broadcast to all sync clients except the one with the given ID.
-    ///
-    /// # Panics
-    /// Panics if `SyncMsg` serialization fails (should be infallible).
-    #[allow(clippy::expect_used)]
-    pub fn broadcast_sync_others(&self, msg: &SyncMsg, exclude_id: &str) {
-        let json = serde_json::to_string(msg).expect("serialization is infallible");
-        let mut clients =
-            self.sync_clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        clients.retain(|c| {
-            if c.id == exclude_id {
-                true // keep in list but don't send
-            } else {
-                c.tx.send(json.clone()).is_ok()
-            }
-        });
-    }
-
-    pub fn add_sync_client(&self) -> (String, mpsc::UnboundedReceiver<String>) {
-        let id = uuid::Uuid::new_v4().to_string();
-        let (tx, rx) = mpsc::unbounded_channel();
-        self.sync_clients
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(SyncClient { id: id.clone(), tx });
-        (id, rx)
-    }
-
-    pub fn broadcast_plugin_changed(&self, plugin_id: String, change: String) {
-        self.broadcast_sync(&SyncMsg::PluginChanged { plugin_id, change });
-    }
-
-    /// Remove a session from the `DashMap` and explicitly kill its child process.
-    /// Returns true if the session existed.
-    ///
-    /// This is necessary because the PTY reader task holds an `Arc<Session>`,
-    /// preventing `Drop` from firing when we only remove from the `DashMap`.
-    /// By killing the child first, the reader's `read()` returns Err/Ok(0),
-    /// causing it to exit and release its `Arc`.
-    pub fn kill_and_remove(&self, pane_id: &str) -> bool {
-        if let Some((_, session)) = self.sessions.remove(pane_id) {
-            session.kill_child();
-            // Drop the input channel sender so the writer task's recv() returns
-            // None and the task exits, releasing its Arc<Session>.
-            session.input_tx.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
-            self.pane_closed_notify(pane_id);
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Remove a `pane_id` from all parent tab layouts. If removing it causes
-    /// a split to have only one child, the split collapses into that child.
-    /// Returns the list of tab IDs whose layouts became empty (i.e. the pane
-    /// was the last leaf) so the caller can broadcast `TabClosed` for them.
-    pub fn purge_pane_from_layouts(&self, pane_id: &str) -> Vec<String> {
-        let mut updates: Vec<(String, serde_json::Value)> = Vec::new();
-        let mut emptied_tabs: Vec<String> = Vec::new();
-
-        for entry in &self.tab_layouts {
-            let tab_pane_id = entry.key();
-            if tab_pane_id == pane_id {
-                continue;
-            }
-            let val = entry.value();
-            let Some(layout) = val.get("layout") else { continue };
-            match remove_pane_from_layout(layout, pane_id) {
-                None => {
-                    // The pane was the only leaf — tab is now empty
-                    emptied_tabs.push(tab_pane_id.clone());
-                }
-                Some(new_layout) if new_layout != *layout => {
-                    let active = val.get("active_pane_id").and_then(|v| v.as_str());
-                    let new_leaf_ids = collect_leaf_pane_ids(&new_layout);
-                    let active_pane_id =
-                        active.filter(|id| new_leaf_ids.iter().any(|lid| lid == *id));
-                    let mut new_val = serde_json::json!({ "layout": new_layout });
-                    if let Some(a) = active_pane_id {
-                        new_val["active_pane_id"] = serde_json::Value::String(a.to_string());
-                    }
-                    updates.push((tab_pane_id.clone(), new_val));
-                }
-                _ => {}
-            }
-        }
-
-        for (key, val) in updates {
-            self.insert_tab(key, val);
-        }
-        for tab_id in &emptied_tabs {
-            self.remove_tab(tab_id);
-        }
-        emptied_tabs
-    }
-
-    pub fn tab_list(&self) -> (Vec<TabInfo>, Option<String>) {
-        // Prune stale tab layouts whose terminal leaves no longer have PTY sessions.
-        // Leaves with kind=plugin|files|web have no PTY and are exempt - a tab with
-        // only non-terminal leaves is NOT stale.
-        let stale: Vec<String> = {
-            self.tab_layouts
-                .iter()
-                .filter_map(|e| {
-                    let v = e.value();
-                    let layout = v.get("layout")?;
-                    let all_leaf_ids = collect_leaf_pane_ids(layout);
-                    if all_leaf_ids.is_empty() {
-                        return Some(e.key().clone());
-                    }
-                    // Only terminal leaves require a live PTY session.
-                    let terminal_ids = collect_terminal_leaf_pane_ids(layout);
-                    if terminal_ids.iter().any(|id| !self.sessions.contains_key(id)) {
-                        return Some(e.key().clone());
-                    }
-                    None
-                })
-                .collect()
-        };
-        for key in &stale {
-            self.tab_layouts.remove(key);
-        }
-        if !stale.is_empty() {
-            let mut order =
-                self.tab_order.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            order.retain(|id| !stale.contains(id));
-        }
-
-        let order = self.tab_order.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let order_index = |tab_id: &str| -> usize {
-            order.iter().position(|id| id == tab_id).unwrap_or(usize::MAX)
-        };
-
-        let mut tabs: Vec<TabInfo> = self
-            .tab_layouts
-            .iter()
-            .map(|e| {
-                let tab_id = e.key().clone();
-                let v = e.value();
-                let layout = v.get("layout").cloned().map(ensure_leaf_kind);
-                let pane_id =
-                    layout.as_ref().and_then(first_leaf_id).unwrap_or_else(|| tab_id.clone());
-                let active_pane_id =
-                    v.get("active_pane_id").and_then(|v| v.as_str()).map(String::from);
-                let cwd = self.sessions.get(&pane_id).and_then(|s| {
-                    s.cwd_state.lock().ok().map(|state| state.cwd.to_string_lossy().to_string())
-                });
-                let connection_id = self
-                    .sessions
-                    .get(&pane_id)
-                    .and_then(|s| s.ssh_params.as_ref().and_then(|p| p.profile_id.clone()));
-                TabInfo { tab_id, pane_id, layout, active_pane_id, cwd, connection_id }
-            })
-            .collect();
-
-        tabs.sort_by_key(|t| order_index(&t.tab_id));
-        drop(order);
-
-        let active =
-            self.active_pane_id.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
-        (tabs, active)
-    }
-
-    /// When a PTY exits, find the parent tab and either remove it (single-pane)
-    /// or update the layout (multi-pane). Returns the tab-level `pane_id` for
-    /// single-pane tabs so the caller can broadcast `TabClosed`.
-    pub fn on_pty_exited(&self, leaf_pane_id: &str) -> Option<String> {
-        // Find the tab layout that contains this leaf
-        let mut found_tab_id: Option<String> = None;
-        for entry in &self.tab_layouts {
-            let tab_id = entry.key();
-            let val = entry.value();
-            if let Some(layout) = val.get("layout") {
-                let leaf_ids = collect_leaf_pane_ids(layout);
-                if leaf_ids.iter().any(|id| id == leaf_pane_id) {
-                    found_tab_id = Some(tab_id.clone());
-                    break;
-                }
-            }
-        }
-
-        let tab_id = found_tab_id?;
-
-        // Get the current layout for this tab
-        let tab_val = self.tab_layouts.get(&tab_id)?;
-        let layout = tab_val.value().get("layout")?.clone();
-        let leaf_ids = collect_leaf_pane_ids(&layout);
-
-        if leaf_ids.len() <= 1 {
-            // Single-pane tab — remove the whole tab
-            drop(tab_val);
-            self.remove_tab(&tab_id);
-            Some(tab_id)
-        } else {
-            // Multi-pane tab — update the layout by removing the exited pane
-            let new_layout = remove_pane_from_layout(&layout, leaf_pane_id)?;
-            let new_leaf_ids = collect_leaf_pane_ids(&new_layout);
-            let active = tab_val.value().get("active_pane_id").and_then(|v| v.as_str());
-            let active_pane_id = active
-                .filter(|id| new_leaf_ids.iter().any(|lid| lid == *id))
-                .or_else(|| new_leaf_ids.first().map(std::string::String::as_str))
-                .unwrap_or("")
-                .to_string();
-            drop(tab_val);
-
-            self.insert_tab(
-                tab_id.clone(),
-                serde_json::json!({
-                    "layout": new_layout.clone(),
-                    "active_pane_id": active_pane_id,
-                }),
-            );
-            self.broadcast_sync(&SyncMsg::LayoutUpdated {
-                pane_id: tab_id,
-                layout: new_layout,
-                active_pane_id,
-            });
-            None
-        }
-    }
-
-    /// Registers the notifier once, so `kill_and_remove` and natural PTY/SSH exit paths can
-    /// notify the attention ledger directly via `pane_closed_notify` without threading a
-    /// notifier handle through every call site. Safe to call before `start_cleanup_task` (the
-    /// two are independent — a bind failure or startup ordering issue must never suppress the
-    /// detached-session reaper).
-    pub fn register_notifier(&self, notifier: Arc<crate::notification::NotificationBroadcast>) {
-        let _ = self.notifier.set(notifier);
-    }
-
-    pub fn start_cleanup_task(self: &Arc<Self>) {
-        let manager = Arc::clone(self);
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
-            let reap_secs = parse_reap_secs(std::env::var("DINOTTY_DETACH_REAP_SECS").ok());
-            let timeout = std::time::Duration::from_secs(reap_secs);
-            loop {
-                interval.tick().await;
-                // Two-pass: collect stale IDs first, then kill_and_remove.
-                // Can't use retain() because we need to kill child processes.
-                let stale: Vec<String> = manager
-                    .sessions
-                    .iter()
-                    .filter_map(|entry| {
-                        let status = entry
-                            .value()
-                            .status
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        match *status {
-                            SessionStatus::Detached { since } if since.elapsed() >= timeout => {
-                                Some(entry.key().clone())
-                            }
-                            _ => None,
-                        }
-                    })
-                    .collect();
-                for pane_id in stale {
-                    // Re-check status before killing — the session may have been
-                    // reconnected between the collect pass and now.
-                    let should_kill = manager.sessions.get(&pane_id).is_some_and(|entry| {
-                        let status = entry.value().status.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                        matches!(*status, SessionStatus::Detached { since } if since.elapsed() >= timeout)
-                    });
-
-                    if should_kill {
-                        info!("Cleanup: removing detached session: pane={}", pane_id);
-                        // kill_and_remove now notifies the attention ledger internally.
-                        manager.kill_and_remove(&pane_id);
-                    }
-                }
-            }
-        });
     }
 }
 
