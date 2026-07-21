@@ -323,6 +323,7 @@ export const TreeRows = defineComponent({
                 key: rel,
                 style: rowPad,
                 draggable: true,
+                'data-rel': rel,
                 ...makeSwipeHandlers(rel),
                 onContextmenu: (ev: MouseEvent) => {
                   ev.preventDefault()
@@ -369,9 +370,11 @@ export const TreeRows = defineComponent({
                     'drop-target',
                     'drop-target-upload'
                   )
-                  const srcRel = ev.dataTransfer?.getData('application/x-tree-move')
-                  if (srcRel !== undefined && srcRel !== rel && !rel.startsWith(srcRel + '/')) {
-                    emit('move-entry', { src: srcRel, destDir: rel })
+                  if (hasType(ev.dataTransfer, 'application/x-tree-move')) {
+                    const srcRel = ev.dataTransfer?.getData('application/x-tree-move')
+                    if (srcRel && srcRel !== rel && !rel.startsWith(srcRel + '/')) {
+                      emit('move-entry', { src: srcRel, destDir: rel })
+                    }
                   } else if (hasType(ev.dataTransfer, 'Files')) {
                     emit('upload-to-dir', rel, ev)
                   }

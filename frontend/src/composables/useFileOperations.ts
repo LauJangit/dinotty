@@ -35,6 +35,19 @@ function setupTauriFileDrop() {
   const listen = w.__TAURI__?.event?.listen
   if (!listen) return
 
+  // Resolve the drop target directory from the OS-level drop position.
+  // Tauri v2 intercepts native dragover/drop events, so the DOM-side
+  // onDirDragEnter path that sets _hoveredDir never fires - we must compute
+  // the target dir from elementFromPoint at drop time.
+  function resolveDropDir(cx: number, cy: number): string | undefined {
+    const el = document.elementFromPoint(cx, cy)
+    if (!el) return _hoveredDir
+    const dirRow = (el as HTMLElement).closest('.tree-row.dir') as HTMLElement | null
+    if (!dirRow) return _hoveredDir
+    const rel = dirRow.dataset.rel
+    return rel === undefined ? _hoveredDir : rel
+  }
+
   // Tauri v2 listen() returns Promise<UnlistenFn>
   const unlistenDrop = listen('file-drop-paths', async (event: any) => {
     // Internal tree drag → emit on the target EditorPane
@@ -75,6 +88,11 @@ function setupTauriFileDrop() {
     const payload = event.payload || []
     const paths: string[] = Array.isArray(payload) ? payload : (payload.paths || [])
     if (!paths.length) return
+    const pos = (payload && payload.position) || { x: 0, y: 0 }
+    const dpr = window.devicePixelRatio || 1
+    const cx = (pos.x ?? 0) / dpr
+    const cy = (pos.y ?? 0) / dpr
+    const targetDir = cx && cy ? resolveDropDir(cx, cy) : _hoveredDir
     const files: { file: File; path: string }[] = []
     for (const p of paths) {
       try {
@@ -89,7 +107,7 @@ function setupTauriFileDrop() {
         console.error('[upload] failed to read dropped file:', p, e)
       }
     }
-    if (files.length) await _activeUploadFn!(files, _hoveredDir)
+    if (files.length) await _activeUploadFn!(files, targetDir)
   })
 
   // Listen for drag-enter/leave to show drop overlay
