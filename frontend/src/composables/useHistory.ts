@@ -1,5 +1,6 @@
 import { ref } from 'vue'
-import { apiUrl, authFetch, wsUrlWithToken } from './apiBase'
+import { apiUrl, authFetch } from './apiBase'
+import { onSuggestions } from './useSyncWebSocket'
 
 declare function tauriInvoke(cmd: string): Promise<unknown>
 
@@ -10,49 +11,12 @@ export interface SuggestionItem {
 
 const suggestions = ref<SuggestionItem[]>([])
 let fetchTimer: ReturnType<typeof setTimeout> | null = null
-let ws: WebSocket | null = null
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
-function handleMessage(e: { data: string }) {
-  try {
-    const msg = JSON.parse(e.data)
-    if (msg.type === 'suggestions' && Array.isArray(msg.items)) {
-      suggestions.value = msg.items
-    }
-  } catch {}
-}
-
-async function connectWs() {
-  if (ws && ws.readyState <= WebSocket.OPEN) return
-
-  let url: string
-  if (typeof window !== 'undefined' && '__TAURI__' in window) {
-    const origin = String(
-      await (window as any).__TAURI__.core.invoke('embedded_http_origin')
-    ).replace(/\/$/, '')
-    url = `${origin.replace(/^http/, 'ws')}/ws/history`
-  } else {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    url = `${proto}//${location.host}/ws/history`
-  }
-
-  ws = new WebSocket(wsUrlWithToken(url))
-
-  ws.onmessage = (e) => handleMessage(e)
-
-  ws.onclose = () => {
-    ws = null
-    reconnectTimer = setTimeout(connectWs, 3000)
-  }
-
-  ws.onerror = () => {
-    ws?.close()
-  }
-}
+onSuggestions((items) => {
+  suggestions.value = items
+})
 
 export function useHistory() {
-  connectWs()
-
   async function fetchSuggestions(prefix?: string) {
     const params = new URLSearchParams()
     if (prefix) params.set('prefix', prefix)

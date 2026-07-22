@@ -304,6 +304,21 @@ export interface SyncResyncRequired {
   v: number
 }
 
+export interface SyncSuggestions {
+  type: 'suggestions'
+  items: Array<{ command: string; frequency: number }>
+}
+
+export interface SyncMonitorData {
+  type: 'monitor_data'
+  data: Record<string, unknown>
+}
+
+export interface SyncMonitorHistory {
+  type: 'monitor_history'
+  data: Record<string, unknown>[]
+}
+
 export type SyncServerMsg =
   | SyncTabList
   | SyncTabCreated
@@ -326,6 +341,9 @@ export type SyncServerMsg =
   | SyncSnapshot
   | SyncMarkReadResult
   | SyncResyncRequired
+  | SyncSuggestions
+  | SyncMonitorData
+  | SyncMonitorHistory
 
 export interface SyncMarkRead {
   type: 'mark_read'

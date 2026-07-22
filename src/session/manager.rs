@@ -146,6 +146,15 @@ pub enum SyncMsg {
     ResyncRequired {
         v: u64,
     },
+    Suggestions {
+        items: Vec<crate::history::SuggestionItem>,
+    },
+    MonitorData {
+        data: serde_json::Value,
+    },
+    MonitorHistory {
+        data: Vec<serde_json::Value>,
+    },
 }
 
 #[derive(Serialize, Clone)]

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{ConnectInfo, Path, Query, State, WebSocketUpgrade},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     Json,
@@ -235,34 +235,6 @@ pub async fn session_resize(
     }
 
     Json(serde_json::json!({ "ok": true })).into_response()
-}
-
-// ─── WS /ws/api/sessions/:pane_id/stream ───
-
-pub async fn session_stream(
-    ws: WebSocketUpgrade,
-    State((manager, settings)): State<(Arc<SessionManager>, SettingsState)>,
-    Path(pane_id): Path<String>,
-    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
-    headers: axum::http::HeaderMap,
-) -> impl IntoResponse {
-    let s = settings.read().await;
-    if !s.open_api.enabled {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": "open_api is disabled" })),
-        )
-            .into_response();
-    }
-    let allowed_origins = s.auth.allowed_origins.clone();
-    let trusted_proxies = s.auth.trusted_proxies.clone();
-    drop(s);
-    let real_ip = crate::auth::real_client_ip(&headers, addr.ip(), &trusted_proxies);
-    if !crate::auth::check_ws_origin(&headers, &allowed_origins, real_ip, &trusted_proxies) {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-    ws.on_upgrade(move |socket| crate::ws::handle_open_api_ws(socket, manager, pane_id))
-        .into_response()
 }
 
 // ─── Helpers ───

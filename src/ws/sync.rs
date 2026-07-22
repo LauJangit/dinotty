@@ -14,6 +14,8 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 
+use crate::history::HistoryState;
+use crate::monitor::MonitorState;
 use crate::notification::NotificationBroadcast;
 use crate::session::{SessionManager, SyncMsg};
 use crate::settings::SettingsState;
@@ -30,6 +32,8 @@ pub async fn sync_handler(
         SettingsState,
     )>,
     State(notifier): State<Arc<NotificationBroadcast>>,
+    State(history): State<HistoryState>,
+    State(monitor): State<MonitorState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
@@ -41,8 +45,10 @@ pub async fn sync_handler(
     if !crate::auth::check_ws_origin(&headers, &allowed_origins, real_ip, &trusted_proxies) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    ws.on_upgrade(move |socket| handle_sync_socket(socket, manager, workspaces, settings, notifier))
-        .into_response()
+    ws.on_upgrade(move |socket| {
+        handle_sync_socket(socket, manager, workspaces, settings, notifier, history, monitor)
+    })
+    .into_response()
 }
 
 async fn handle_sync_socket(
@@ -51,6 +57,8 @@ async fn handle_sync_socket(
     workspaces: WorkspacesState,
     settings: SettingsState,
     notifier: Arc<NotificationBroadcast>,
+    history: HistoryState,
+    monitor: MonitorState,
 ) {
     let (ws_tx, mut ws_rx) = socket.split();
 
@@ -109,6 +117,24 @@ async fn handle_sync_socket(
     let msg = serde_json::to_string(&tab_list).expect("serialization is infallible");
     if ws_out_tx.send(Message::Text(msg)).is_err() {
         return;
+    }
+
+    // Send current history suggestions
+    let items = history.query(None, 20).await;
+    let suggestions_msg = SyncMsg::Suggestions { items };
+    let msg = serde_json::to_string(&suggestions_msg).expect("serialization is infallible");
+    if ws_out_tx.send(Message::Text(msg)).is_err() {
+        return;
+    }
+
+    // Send current monitor history
+    let history_data = monitor.snapshot_history_values().await;
+    if !history_data.is_empty() {
+        let monitor_msg = SyncMsg::MonitorHistory { data: history_data };
+        let msg = serde_json::to_string(&monitor_msg).expect("serialization is infallible");
+        if ws_out_tx.send(Message::Text(msg)).is_err() {
+            return;
+        }
     }
 
     // Send current workspace list with active workspace

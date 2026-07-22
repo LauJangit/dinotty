@@ -660,7 +660,7 @@ async fn main() {
     auth::set_session_cookie_port(port);
     let manager = Arc::new(SessionManager::new());
 
-    let monitor_state = MonitorState::new();
+    let monitor_state = MonitorState::new(Arc::clone(&manager.sync_clients));
     monitor_state.clone().start_collector();
 
     let notifier = Arc::new(NotificationBroadcast::new(Arc::clone(&manager.sync_clients)));
@@ -679,7 +679,7 @@ async fn main() {
             }
         });
     }
-    let history_state = HistoryState::new();
+    let history_state = HistoryState::new(Arc::clone(&manager.sync_clients));
 
     // Load token from dedicated file or env var; empty means first-time setup
     let initial_token =
@@ -768,7 +768,6 @@ async fn main() {
             .route("/ws", get(ws::ws_handler))
             .route("/ws/sync", get(ws::sync_handler))
             .route("/ws/watch", get(file_watcher::watch_handler))
-            .route("/ws/monitor", get(monitor::ws_monitor_handler))
             .route("/api/notify", post(notification::post_notify))
             .route("/api/events/emit", post(events::emit_event))
             .route("/api/input", post(ws::post_input))
@@ -778,7 +777,6 @@ async fn main() {
             .route("/api/sessions/:pane_id/scrollback", get(openapi::get_scrollback))
             .route("/api/sessions/:pane_id/input", post(openapi::session_input))
             .route("/api/sessions/:pane_id/resize", post(openapi::session_resize))
-            .route("/ws/api/sessions/:pane_id/stream", get(openapi::session_stream))
             // Tab/Pane management
             .route("/api/tabs", get(tabs::list_tabs).post(tabs::create_tab))
             // SSH tab routes (must be before :tab_id routes)
@@ -853,7 +851,6 @@ async fn main() {
             .route("/api/workspaces/:id/activate", put(workspace_mgmt::activate_workspace))
             .route("/api/workspaces/active", delete(workspace_mgmt::deactivate_workspace))
             .route("/api/list-dirs", get(workspace_mgmt::list_dirs))
-            .route("/ws/history", get(history::ws_history_handler))
             .route("/api/history", get(history::get_history).delete(history::delete_history))
             .route("/api/proxy", any(proxy::external_proxy_handler))
             .route("/api/info", get(server_info))

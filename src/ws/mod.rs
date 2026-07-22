@@ -12,7 +12,7 @@ mod sync;
 mod terminal;
 mod types;
 
-pub use openapi::{handle_open_api_ws, post_input};
+pub use openapi::post_input;
 pub use sync::sync_handler;
 pub use terminal::ws_handler;
 pub use types::{ClientMsg, InputRequest, ServerMsg, SyncClientMsg, WsQuery};

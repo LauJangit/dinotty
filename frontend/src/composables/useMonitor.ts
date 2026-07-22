@@ -1,6 +1,5 @@
 import { ref } from 'vue'
-import { wsUrlWithToken } from './apiBase'
-import { isTauri, tauriInvoke } from './useTransport'
+import { onMonitorData as onSyncMonitorData, onMonitorHistory as onSyncMonitorHistory } from './useSyncWebSocket'
 
 export interface CpuData {
   usage: number
@@ -58,10 +57,7 @@ export interface MonitorData {
   gpu: GpuData[]
 }
 
-export type MonitorMessage = MonitorData | { type: 'history'; data: MonitorData[] }
-
 export const monitorData = ref<MonitorData | null>(null)
-export const monitorConnected = ref(false)
 
 type MonitorListener = (data: MonitorData) => void
 type HistoryListener = (data: MonitorData[]) => void
@@ -85,85 +81,21 @@ export function onMonitorHistory(fn: HistoryListener) {
   }
 }
 
-let ws: WebSocket | null = null
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null
-let attempts = 0
-let started = false
+// Subscribe to sync channel for live monitor data
+onSyncMonitorData((data) => {
+  const d = data as unknown as MonitorData
+  monitorData.value = d
+  for (const fn of listeners) fn(d)
+})
 
-function handleMessage(e: { data: string }) {
-  try {
-    const msg: MonitorMessage = JSON.parse(e.data)
-    if ('type' in msg && msg.type === 'history') {
-      for (const fn of historyListeners) fn(msg.data)
-      if (msg.data.length > 0) {
-        monitorData.value = msg.data[msg.data.length - 1]
-      }
-    } else {
-      const d = msg as MonitorData
-      monitorData.value = d
-      for (const fn of listeners) fn(d)
-    }
-  } catch {}
-}
-
-async function connect() {
-  if (ws && ws.readyState <= WebSocket.OPEN) return
-
-  let url: string
-  if (isTauri()) {
-    const origin = String(await tauriInvoke('embedded_http_origin')).replace(/\/$/, '')
-    url = `${origin.replace(/^http/, 'ws')}/ws/monitor`
-  } else {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    url = `${proto}//${location.host}/ws/monitor`
+// Subscribe to sync channel for monitor history
+onSyncMonitorHistory((data) => {
+  const history = data as unknown as MonitorData[]
+  for (const fn of historyListeners) fn(history)
+  if (history.length > 0) {
+    monitorData.value = history[history.length - 1]
   }
-
-  ws = new WebSocket(wsUrlWithToken(url))
-
-  ws.onopen = () => {
-    monitorConnected.value = true
-    attempts = 0
-  }
-
-  ws.onmessage = (e) => handleMessage(e)
-
-  ws.onclose = () => {
-    monitorConnected.value = false
-    ws = null
-    if (started) scheduleReconnect()
-  }
-
-  ws.onerror = () => {}
-}
-
-function scheduleReconnect() {
-  if (reconnectTimer) return
-  const delay = Math.min(1000 * Math.pow(2, attempts), 30000)
-  attempts++
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null
-    if (started) connect()
-  }, delay)
-}
-
-export function startMonitor() {
-  if (started) return
-  started = true
-  connect()
-}
-
-export function stopMonitor() {
-  started = false
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer)
-    reconnectTimer = null
-  }
-  if (ws) {
-    ws.close(1000)
-    ws = null
-  }
-  monitorConnected.value = false
-}
+})
 
 // ── Monitor History ──────────────────────────────────────────────
 
@@ -210,7 +142,6 @@ function processEntry(d: MonitorData) {
 export function initMonitorHistory() {
   if (historyInitialized) return
   historyInitialized = true
-  startMonitor()
 
   onMonitorHistory((history) => {
     cpuHistory.value = []

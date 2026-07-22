@@ -29,6 +29,12 @@ type SyncEventHandler = (e: SyncEvent) => void
 const eventHandlers = new Set<SyncEventHandler>()
 type NotificationHandler = (msg: SyncServerMsg) => void
 const notifyHandlers = new Set<NotificationHandler>()
+type SuggestionsHandler = (items: Array<{ command: string; frequency: number }>) => void
+const suggestionsHandlers = new Set<SuggestionsHandler>()
+type MonitorDataHandler = (data: Record<string, unknown>) => void
+const monitorDataHandlers = new Set<MonitorDataHandler>()
+type MonitorHistoryHandler = (data: Record<string, unknown>[]) => void
+const monitorHistoryHandlers = new Set<MonitorHistoryHandler>()
 let currentClientId: string | null = null
 let sendMarkReadFn: ((payload: SyncMarkRead) => void) | null = null
 
@@ -43,6 +49,27 @@ export function onNotification(handler: NotificationHandler): () => void {
   notifyHandlers.add(handler)
   return () => {
     notifyHandlers.delete(handler)
+  }
+}
+
+export function onSuggestions(handler: SuggestionsHandler): () => void {
+  suggestionsHandlers.add(handler)
+  return () => {
+    suggestionsHandlers.delete(handler)
+  }
+}
+
+export function onMonitorData(handler: MonitorDataHandler): () => void {
+  monitorDataHandlers.add(handler)
+  return () => {
+    monitorDataHandlers.delete(handler)
+  }
+}
+
+export function onMonitorHistory(handler: MonitorHistoryHandler): () => void {
+  monitorHistoryHandlers.add(handler)
+  return () => {
+    monitorHistoryHandlers.delete(handler)
   }
 }
 
@@ -536,6 +563,12 @@ export function useSyncWebSocket(opts: {
         currentClientId = msg.client_id
       } else if (msg.type === 'event') {
         eventHandlers.forEach((h) => h(msg))
+      } else if (msg.type === 'suggestions') {
+        suggestionsHandlers.forEach((h) => h(msg.items))
+      } else if (msg.type === 'monitor_data') {
+        monitorDataHandlers.forEach((h) => h(msg.data))
+      } else if (msg.type === 'monitor_history') {
+        monitorHistoryHandlers.forEach((h) => h(msg.data))
       } else if (
         msg.type === 'bell' ||
         msg.type === 'notify' ||

@@ -2,25 +2,20 @@
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
     clippy::cast_sign_loss,
-    clippy::cast_possible_wrap
+    clippy::cast_possible_wrap,
+    clippy::expect_used
 )]
-use axum::{
-    extract::ws::{Message, WebSocket},
-    extract::{ConnectInfo, State, WebSocketUpgrade},
-    http::StatusCode,
-    response::IntoResponse,
-};
-use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use sysinfo::{Disks, Networks, System};
 use tokio::process::Command;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::Mutex;
 use tokio::time::{interval, Duration};
 use tracing::{debug, warn};
 
 use crate::platform::process::CommandNoWindowExt;
+use crate::session::{SyncClient, SyncMsg};
 
 const MAX_HISTORY: usize = 60;
 
@@ -92,38 +87,35 @@ pub struct GpuData {
     pub memory_usage: f64,
 }
 
-#[derive(Serialize)]
-struct HistoryMessage {
-    r#type: &'static str,
-    data: Vec<MonitorData>,
-}
-
 #[derive(Clone)]
 pub struct MonitorState {
     history: Arc<Mutex<VecDeque<MonitorData>>>,
-    tx: broadcast::Sender<String>,
-}
-
-impl Default for MonitorState {
-    fn default() -> Self {
-        Self::new()
-    }
+    sync_clients: Arc<std::sync::Mutex<Vec<SyncClient>>>,
 }
 
 impl MonitorState {
     #[must_use]
-    pub fn new() -> Self {
-        let (tx, _) = broadcast::channel::<String>(8);
-        Self { history: Arc::new(Mutex::new(VecDeque::with_capacity(MAX_HISTORY))), tx }
+    pub fn new(sync_clients: Arc<std::sync::Mutex<Vec<SyncClient>>>) -> Self {
+        Self { history: Arc::new(Mutex::new(VecDeque::with_capacity(MAX_HISTORY))), sync_clients }
     }
 
-    #[must_use]
-    pub fn subscribe(&self) -> broadcast::Receiver<String> {
-        self.tx.subscribe()
+    pub async fn snapshot_history_values(&self) -> Vec<serde_json::Value> {
+        self.history
+            .lock()
+            .await
+            .iter()
+            .map(|d| serde_json::to_value(d).unwrap_or(serde_json::Value::Null))
+            .collect()
     }
 
-    pub async fn snapshot_history(&self) -> Vec<MonitorData> {
-        self.history.lock().await.iter().cloned().collect()
+    fn broadcast_to_sync(&self, data: &MonitorData) {
+        let msg = SyncMsg::MonitorData {
+            data: serde_json::to_value(data).unwrap_or(serde_json::Value::Null),
+        };
+        let json = serde_json::to_string(&msg).expect("serialization is infallible");
+        let mut clients =
+            self.sync_clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        clients.retain(|c| c.tx.send(json.clone()).is_ok());
     }
 
     pub fn start_collector(self) {
@@ -162,7 +154,7 @@ impl MonitorState {
                 .await;
                 prev_net = new_net;
 
-                let Ok(json) = serde_json::to_string(&data) else { continue };
+                self.broadcast_to_sync(&data);
 
                 {
                     let mut buf = self.history.lock().await;
@@ -171,8 +163,6 @@ impl MonitorState {
                     }
                     buf.push_back(data);
                 }
-
-                let _ = self.tx.send(json);
             }
         });
     }
@@ -369,64 +359,4 @@ async fn collect_gpu() -> Option<Vec<GpuData>> {
         debug!("Collected {} GPU(s)", gpus.len());
         Some(gpus)
     }
-}
-
-#[allow(clippy::unused_async)]
-pub async fn ws_monitor_handler(
-    State(state): State<MonitorState>,
-    State(settings): State<crate::settings::SettingsState>,
-    ws: WebSocketUpgrade,
-    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
-    headers: axum::http::HeaderMap,
-) -> impl IntoResponse {
-    let s = settings.read().await;
-    let allowed_origins = s.auth.allowed_origins.clone();
-    let trusted_proxies = s.auth.trusted_proxies.clone();
-    drop(s);
-    let real_ip = crate::auth::real_client_ip(&headers, addr.ip(), &trusted_proxies);
-    if !crate::auth::check_ws_origin(&headers, &allowed_origins, real_ip, &trusted_proxies) {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-    ws.on_upgrade(move |socket| handle_monitor_socket(socket, state)).into_response()
-}
-
-async fn handle_monitor_socket(socket: WebSocket, state: MonitorState) {
-    let (mut ws_tx, mut ws_rx) = socket.split();
-
-    // Send buffered history as first message
-    {
-        let buf = state.history.lock().await;
-        if !buf.is_empty() {
-            let msg = HistoryMessage { r#type: "history", data: buf.iter().cloned().collect() };
-            if let Ok(json) = serde_json::to_string(&msg) {
-                if ws_tx.send(Message::Text(json)).await.is_err() {
-                    return;
-                }
-            }
-        }
-    }
-
-    let mut rx = state.tx.subscribe();
-
-    let send_task = tokio::spawn(async move {
-        loop {
-            match rx.recv().await {
-                Ok(json) => {
-                    if ws_tx.send(Message::Text(json)).await.is_err() {
-                        break;
-                    }
-                }
-                Err(broadcast::error::RecvError::Lagged(_)) => {}
-                Err(_) => break,
-            }
-        }
-    });
-
-    while let Some(Ok(msg)) = ws_rx.next().await {
-        if let Message::Close(_) = msg {
-            break;
-        }
-    }
-
-    send_task.abort();
 }

@@ -19,7 +19,7 @@ use dinotty_server::events;
 use dinotty_server::file_watcher::{self, FileWatcherState};
 use dinotty_server::history;
 use dinotty_server::history::HistoryState;
-use dinotty_server::monitor::{self, MonitorState};
+use dinotty_server::monitor::MonitorState;
 use dinotty_server::notification::{self, NotificationBroadcast};
 use dinotty_server::platform::process::CommandNoWindowExt;
 use dinotty_server::plugin::{self, PluginManager, PluginManagerState};
@@ -483,7 +483,7 @@ pub fn run_server(
         let local_port = listener.local_addr().expect("bound listener").port();
         auth::set_session_cookie_port(local_port);
         manager.set_notify_port(local_port);
-        let monitor_state = MonitorState::new();
+        let monitor_state = MonitorState::new(Arc::clone(&manager.sync_clients));
         monitor_state.clone().start_collector();
 
         let notifier = Arc::new(NotificationBroadcast::new(Arc::clone(&manager.sync_clients)));
@@ -504,7 +504,7 @@ pub fn run_server(
                 }
             });
         }
-        let history_state = HistoryState::new();
+        let history_state = HistoryState::new(Arc::clone(&manager.sync_clients));
         let plugins = Arc::new(PluginManager::new());
         plugins.scan();
 
@@ -553,8 +553,6 @@ pub fn run_server(
             .route("/ws", get(ws::ws_handler))
             .route("/ws/sync", get(ws::sync_handler))
             .route("/ws/watch", get(file_watcher::watch_handler))
-            .route("/ws/monitor", get(monitor::ws_monitor_handler))
-            .route("/ws/history", get(history::ws_history_handler))
             // Tab/Pane management
             .route("/api/tabs", get(tabs::list_tabs).post(tabs::create_tab))
             // SSH tab routes (must be before :tab_id routes)
