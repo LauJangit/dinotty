@@ -92,6 +92,35 @@ export interface PluginContext {
     stop(pid: number): Promise<void>
     stopAll(): Promise<void>
   }
+
+  events: {
+    /**
+     * Subscribe to a named event. Returns a dispose function.
+     * The handler receives the event data and the full event envelope.
+     */
+    subscribe<T = unknown>(
+      eventName: string,
+      handler: (data: T, e: PluginEvent) => void,
+    ): Disposable
+    /**
+     * Emit an event to other clients/plugins. `plugin_id` is automatically
+     * set to this plugin's id; pass `target_plugin_id` to restrict delivery
+     * to handlers subscribed by that specific plugin.
+     */
+    emit(
+      eventName: string,
+      data: unknown,
+      opts?: { target_plugin_id?: string },
+    ): void
+  }
+}
+
+export interface PluginEvent {
+  event_name: string
+  data: unknown
+  source_pane_id?: string
+  plugin_id?: string
+  target_plugin_id?: string
 }
 
 export interface ExecOptions {

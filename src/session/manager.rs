@@ -87,6 +87,19 @@ pub enum SyncMsg {
         workspaces: Vec<Workspace>,
         active_workspace_id: Option<String>,
     },
+    Event {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_pane_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        plugin_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        target_plugin_id: Option<String>,
+        event_name: String,
+        data: serde_json::Value,
+    },
+    SyncHello {
+        client_id: String,
+    },
 }
 
 #[derive(Serialize, Clone)]

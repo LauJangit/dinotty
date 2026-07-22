@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use dinotty_server::auth;
 use dinotty_server::auth::session::SessionStore;
+use dinotty_server::events;
 use dinotty_server::file_watcher::{self, FileWatcherState};
 use dinotty_server::history;
 use dinotty_server::history::HistoryState;
@@ -617,6 +618,7 @@ pub fn run_server(
             .route("/api/workspaces/:id/activate", put(workspace_mgmt::activate_workspace))
             .route("/api/workspaces/active", delete(workspace_mgmt::deactivate_workspace))
             .route("/api/notify", post(notification::post_notify))
+            .route("/api/events/emit", post(events::emit_event))
             .route("/api/history", get(history::get_history).delete(history::delete_history))
             .route("/api/info", get(server_info))
             .route("/api/auth", post(check_auth))

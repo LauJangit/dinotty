@@ -3,6 +3,8 @@ import { reactive, ref, computed, watch, onMounted, onUnmounted, h } from 'vue'
 import { authFetch, apiUrl, wsUrlWithToken, getApiBase } from './apiBase'
 import { usePluginMonitorStore } from '../stores/pluginMonitor'
 import type { MonitorSeries } from '../stores/pluginMonitor'
+import { subscribe as eventSubscribe, emit as eventEmit } from './useEventBridge'
+import type { SyncEvent } from '../types/protocol'
 
 // Bypass Vite's static analysis of import()
 // eslint-disable-next-line no-new-func
@@ -146,6 +148,15 @@ export interface PluginContext {
     ): Promise<Uint8Array>
     toHex(bytes: Uint8Array): string
     fromHex(hex: string): Uint8Array
+  }
+
+  events: {
+    subscribe<T = unknown>(eventName: string, handler: (data: T, e: SyncEvent) => void): () => void
+    emit(
+      eventName: string,
+      data: unknown,
+      opts?: { target_plugin_id?: string },
+    ): void
   }
 }
 
@@ -411,6 +422,12 @@ function createPluginContext(pluginId: string): PluginContext {
     },
     open() {
       window.__dinotty_open_plugin?.(pluginId)
+    },
+    events: {
+      subscribe: <T = unknown>(name: string, handler: (data: T, e: SyncEvent) => void) =>
+        eventSubscribe(name, handler, { pluginId: pluginId }),
+      emit: (name: string, data: unknown, opts?: { target_plugin_id?: string }) =>
+        eventEmit(name, data, { plugin_id: pluginId, ...opts }),
     },
   }
 

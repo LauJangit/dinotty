@@ -189,6 +189,8 @@ export type SyncServerMsg =
   | SyncWorkspaceActivated
   | SyncWorkspaceReordered
   | SyncWorkspaceList
+  | SyncEvent
+  | SyncHello
 
 export interface SyncCreateTab {
   type: 'create_tab'
@@ -223,6 +225,20 @@ export interface SyncSshAuthResponse {
   type: 'ssh_auth_response'
   pane_id: string
   responses: string[]
+}
+
+export interface SyncEvent {
+  type: 'event'
+  event_name: string
+  data: unknown
+  source_pane_id?: string
+  plugin_id?: string
+  target_plugin_id?: string
+}
+
+export interface SyncHello {
+  type: 'sync_hello'
+  client_id: string
 }
 
 export type SyncClientMsg =

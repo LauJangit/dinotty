@@ -1,6 +1,6 @@
 import { nextTick } from 'vue'
 import { storeToRefs } from 'pinia'
-import type { SyncServerMsg, SyncClientMsg } from '../types/protocol'
+import type { SyncServerMsg, SyncClientMsg, SyncEvent } from '../types/protocol'
 import type { Tab, TerminalTab } from '../types/pane'
 import { getAllLeaves, findLeaf, migrateTab, migratePreviewToLeaf, ensureSplitRoot } from '../types/pane'
 import {
@@ -24,6 +24,21 @@ import { clearFileWorkspaceState } from './useFileWorkspaceState'
 import { pickSuccessorTab } from '../utils/tabSuccessor'
 import { currentRevealNavGen, nextRevealNavGen } from '../utils/navGen'
 import type TerminalPane from '../components/terminal/TerminalPane.vue'
+
+type SyncEventHandler = (e: SyncEvent) => void
+const eventHandlers = new Set<SyncEventHandler>()
+let currentClientId: string | null = null
+
+export function onEvent(handler: SyncEventHandler): () => void {
+  eventHandlers.add(handler)
+  return () => {
+    eventHandlers.delete(handler)
+  }
+}
+
+export function getClientId(): string | null {
+  return currentClientId
+}
 
 export function useSyncWebSocket(opts: {
   termRefs: Record<string, InstanceType<typeof TerminalPane>>
@@ -501,6 +516,10 @@ export function useSyncWebSocket(opts: {
           if (ws) ws.order = i
         }
         workspaces.value.sort((a, b) => a.order - b.order)
+      } else if (msg.type === 'sync_hello') {
+        currentClientId = msg.client_id
+      } else if (msg.type === 'event') {
+        eventHandlers.forEach((h) => h(msg))
       }
     }
 

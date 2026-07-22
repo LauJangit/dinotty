@@ -88,6 +88,13 @@ async fn handle_sync_socket(
     // broadcasts that happen between tab_list and registration.
     let (client_id, mut rx) = manager.add_sync_client();
 
+    // Send client_id to the client first (for echo suppression in HTTP POST emit)
+    let hello = serde_json::to_string(&SyncMsg::SyncHello { client_id: client_id.clone() })
+        .expect("serialization is infallible");
+    if ws_out_tx.send(Message::Text(hello)).is_err() {
+        return;
+    }
+
     // Send current tab list with active tab
     let (tabs, active_pane_id) = manager.tab_list();
     let tab_list = SyncMsg::TabList { tabs, active_pane_id };

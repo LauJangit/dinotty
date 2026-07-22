@@ -75,6 +75,8 @@ A plugin's JS entry exports an `activate(context)` function. The `context` objec
 | | `ui.confirm(message)` | Show a confirm dialog, returns `Promise<boolean>` |
 | **Settings** | `settings.get()` | Read app settings |
 | | `settings.onDidChange(cb)` | Subscribe to settings changes |
+| **Events** | `events.subscribe(name, handler)` | Subscribe to a named event, returns `Disposable` |
+| | `events.emit(name, data, opts?)` | Emit an event (auto-stamps `plugin_id`; `opts.target_plugin_id` restricts to a specific plugin) |
 
 The return value of `activate(context)` may include:
 - `component`: A Vue component rendered in the plugin tab

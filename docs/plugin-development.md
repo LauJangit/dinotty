@@ -14,6 +14,7 @@
 - [命令面板集成](#命令面板集成)
 - [持久化存储](#持久化存储)
 - [调用 CLI 工具](#调用-cli-工具)
+- [事件订阅](#事件订阅)
 - [TypeScript 支持](#typescript-支持)
 - [开发工作流](#开发工作流)
 - [打包与分发](#打包与分发)
@@ -267,6 +268,58 @@ const d = ctx.settings.onDidChange((s) => {
   console.log('主题变更为', s.theme)
 })
 d.dispose()
+```
+
+### 事件订阅
+
+`ctx.events` 提供跨 pane / 跨插件 / 跨客户端的事件订阅能力。事件通过 `/ws/sync` 下行，emit 走 HTTP POST 到 `/api/events/emit`。
+
+```js
+// 订阅事件，返回 Disposable
+const d = ctx.events.subscribe('terminal:cwd-changed', (data, e) => {
+  console.log('cwd 变更:', data.path)
+  console.log('来源 plugin_id:', e.plugin_id)
+})
+d.dispose()  // 取消订阅
+
+// 发射事件（自动带本插件的 plugin_id）
+ctx.events.emit('my-plugin:action', { type: 'refresh' })
+
+// 定向发给某个插件（其他插件不收到）
+ctx.events.emit('my-plugin:query', { q: 'hello' }, { target_plugin_id: 'target-plugin' })
+```
+
+**事件信封字段**（handler 第二个参数 `e`）：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `event_name` | string | 事件名 |
+| `data` | unknown | 事件数据 |
+| `plugin_id` | string? | 发送方插件 id（ctx.events.emit 自动填充） |
+| `source_pane_id` | string? | 发送方 pane id（Step 0 暂不自动填充，可放进 `data`） |
+| `target_plugin_id` | string? | 目标插件 id。存在时，只有 `target_plugin_id` 匹配的插件的 handler 会被触发 |
+
+**语义要点**：
+
+- **回声抑制**：emit 方不会收到自己发出的事件（后端按 client_id 排除发送方）。
+- **跨客户端广播**：事件会广播给所有浏览器窗口的 sync client，非仅"同 tab 内"。需要限制同 tab 内时，由 plugin 自行在 `data` 中携带 tab 标识并在 handler 中过滤。
+- **target_plugin_id 过滤在前端**：后端将事件（含 `target_plugin_id`）广播给所有客户端，前端 EventBridge 只触发 `target_plugin_id` 匹配的插件的 handler。未带 `target_plugin_id` 的事件触发所有订阅者。
+- **命名约定**：插件事件用 `plugin:{id}:{name}` 前缀（如 `plugin:cc-switch:provider-changed`），终端事件用 `terminal:{name}` 前缀，避免命名冲突。
+
+**示例：两个插件通信**
+
+```js
+// provider-plugin/main.js
+export function activate(ctx) {
+  ctx.events.emit('plugin:provider:changed', { provider: 'anthropic' })
+}
+
+// consumer-plugin/main.js
+export function activate(ctx) {
+  ctx.events.subscribe('plugin:provider:changed', (data) => {
+    ctx.ui.notify(`切换到 ${data.provider}`, 'info')
+  })
+}
 ```
 
 ---

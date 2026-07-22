@@ -1,8 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 
 use dinotty_server::{
-    agent, audit, auth, file_watcher, history, mcp, monitor, notification, openapi, plugin, proxy,
-    session, settings, tabs, token, webhook, workspace, workspace_mgmt, ws,
+    agent, audit, auth, events, file_watcher, history, mcp, monitor, notification, openapi, plugin,
+    proxy, session, settings, tabs, token, webhook, workspace, workspace_mgmt, ws,
 };
 
 use axum::{
@@ -771,6 +771,7 @@ async fn main() {
             .route("/ws/monitor", get(monitor::ws_monitor_handler))
             .route("/ws/notify", get(ws::notification_ws_handler))
             .route("/api/notify", post(notification::post_notify))
+            .route("/api/events/emit", post(events::emit_event))
             .route("/api/input", post(ws::post_input))
             // Open API
             .route("/api/sessions", get(openapi::list_sessions))
