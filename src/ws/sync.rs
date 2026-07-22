@@ -111,17 +111,6 @@ async fn handle_sync_socket(
     // broadcasts via this sync WS (replaces the former /ws/notify channel).
     notifier.register_client(&client_id);
 
-    // Send workspace list BEFORE tab_list so the frontend knows the active
-    // workspace before it decides whether to auto-create a tab (which depends
-    // on activeWorkspacePath).
-    {
-        let ws = workspaces.read().await;
-        let active_workspace_id = settings.read().await.active_workspace_id.clone();
-        let workspace_list = SyncMsg::WorkspaceList { workspaces: ws.clone(), active_workspace_id };
-        let msg = serde_json::to_string(&workspace_list).expect("serialization is infallible");
-        let _ = ws_out_tx.send(Message::Text(msg));
-    }
-
     // Send current tab list with active tab
     let (tabs, active_pane_id) = manager.tab_list();
     let tab_list = SyncMsg::TabList { tabs, active_pane_id };
@@ -146,6 +135,15 @@ async fn handle_sync_socket(
         if ws_out_tx.send(Message::Text(msg)).is_err() {
             return;
         }
+    }
+
+    // Send current workspace list with active workspace
+    {
+        let ws = workspaces.read().await;
+        let active_workspace_id = settings.read().await.active_workspace_id.clone();
+        let workspace_list = SyncMsg::WorkspaceList { workspaces: ws.clone(), active_workspace_id };
+        let msg = serde_json::to_string(&workspace_list).expect("serialization is infallible");
+        let _ = ws_out_tx.send(Message::Text(msg));
     }
 
     // Use mpsc channel to bridge broadcast messages and direct responses to the WebSocket
