@@ -9,16 +9,8 @@ use std::sync::Arc;
 
 use crate::{platform::process::CommandNoWindowExt, session::SessionManager};
 
+use super::util::try_res;
 use super::{get_root, json_err, normalize_join, PanePathQuery, PaneQuery};
-
-macro_rules! try_res {
-    ($e:expr) => {
-        match $e {
-            Ok(v) => v,
-            Err(e) => return e,
-        }
-    };
-}
 
 fn git_command() -> std::process::Command {
     let mut command = std::process::Command::new("git");

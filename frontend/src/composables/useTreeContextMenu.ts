@@ -1,4 +1,4 @@
-import { ref, computed, type Ref } from 'vue'
+import { ref, computed, nextTick, type Ref } from 'vue'
 import { copyToClipboard } from '../utils/clipboard'
 import { uiConfirm } from './useConfirm'
 import type { DirEntry } from '../components/workspace/TreeRows'
@@ -36,6 +36,7 @@ export function useTreeContextMenu(opts: {
   onSelectDir: (rel: string) => void
   triggerUpload: () => void
   downloadFile: (rel: string) => Promise<void>
+  paneId: () => string
   t: (key: string) => string
 }) {
   const contextMenu = ref<{ x: number; y: number; rel: string; isDir: boolean } | null>(null)
@@ -191,7 +192,7 @@ export function useTreeContextMenu(opts: {
 
   function ctxUpload() {
     closeContextMenu()
-    opts.triggerUpload()
+    nextTick(() => opts.triggerUpload())
   }
 
   async function ctxDownload() {
@@ -202,6 +203,18 @@ export function useTreeContextMenu(opts: {
     const targetRel = rel || opts.selectedRel.value
     if (!targetRel) return
     await opts.downloadFile(targetRel)
+  }
+
+  async function ctxReveal() {
+    if (!contextMenu.value) return
+    const { rel } = contextMenu.value
+    closeContextMenu()
+    const targetRel = rel || opts.selectedRel.value
+    if (!targetRel) return
+    const { getApiBase, apiUrl, authFetch } = await import('./apiBase')
+    await getApiBase()
+    const q = new URLSearchParams({ pane_id: opts.paneId(), path: targetRel })
+    await authFetch(apiUrl(`/api/workspace/reveal?${q}`), { method: 'GET' })
   }
 
   function ctxCopyPath() {
@@ -313,6 +326,7 @@ export function useTreeContextMenu(opts: {
     ctxCopyPath,
     ctxInsertToTerminal,
     ctxRunCode,
+    ctxReveal,
     onMoveEntry,
     onMoveConfirm,
     onMoveCancel,

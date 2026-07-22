@@ -1,6 +1,7 @@
 export interface KeyDef {
   l: string // label
   s?: string // send character
+  act?: string // app action id
   sl?: string // shift label
   sp?: string // special action
   g?: number // flex-grow
@@ -8,6 +9,8 @@ export interface KeyDef {
   id?: string // DOM id
   repeat?: boolean // key repeat
   icon?: object // lucide icon component
+  aria?: string // accessible name
+  disabled?: boolean // render as inert (unsupported action, etc.)
 }
 
 export interface ModState {

@@ -5,7 +5,6 @@
       <Motion
         :key="cardsKey"
         class="mc-grid"
-        :style="gridStyle"
         :initial="{ opacity: 0, x: switchDirection === 'right' ? 20 : -20 }"
         :animate="{ opacity: 1, x: 0, transition: { duration: 0.18, ease: 'easeOut' } }"
         :exit="{ opacity: 0, transition: { duration: 0.1, ease: 'easeOut' } }"
@@ -90,7 +89,6 @@
       <Motion
         key="card-grid"
         class="mc-grid"
-        :style="gridStyle"
         :initial="{ scale: 0.96, opacity: 0 }"
         :animate="{ scale: 1, opacity: 1, transition: { duration: 0.18, ease: 'easeOut' } }"
         :exit="{ scale: 0.96, opacity: 0, transition: { duration: 0.1, ease: 'easeOut' } }"
@@ -162,12 +160,22 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { Motion, AnimatePresence } from 'motion-v'
-import { X, Puzzle, Pencil, Square, Plus } from 'lucide-vue-next'
+import {
+  X,
+  Puzzle,
+  Pencil,
+  Square,
+  Plus,
+  Layers,
+  ArrowLeftToLine,
+  ArrowRightToLine,
+} from 'lucide-vue-next'
 import type { TabCard, PanePreviewNode } from '../../composables/useTabPreview'
 import SplitPreviewNode from './SplitPreviewNode.vue'
 import ContextMenu from '../ui/ContextMenu.vue'
 import type { ContextMenuItem } from '../ui/ContextMenu.vue'
 import { useI18n } from '../../composables/useI18n'
+import { uiConfirm } from '../../composables/useConfirm'
 import { uiPrompt } from '../../composables/usePrompt'
 
 const { t } = useI18n()
@@ -195,6 +203,7 @@ const emit = defineEmits<{
   close: []
   activate: [paneId: string]
   'close-tab': [paneId: string]
+  'close-tabs': [paneIds: string[]]
   'rename-tab': [paneId: string, title: string]
   'new-tab': []
 }>()
@@ -208,6 +217,36 @@ const ctxItems = ref<ContextMenuItem[]>([])
 function openCardCtx(e: MouseEvent, card: TabCard) {
   ctxX.value = e.clientX
   ctxY.value = e.clientY
+  const idx = props.cards.findIndex((c) => c.paneId === card.paneId)
+  const workspaceTabs = props.cards.filter((c) => c.type !== 'plugin')
+  const leftTabs = props.cards.slice(0, idx).filter((c) => c.type !== 'plugin')
+  const rightTabs = props.cards.slice(idx + 1).filter((c) => c.type !== 'plugin')
+  const closeWorkspaceLabel = t('overview.closeWorkspaceTabs')
+  const closeLeftLabel = t('overview.closeTabsLeft')
+  const closeRightLabel = t('overview.closeTabsRight')
+
+  async function confirmCloseTabs(label: string, targets: TabCard[]) {
+    const ok = await uiConfirm(
+      t('overview.confirmCloseTabs').replace('{count}', String(targets.length)),
+      {
+        title: label,
+        confirmText: t('overview.closeTabsConfirm'),
+        cancelText: t('filePreview.cancel'),
+      },
+    )
+    if (!ok) return
+    emit('close-tabs', targets.map((c) => c.paneId))
+  }
+
+  function currentSideTabs(side: 'left' | 'right'): TabCard[] | null {
+    const currentCards = props.cards
+    const currentIdx = currentCards.findIndex((c) => c.paneId === card.paneId)
+    if (currentIdx === -1) return null
+    const sideCards =
+      side === 'left' ? currentCards.slice(0, currentIdx) : currentCards.slice(currentIdx + 1)
+    return sideCards.filter((c) => c.type !== 'plugin')
+  }
+
   ctxItems.value = [
     {
       label: t('palette.rename'),
@@ -223,7 +262,36 @@ function openCardCtx(e: MouseEvent, card: TabCard) {
       },
     },
     {
-      label: 'Close',
+      label: closeWorkspaceLabel,
+      icon: Layers,
+      disabled: workspaceTabs.length === 0,
+      action: () => confirmCloseTabs(
+        closeWorkspaceLabel,
+        props.cards.filter((c) => c.type !== 'plugin'),
+      ),
+    },
+    {
+      label: closeLeftLabel,
+      icon: ArrowLeftToLine,
+      disabled: leftTabs.length === 0,
+      action: () => {
+        const targets = currentSideTabs('left')
+        if (targets === null) return
+        void confirmCloseTabs(closeLeftLabel, targets)
+      },
+    },
+    {
+      label: closeRightLabel,
+      icon: ArrowRightToLine,
+      disabled: rightTabs.length === 0,
+      action: () => {
+        const targets = currentSideTabs('right')
+        if (targets === null) return
+        void confirmCloseTabs(closeRightLabel, targets)
+      },
+    },
+    {
+      label: t('overview.closeTab'),
       icon: Square,
       danger: true,
       action: () => emit('close-tab', card.paneId),
@@ -253,17 +321,6 @@ function getCols(): number {
   if (w >= 480) return COLS_MD
   return COLS_SM
 }
-
-const gridStyle = computed(() => {
-  // +1 accounts for the trailing "add" card so empty workspaces still occupy one cell
-  const n = props.cards.length + 1
-  return {
-    '--mc-rows': Math.ceil(n / COLS_SM),
-    '--mc-rows-md': Math.ceil(n / COLS_MD),
-    '--mc-rows-lg': Math.ceil(n / COLS_LG),
-    '--mc-rows-xl': Math.ceil(n / COLS_XL),
-  }
-})
 
 // Reset focused index when overlay opens; mark closing when overlay starts to dismiss
 watch(
@@ -302,32 +359,54 @@ function onKeydown(e: KeyboardEvent) {
   const tabCount = props.cards.length
   const total = tabCount + 1
   const cols = getCols()
-  const rows = Math.ceil(total / cols)
   const cur = focusedIndex.value
-  const col = Math.floor(cur / rows)
-  const row = cur % rows
+  const row = Math.floor(cur / cols)
+  const col = cur % cols
+  const lastRow = Math.floor((total - 1) / cols)
 
   switch (e.key) {
     case 'ArrowUp':
       e.preventDefault()
-      focusedIndex.value = row > 0 ? cur - 1 : cur + rows - 1
+      if (row > 0) {
+        focusedIndex.value = cur - cols
+      } else {
+        // Wrap to last row, same col (clamp to last cell if col is out of range)
+        const target = lastRow * cols + col
+        focusedIndex.value = target < total ? target : total - 1
+      }
       break
     case 'ArrowDown':
       e.preventDefault()
-      focusedIndex.value = row < rows - 1 && cur + 1 < total ? cur + 1 : col * rows
+      if (row < lastRow) {
+        const target = cur + cols
+        focusedIndex.value = target < total ? target : total - 1
+      } else {
+        // Wrap to first row, same col
+        focusedIndex.value = col < total ? col : 0
+      }
       break
     case 'ArrowLeft':
       e.preventDefault()
       if (col > 0) {
-        const target = cur - rows
-        focusedIndex.value = target >= 0 ? target : 0
+        focusedIndex.value = cur - 1
+      } else if (row > 0) {
+        // Wrap to end of previous row
+        focusedIndex.value = row * cols - 1
+      } else {
+        // At the very first cell — wrap to last cell
+        focusedIndex.value = total - 1
       }
       break
     case 'ArrowRight':
       e.preventDefault()
-      if (col < cols - 1) {
-        const target = cur + rows
-        focusedIndex.value = target < total ? target : total - 1
+      if (col < cols - 1 && cur + 1 < total) {
+        focusedIndex.value = cur + 1
+      } else if (row < lastRow) {
+        // Wrap to start of next row
+        focusedIndex.value = (row + 1) * cols
+      } else {
+        // At the very last cell — wrap to first cell
+        focusedIndex.value = 0
       }
       break
     case 'Enter':

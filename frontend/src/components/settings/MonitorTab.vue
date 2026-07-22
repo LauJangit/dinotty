@@ -46,7 +46,7 @@
           >
         </div>
       </div>
-      <div v-else class="disk-info"><span class="disk-val">—</span></div>
+      <div v-else class="disk-info"><span class="disk-val">-</span></div>
     </div>
 
     <div class="settings-group">
@@ -90,7 +90,29 @@
         </div>
       </div>
       <div v-if="!settings.monitor.gpu || !hasGpu" class="disk-info">
-        <span class="disk-val">—</span>
+        <span class="disk-val">-</span>
+      </div>
+    </div>
+
+    <div v-if="visiblePluginSeries.length" class="settings-group">
+      <div class="chart-header">
+        <h3>{{ t('settings.monitor.pluginMetrics') }}</h3>
+      </div>
+      <div v-for="s in visiblePluginSeries" :key="s.id" class="plugin-series-block">
+        <div class="chart-header">
+          <h3 class="plugin-series-title">{{ s.label }}</h3>
+          <label class="toggle">
+            <input
+              type="checkbox"
+              :checked="pluginSeriesVisible(s)"
+              @change="setPluginSeriesVisible(s, ($event.target as HTMLInputElement).checked)"
+            />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+        <div class="chart-wrap">
+          <Line :data="pluginChartData(s)" :options="pluginChartOptions(s)" />
+        </div>
       </div>
     </div>
   </div>
@@ -110,7 +132,6 @@ import {
 } from 'chart.js'
 import { Line } from 'vue-chartjs'
 import { useSettings } from '../../composables/useSettings'
-import { effectiveTheme } from '../../composables/useDeviceThemeSelection'
 import { useI18n } from '../../composables/useI18n'
 import { monitorData } from '../../composables/useMonitor'
 import {
@@ -121,12 +142,23 @@ import {
   gpuUtilHistory,
   gpuMemHistory,
 } from '../../composables/useMonitor'
+import {
+  baseOptions,
+  pctChartOptions,
+  autoChartOptions,
+  netChartOptions,
+  gpuColors,
+  fmtBytes,
+  labelsFor,
+} from '../../composables/useChartOptions'
+import { usePluginMonitorStore, type RegisteredSeries } from '../../stores/pluginMonitor'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip)
 
 const { settings, saveSettings } = useSettings()
 const { t } = useI18n()
 const data = monitorData
+const pluginMonitor = usePluginMonitorStore()
 
 const hasGpu = computed(() => (data.value?.gpu?.length ?? 0) > 0)
 
@@ -137,91 +169,10 @@ watch(hasGpu, (available) => {
   }
 })
 
-const labels = computed(() => cpuHistory.value.map(() => ''))
-
-const gpuColors = [
-  '#76b900',
-  '#00a8e8',
-  '#e84040',
-  '#f59e0b',
-  '#8b5cf6',
-  '#34d399',
-  '#f472b6',
-  '#fbbf24',
-  '#60a5fa',
-  '#a78bfa',
-]
-
-/** Read CSS variable from the document root (canvas cannot resolve var()). */
-function cssVar(name: string, fallback: string): string {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
-}
-
-// Access theme preset to create a reactive dependency — re-evaluates on theme change.
-const baseOptions = computed(() => {
-  void effectiveTheme.value
-  const borderColor = cssVar('--border', '#3C3C3C')
-  const fgMuted = cssVar('--fg-muted', '#858585')
-  return {
-    responsive: true,
-    maintainAspectRatio: false,
-    animation: { duration: 0 } as const,
-    plugins: { legend: { display: false }, tooltip: { enabled: false } },
-    elements: { point: { radius: 0 }, line: { tension: 0.3, borderWidth: 1.5 } },
-    scales: {
-      x: { display: false },
-      y: {
-        min: 0,
-        grid: { color: borderColor },
-        ticks: { color: fgMuted, font: { size: 10 } },
-      },
-    },
-  }
-})
-
-const pctChartOptions = computed(() => ({
-  ...baseOptions.value,
-  scales: { ...baseOptions.value.scales, y: { ...baseOptions.value.scales.y, max: 100 } },
-}))
-
-const autoChartOptions = computed(() => ({
-  ...baseOptions.value,
-  scales: {
-    ...baseOptions.value.scales,
-    y: { ...baseOptions.value.scales.y, beginAtZero: true },
-  },
-}))
-
-function fmtRate(v: number): string {
-  if (v < 1024) return `${v}B/s`
-  if (v < 1024 * 1024) return `${(v / 1024).toFixed(0)}K/s`
-  return `${(v / 1024 / 1024).toFixed(1)}M/s`
-}
-
-function fmtBytes(b: number): string {
-  if (b < 1024) return `${b}B`
-  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)}K`
-  if (b < 1024 * 1024 * 1024) return `${(b / 1024 / 1024).toFixed(1)}M`
-  return `${(b / 1024 / 1024 / 1024).toFixed(1)}G`
-}
-
-const netChartOptions = computed(() => ({
-  ...baseOptions.value,
-  plugins: { legend: { display: false }, tooltip: { enabled: false } },
-  scales: {
-    ...baseOptions.value.scales,
-    y: {
-      ...baseOptions.value.scales.y,
-      ticks: {
-        ...baseOptions.value.scales.y.ticks,
-        callback: (v: number | string) => fmtRate(Number(v)),
-      },
-    },
-  },
-}))
+void baseOptions
 
 const cpuChartData = computed(() => ({
-  labels: labels.value,
+  labels: labelsFor(cpuHistory.value.length),
   datasets: [
     {
       data: [...cpuHistory.value],
@@ -233,7 +184,7 @@ const cpuChartData = computed(() => ({
 }))
 
 const memChartData = computed(() => ({
-  labels: labels.value,
+  labels: labelsFor(memHistory.value.length),
   datasets: [
     {
       data: [...memHistory.value],
@@ -245,7 +196,7 @@ const memChartData = computed(() => ({
 }))
 
 const netChartData = computed(() => ({
-  labels: labels.value,
+  labels: labelsFor(netTxHistory.value.length),
   datasets: [
     {
       data: [...netTxHistory.value],
@@ -263,7 +214,7 @@ const netChartData = computed(() => ({
 }))
 
 const gpuChartData = computed(() => ({
-  labels: labels.value,
+  labels: labelsFor(gpuUtilHistory.value[0]?.length ?? 0),
   datasets: gpuUtilHistory.value.map((hist, i) => ({
     data: [...hist],
     borderColor: gpuColors[i % gpuColors.length],
@@ -274,7 +225,7 @@ const gpuChartData = computed(() => ({
 }))
 
 const gpuMemChartData = computed(() => ({
-  labels: labels.value,
+  labels: labelsFor(gpuMemHistory.value[0]?.length ?? 0),
   datasets: gpuMemHistory.value.map((hist, i) => ({
     data: [...hist],
     borderColor: gpuColors[i % gpuColors.length],
@@ -283,6 +234,60 @@ const gpuMemChartData = computed(() => ({
     fill: false,
   })),
 }))
+
+// ─── Plugin-contributed series ──────────────────────────────────────────────
+
+const visiblePluginSeries = computed(() =>
+  pluginMonitor.series.filter((s) => pluginMonitor.isConfigurable(s)),
+)
+
+function pluginSeriesVisible(s: RegisteredSeries): boolean {
+  const override = settings.monitor.plugin_series[s.id]
+  if (override !== undefined) return override
+  return s.defaultVisible ?? true
+}
+
+function setPluginSeriesVisible(s: RegisteredSeries, visible: boolean) {
+  settings.monitor.plugin_series[s.id] = visible
+  saveSettings()
+}
+
+function pluginChartData(s: RegisteredSeries) {
+  const history = s.history
+  const labels = labelsFor(history[0]?.length ?? 0)
+  if (history.length === 1) {
+    return {
+      labels,
+      datasets: [
+        {
+          data: [...history[0]],
+          borderColor: s.color ?? '#8A8A8A',
+          backgroundColor: 'rgba(138,138,138,0.1)',
+          fill: true,
+        },
+      ],
+    }
+  }
+  const ms = s.multiSeries?.()
+  return {
+    labels,
+    datasets: history.map((h, i) => {
+      const color = ms?.[i]?.color ?? gpuColors[i % gpuColors.length]
+      return {
+        label: ms?.[i]?.label,
+        data: [...h],
+        borderColor: color,
+        backgroundColor: 'transparent',
+        borderWidth: 1.5,
+        fill: false,
+      }
+    }),
+  }
+}
+
+function pluginChartOptions(s: RegisteredSeries) {
+  return s.scale === 'percent' ? pctChartOptions.value : autoChartOptions.value
+}
 </script>
 
 <style scoped>
@@ -320,5 +325,14 @@ const gpuMemChartData = computed(() => ({
   font-variant-numeric: tabular-nums;
   color: var(--fg-muted);
   font-size: 12px;
+}
+.plugin-series-block {
+  margin-bottom: 12px;
+}
+.plugin-series-title {
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
 }
 </style>

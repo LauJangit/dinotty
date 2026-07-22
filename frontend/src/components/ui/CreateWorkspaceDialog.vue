@@ -3,7 +3,7 @@
     <div v-if="visible" class="cw-backdrop" @click.self="$emit('close')">
       <div class="cw-modal">
         <div class="cw-header">
-          <span class="cw-title">{{ isEdit ? t('palette.rename') : t('workspace.add') }}</span>
+          <span class="cw-title">{{ dialogTitle }}</span>
           <button class="cw-close" @click="$emit('close')">&times;</button>
         </div>
         <div class="cw-body">
@@ -26,7 +26,7 @@
           </template>
 
           <!-- SSH connection selector (remote mode) -->
-          <template v-if="mode === 'remote'">
+          <template v-if="mode === 'remote' && !isDefaultWorkspace">
             <label class="cw-label">{{ t('workspace.connection') }}</label>
             <select v-model="selectedConnectionId" class="cw-input cw-select">
               <option value="" disabled>{{ t('workspace.connectionNone') }}</option>
@@ -52,11 +52,11 @@
                 ref="pathInput"
                 v-model="path"
                 class="cw-input"
-                :disabled="isEdit"
+                :disabled="isEdit && !isDefaultWorkspace"
                 placeholder="/Users/me/projects/my-app"
                 @keydown.enter="onSubmit"
               />
-              <button v-if="!isEdit" class="cw-browse-btn" @click="toggleBrowser">
+              <button v-if="!isEdit || isDefaultWorkspace" class="cw-browse-btn" @click="toggleBrowser">
                 <FolderOpen :size="14" />
               </button>
             </div>
@@ -70,6 +70,47 @@
             @keydown.enter="onSubmit"
           />
 
+          <label class="cw-label"
+            >{{ t('workspace.abbr') }}
+            <span class="cw-optional">{{ t('workspace.abbrHint') }}</span></label
+          >
+          <input
+            v-model="abbr"
+            class="cw-input"
+            :placeholder="monogramPlaceholder"
+            maxlength="3"
+            @keydown.enter="onSubmit"
+          />
+
+          <label class="cw-label">{{ t('workspace.color') }}</label>
+          <div class="cw-color-row">
+            <button
+              v-for="preset in WORKSPACE_COLORS"
+              :key="preset"
+              type="button"
+              :class="['cw-color-swatch', { selected: color === preset }]"
+              :style="{ backgroundColor: preset }"
+              :aria-label="preset"
+              @click="color = preset"
+            />
+            <input
+              v-model="color"
+              class="cw-input cw-color-input"
+              placeholder="#RRGGBB"
+              maxlength="7"
+              @keydown.enter="onSubmit"
+            />
+            <button type="button" class="cw-default-btn" @click="color = ''">
+              {{ t('workspace.colorDefault') }}
+            </button>
+          </div>
+          <label v-if="isDefaultWorkspace" class="cw-checkbox-row">
+            <input v-model="allowTabBadge" type="checkbox" />
+            <span>
+              <span class="cw-checkbox-label">{{ t('workspace.allowTabBadge') }}</span>
+              <span class="cw-checkbox-hint">{{ t('workspace.allowTabBadgeHint') }}</span>
+            </span>
+          </label>
           <p v-if="error" class="cw-error">{{ error }}</p>
         </div>
         <div class="cw-footer">
@@ -82,7 +123,7 @@
     </div>
 
     <FilePickerModal
-      v-if="!isEdit"
+      v-if="!isEdit || isDefaultWorkspace"
       :visible="showPicker"
       pane-id=""
       :root="pickerRoot"
@@ -97,18 +138,18 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import { FolderOpen } from 'lucide-vue-next'
 import { useI18n } from '../../composables/useI18n'
-import { useWorkspaces } from '../../composables/useWorkspaces'
+import { DEFAULT_WORKSPACE_ID, useWorkspaces } from '../../composables/useWorkspaces'
 import { useSettings } from '../../composables/useSettings'
 import { isTauri, tauriInvoke } from '../../composables/useTransport'
 import type { Workspace } from '../../types/workspace'
+import { autoMonogram, WORKSPACE_COLORS } from '../../utils/workspaceIcon'
 import FilePickerModal from '../preview/FilePickerModal.vue'
 
 const { t } = useI18n()
 const { createWorkspace, updateWorkspace } = useWorkspaces()
-const { settings } = useSettings()
+const { settings, saveSettings } = useSettings()
 
 const sshProfiles = computed(() => settings.ssh_profiles ?? [])
-const pickerRoot = computed(() => settings.default_base_dir?.trim() || '/')
 
 const props = defineProps<{
   visible: boolean
@@ -121,41 +162,75 @@ const emit = defineEmits<{
 }>()
 
 const isEdit = computed(() => !!props.workspace)
+const isDefaultWorkspace = computed(() => props.workspace?.id === DEFAULT_WORKSPACE_ID)
+const dialogTitle = computed(() => {
+  if (isDefaultWorkspace.value) return t('workspace.editDefault')
+  return isEdit.value ? t('palette.rename') : t('workspace.add')
+})
 
 const mode = ref<'local' | 'remote'>('local')
 const selectedConnectionId = ref('')
 const remotePath = ref('/home')
 const path = ref('')
 const name = ref('')
+const abbr = ref('')
+const color = ref<string | undefined>(undefined)
+const allowTabBadge = ref(true)
 const error = ref('')
 const pathInput = ref<HTMLInputElement | null>(null)
 const showPicker = ref(false)
+const monogramPlaceholder = computed(() => autoMonogram(name.value || ''))
+const pickerRoot = computed(() =>
+  (isDefaultWorkspace.value ? path.value.trim() : '')
+  || settings.default_base_dir?.trim()
+  || '/'
+)
 
 const canSubmit = computed(() => {
+  if (isDefaultWorkspace.value) return true
   if (isEdit.value) return !!name.value.trim()
   if (mode.value === 'remote') return !!selectedConnectionId.value && !!remotePath.value.trim()
   return !!path.value.trim()
 })
 
-watch(() => props.visible, (v) => {
-  if (v) {
-    if (props.workspace) {
-      path.value = props.workspace.path
-      name.value = props.workspace.name
-      mode.value = props.workspace.connection_id ? 'remote' : 'local'
-      selectedConnectionId.value = props.workspace.connection_id ?? ''
-      remotePath.value = props.workspace.path
-    } else {
-      path.value = ''
-      name.value = ''
-      mode.value = 'local'
-      selectedConnectionId.value = ''
-      remotePath.value = '/home'
+watch(
+  () => props.visible,
+  (v) => {
+    if (v) {
+      if (props.workspace) {
+        path.value = isDefaultWorkspace.value
+          ? settings.default_workspace_root ?? ''
+          : props.workspace.path
+        name.value = isDefaultWorkspace.value
+          ? settings.default_workspace_name ?? ''
+          : props.workspace.name
+        abbr.value = isDefaultWorkspace.value
+          ? settings.default_workspace_abbr ?? ''
+          : props.workspace.abbr ?? ''
+        color.value = isDefaultWorkspace.value
+          ? settings.default_workspace_color ?? undefined
+          : props.workspace.color
+        allowTabBadge.value = isDefaultWorkspace.value
+          ? settings.default_workspace_tab_badge !== false
+          : true
+        mode.value = props.workspace.connection_id && !isDefaultWorkspace.value ? 'remote' : 'local'
+        selectedConnectionId.value = props.workspace.connection_id ?? ''
+        remotePath.value = props.workspace.path
+      } else {
+        path.value = ''
+        name.value = ''
+        abbr.value = ''
+        color.value = undefined
+        allowTabBadge.value = true
+        mode.value = 'local'
+        selectedConnectionId.value = ''
+        remotePath.value = '/home'
+      }
+      error.value = ''
+      nextTick(() => pathInput.value?.focus())
     }
-    error.value = ''
-    nextTick(() => pathInput.value?.focus())
-  }
-})
+  },
+)
 
 async function toggleBrowser() {
   if (isTauri()) {
@@ -173,7 +248,7 @@ async function toggleBrowser() {
 function onPickerSelect(selected: string) {
   path.value = selected
   showPicker.value = false
-  autoFillName()
+  if (!isEdit.value) autoFillName()
 }
 
 function autoFillName() {
@@ -193,7 +268,7 @@ function autoFillNameFromRemote(profile?: { name?: string; host?: string }) {
 }
 
 watch(path, () => {
-  if (!name.value.trim()) {
+  if (!isEdit.value && !name.value.trim()) {
     autoFillName()
   }
 })
@@ -203,22 +278,42 @@ async function onSubmit() {
   error.value = ''
   try {
     if (isEdit.value && props.workspace) {
-      await updateWorkspace(props.workspace.id, {
-        name: name.value.trim(),
-      })
+      if (isDefaultWorkspace.value) {
+        settings.default_workspace_root = path.value.trim() || null
+        settings.default_workspace_name = name.value.trim() || null
+        settings.default_workspace_abbr = abbr.value.trim() || null
+        settings.default_workspace_color = color.value?.trim() || null
+        settings.default_workspace_tab_badge = allowTabBadge.value
+        await saveSettings()
+      } else {
+        await updateWorkspace(props.workspace.id, {
+          name: name.value.trim(),
+          abbr: abbr.value,
+          color: color.value ?? '',
+        })
+      }
     } else if (mode.value === 'remote') {
       const profile = sshProfiles.value.find((p: any) => p.id === selectedConnectionId.value)
       autoFillNameFromRemote(profile)
+      const overrides = {
+        abbr: abbr.value || undefined,
+        color: color.value || undefined,
+      }
       const ws = await createWorkspace(
         remotePath.value.trim(),
         name.value.trim() || undefined,
         selectedConnectionId.value,
+        overrides
       )
       emit('created', ws.id)
     } else {
       const p = path.value.trim()
       autoFillName()
-      const ws = await createWorkspace(p, name.value.trim() || undefined, undefined)
+      const overrides = {
+        abbr: abbr.value || undefined,
+        color: color.value || undefined,
+      }
+      const ws = await createWorkspace(p, name.value.trim() || undefined, undefined, overrides)
       emit('created', ws.id)
     }
     emit('close')
@@ -312,6 +407,67 @@ async function onSubmit() {
 .cw-input:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+.cw-color-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.cw-color-swatch {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.cw-color-swatch.selected {
+  border-color: var(--fg-bright);
+  box-shadow: 0 0 0 1px var(--bg-surface);
+}
+.cw-color-input {
+  width: 78px;
+  flex: 0 1 78px;
+  padding: 5px 6px;
+}
+.cw-default-btn {
+  flex-shrink: 0;
+  padding: 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--fg-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.cw-default-btn:hover {
+  border-color: var(--accent);
+  color: var(--fg);
+}
+.cw-checkbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  cursor: pointer;
+}
+.cw-checkbox-row input {
+  margin-top: 2px;
+}
+.cw-checkbox-label,
+.cw-checkbox-hint {
+  display: block;
+}
+.cw-checkbox-label {
+  color: var(--fg);
+  font-size: 13px;
+}
+.cw-checkbox-hint {
+  margin-top: 2px;
+  color: var(--fg-muted);
+  font-size: 11px;
+  line-height: 1.35;
 }
 .cw-browse-btn {
   flex-shrink: 0;

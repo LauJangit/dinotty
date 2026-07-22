@@ -181,6 +181,8 @@ fn normalize_windows_path_for_compare(path: &Path) -> String {
 #[cfg(test)]
 mod key_path_tests {
     use super::is_allowed_key_path;
+    #[cfg(windows)]
+    use super::validate_key_path;
     use std::path::Path;
 
     #[cfg(windows)]
@@ -519,9 +521,9 @@ pub async fn create_ssh_session(
         shell_type: "ssh".to_string(),
         tauri_on_exit: std::sync::Mutex::new(tauri_on_exit),
         cwd_state: std::sync::Mutex::new(CwdState { cwd: effective_cwd, sniff_buf: Vec::new() }),
-        sync_active: std::sync::atomic::AtomicBool::new(false),
-        sync_buffer: std::sync::Mutex::new(Vec::new()),
-        sync_buffer_bytes: std::sync::atomic::AtomicUsize::new(0),
+        sync: std::sync::Mutex::new(crate::session::SyncState::default()),
+        #[cfg(test)]
+        sync_disable_hook: std::sync::Mutex::new(None),
         resize_tx,
         ssh_cmd_tx: std::sync::Mutex::new(Some(ssh_cmd_tx)),
         ssh_handle: tokio::sync::Mutex::new(None),

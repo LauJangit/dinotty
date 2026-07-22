@@ -1,12 +1,41 @@
 import type { Component } from 'vue'
 import { reactive, ref, computed, watch, onMounted, onUnmounted, h } from 'vue'
 import { authFetch, apiUrl, wsUrlWithToken, getApiBase } from './apiBase'
+import { usePluginMonitorStore } from '../stores/pluginMonitor'
+import type { MonitorSeries } from '../stores/pluginMonitor'
+import { subscribe as eventSubscribe, emit as eventEmit } from './useEventBridge'
+import type { SyncEvent } from '../types/protocol'
+import { useI18n, type Locale } from './useI18n'
+import { describeHttpError } from '../utils/httpError'
 
 // Bypass Vite's static analysis of import()
 // eslint-disable-next-line no-new-func
 const dynamicImport: (url: string) => Promise<any> = new Function('url', 'return import(url)') as (
   url: string
 ) => Promise<any>
+
+// ─── Binary helpers for ctx.crypto ──────────────────────────────────────────
+
+function toBytes(data: string | Uint8Array): Uint8Array {
+  if (typeof data === 'string') return new TextEncoder().encode(data)
+  return data
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let bin = ''
+  const chunk = 0x8000
+  for (let i = 0; i < bytes.length; i += chunk) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + chunk))
+  }
+  return btoa(bin)
+}
+
+function base64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64)
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+  return out
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -18,9 +47,20 @@ export interface PluginManifest {
   description?: string
   icon?: string
   entry?: string
-  bin?: { mode: string; entry: string }
+  bin?: {
+    mode: string
+    entry?: string
+    entries?: Record<string, string>
+    lifecycle?: {
+      scope?: 'ui' | 'host'
+      stdinLease?: boolean
+      shutdownDeadlineMs?: number
+      forceKillAfterMs?: number
+    }
+  }
   commands?: Array<{ id: string; title: string }>
   styles?: string
+  permissions?: string[]
 }
 
 export interface Disposable {
@@ -39,6 +79,8 @@ export interface QuickPickOptions {
   items: () => QuickPickItem[] | Promise<QuickPickItem[]>
 }
 
+export type PluginLocale = Locale
+
 export interface PluginContext {
   reactive: typeof reactive
   ref: typeof ref
@@ -47,6 +89,11 @@ export interface PluginContext {
   onMounted: typeof onMounted
   onUnmounted: typeof onUnmounted
   h: typeof h
+
+  i18n: {
+    getLocale(): PluginLocale
+    onDidChangeLocale(callback: (locale: PluginLocale) => void): Disposable
+  }
 
   exec: {
     run(
@@ -103,6 +150,34 @@ export interface PluginContext {
     stop(pid: number): Promise<void>
     stopAll(): Promise<void>
   }
+
+  /**
+   * Cryptographic helpers backed by the server. Use these instead of
+   * `crypto.subtle` so plugins keep working in non-secure HTTP contexts
+   * (e.g. `http://192.168.x.x`) where Web Crypto is unavailable.
+   */
+  crypto: {
+    hash(
+      algorithm: 'sha1' | 'sha256' | 'sha384' | 'sha512' | 'md5',
+      data: string | Uint8Array
+    ): Promise<Uint8Array>
+    hmac(
+      algorithm: 'sha1' | 'sha256' | 'sha384' | 'sha512' | 'md5',
+      key: Uint8Array | string,
+      data: string | Uint8Array
+    ): Promise<Uint8Array>
+    toHex(bytes: Uint8Array): string
+    fromHex(hex: string): Uint8Array
+  }
+
+  events: {
+    subscribe<T = unknown>(eventName: string, handler: (data: T, e: SyncEvent) => void): () => void
+    emit(
+      eventName: string,
+      data: unknown,
+      opts?: { target_plugin_id?: string },
+    ): void
+  }
 }
 
 export interface ProcessInfo {
@@ -121,6 +196,7 @@ export interface ProcessHandle {
 export interface PluginExports {
   component?: Component
   dispose?: () => void
+  monitor?: { series: MonitorSeries[] }
 }
 
 export interface PluginModule {
@@ -172,6 +248,7 @@ function removePluginCSS(id: string) {
 // ─── Plugin Context Factory (module scope) ───────────────────────────────────
 
 function createPluginContext(pluginId: string): PluginContext {
+  const { locale } = useI18n()
   const exec: PluginContext['exec'] = {
     async run(args, options) {
       const res = await authFetch(apiUrl(`/api/plugins/${pluginId}/exec`), {
@@ -179,13 +256,16 @@ function createPluginContext(pluginId: string): PluginContext {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ args, ...options }),
       })
+      if (!res.ok) throw new Error(await describeHttpError(res, 'Plugin command failed'))
       return res.json()
     },
-    spawn(args) {
+    spawn(args, options) {
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+      const query = new URLSearchParams({ args: JSON.stringify(args) })
+      if (options) query.set('options', JSON.stringify(options))
       const ws = new WebSocket(
         wsUrlWithToken(
-          `${proto}//${location.host}/api/plugins/${pluginId}/spawn?args=${encodeURIComponent(JSON.stringify(args))}`
+          `${proto}//${location.host}/api/plugins/${pluginId}/spawn?${query.toString()}`
         )
       )
       let stdoutCtrl: ReadableStreamDefaultController<string>
@@ -235,13 +315,17 @@ function createPluginContext(pluginId: string): PluginContext {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ args, ...options }),
       })
+      if (!res.ok) throw new Error(await describeHttpError(res, 'Unable to start plugin process'))
       const data = await res.json()
       return {
         info: data,
         stop: async () => {
-          await authFetch(apiUrl(`/api/plugins/${pluginId}/process/${data.pid}`), {
+          const stopRes = await authFetch(apiUrl(`/api/plugins/${pluginId}/process/${data.pid}`), {
             method: 'DELETE',
           })
+          if (!stopRes.ok) {
+            throw new Error(await describeHttpError(stopRes, 'Unable to stop plugin process'))
+          }
         },
       }
     },
@@ -250,14 +334,16 @@ function createPluginContext(pluginId: string): PluginContext {
       return res.json()
     },
     async stop(pid) {
-      await authFetch(apiUrl(`/api/plugins/${pluginId}/process/${pid}`), {
+      const res = await authFetch(apiUrl(`/api/plugins/${pluginId}/process/${pid}`), {
         method: 'DELETE',
       })
+      if (!res.ok) throw new Error(await describeHttpError(res, 'Unable to stop plugin process'))
     },
     async stopAll() {
-      await authFetch(apiUrl(`/api/plugins/${pluginId}/process`), {
+      const res = await authFetch(apiUrl(`/api/plugins/${pluginId}/process`), {
         method: 'DELETE',
       })
+      if (!res.ok) throw new Error(await describeHttpError(res, 'Unable to stop plugin processes'))
     },
   }
 
@@ -298,6 +384,43 @@ function createPluginContext(pluginId: string): PluginContext {
     },
   }
 
+  const crypto: PluginContext['crypto'] = {
+    async hash(algorithm, data) {
+      const dataB64 = bytesToBase64(toBytes(data))
+      const res = await authFetch(apiUrl(`/api/plugins/${pluginId}/crypto/hash`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ algorithm, data: dataB64 }),
+      })
+      if (!res.ok) throw new Error(`crypto.hash(${algorithm}) failed: ${res.status}`)
+      const { bytes } = await res.json()
+      return base64ToBytes(bytes)
+    },
+    async hmac(algorithm, key, data) {
+      const keyB64 = bytesToBase64(toBytes(key))
+      const dataB64 = bytesToBase64(toBytes(data))
+      const res = await authFetch(apiUrl(`/api/plugins/${pluginId}/crypto/hmac`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ algorithm, key: keyB64, data: dataB64 }),
+      })
+      if (!res.ok) throw new Error(`crypto.hmac(${algorithm}) failed: ${res.status}`)
+      const { bytes } = await res.json()
+      return base64ToBytes(bytes)
+    },
+    toHex(bytes) {
+      let hex = ''
+      for (let i = 0; i < bytes.length; i++) hex += bytes[i].toString(16).padStart(2, '0')
+      return hex
+    },
+    fromHex(hex) {
+      const clean = hex.length % 2 === 0 ? hex : hex.slice(0, -1)
+      const out = new Uint8Array(clean.length / 2)
+      for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.substr(i * 2, 2), 16)
+      return out
+    },
+  }
+
   const context: PluginContext = {
     reactive,
     ref,
@@ -306,8 +429,18 @@ function createPluginContext(pluginId: string): PluginContext {
     onMounted,
     onUnmounted,
     h,
+    i18n: {
+      getLocale: () => locale.value,
+      onDidChangeLocale(callback) {
+        const stop = watch(locale, (locale, previous) => {
+          if (locale !== previous) callback(locale)
+        })
+        return { dispose: stop }
+      },
+    },
     exec,
     process,
+    crypto,
     terminal: window.__dinotty_terminal_api ?? {
       send() {},
       activePaneId: () => null,
@@ -328,6 +461,12 @@ function createPluginContext(pluginId: string): PluginContext {
     },
     open() {
       window.__dinotty_open_plugin?.(pluginId)
+    },
+    events: {
+      subscribe: <T = unknown>(name: string, handler: (data: T, e: SyncEvent) => void) =>
+        eventSubscribe(name, handler, { pluginId: pluginId }),
+      emit: (name: string, data: unknown, opts?: { target_plugin_id?: string }) =>
+        eventEmit(name, data, { plugin_id: pluginId, ...opts }),
     },
   }
 
@@ -395,7 +534,20 @@ async function loadPlugin(id: string): Promise<LoadedPlugin> {
     ])
     exports = (result as PluginExports) || null
   } catch (e: any) {
+    // Roll back side effects injected before activate() (CSS, commands, quickPicks)
+    removePluginCSS(id)
+    for (const [cmdId, entry] of pluginCommands) {
+      if (entry.pluginId === id) pluginCommands.delete(cmdId)
+    }
+    for (const [qpId, entry] of pluginQuickPicks) {
+      if (entry.pluginId === id) pluginQuickPicks.delete(qpId)
+    }
     throw new Error(`Plugin ${id}: activate() threw: ${e.message}`)
+  }
+
+  // 5. Register monitor series contributions
+  if (exports?.monitor?.series?.length) {
+    usePluginMonitorStore().register(id, exports.monitor.series)
   }
 
   const plugin: LoadedPlugin = { id, manifest, module: mod, exports, state: 'active' }
@@ -403,9 +555,21 @@ async function loadPlugin(id: string): Promise<LoadedPlugin> {
   return plugin
 }
 
-async function unloadPlugin(id: string) {
+async function unloadPlugin(id: string, options: { stopUiProcesses?: boolean } = {}) {
   const plugin = loadedPlugins.get(id)
   if (!plugin) return
+
+  if (options.stopUiProcesses) {
+    const res = await authFetch(apiUrl(`/api/plugins/${id}/process?scope=ui`), {
+      method: 'DELETE',
+    })
+    if (!res.ok) {
+      throw new Error(await describeHttpError(res, 'Unable to stop plugin UI processes'))
+    }
+  }
+
+  // Unregister monitor series first so sampling stops touching plugin state
+  usePluginMonitorStore().unregister(id)
 
   try {
     plugin.module.deactivate?.()
@@ -414,13 +578,6 @@ async function unloadPlugin(id: string) {
   }
   try {
     plugin.exports?.dispose?.()
-  } catch {
-    /* noop */
-  }
-
-  // Kill all managed processes for this plugin
-  try {
-    await authFetch(apiUrl(`/api/plugins/${id}/process`), { method: 'DELETE' })
   } catch {
     /* noop */
   }
@@ -454,10 +611,10 @@ export async function handlePluginChanged(pluginId: string, change: string) {
     for (const [id, ch] of tasks) {
       try {
         if (ch === 'deleted') {
-          await unloadPlugin(id)
+          await unloadPlugin(id, { stopUiProcesses: true })
         } else {
-          await unloadPlugin(id)
-          await loadPlugin(id)
+          await unloadPlugin(id, { stopUiProcesses: true })
+          await usePluginLoader().loadAll()
         }
       } catch (e: any) {
         console.error(`[plugin] hot-reload failed for ${id}:`, e.message)
@@ -486,10 +643,32 @@ export function usePluginLoader() {
 
       for (const item of list) {
         const id = item.manifest.id
-        if (loadedPlugins.has(id)) {
-          loadedPlugins.get(id)!.isDevLink = item.isDevLink
+        const existing = loadedPlugins.get(id)
+        if (item.state && item.state !== 'active') {
+          if (existing?.state === 'active') {
+            await unloadPlugin(id, { stopUiProcesses: true })
+          }
+          loadedPlugins.set(id, {
+            id,
+            manifest: item.manifest,
+            module: {
+              activate() {
+                return {}
+              },
+            },
+            exports: null,
+            state: 'error',
+            error: item.error || 'Plugin is not compatible with this host',
+            isDevLink: item.isDevLink,
+          })
           continue
         }
+        if (existing?.state === 'active') {
+          existing.manifest = item.manifest
+          existing.isDevLink = item.isDevLink
+          continue
+        }
+        if (existing) await unloadPlugin(id)
         try {
           await loadPlugin(id)
           const lp = loadedPlugins.get(id)

@@ -81,7 +81,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, shallowRef, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, shallowRef, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import type { Terminal } from '@xterm/xterm'
 import { TerminalInstance } from '../../composables/useTerminal'
 import { copyToClipboard } from '../../utils/clipboard'
@@ -93,10 +93,12 @@ import SelectionHandles from './SelectionHandles.vue'
 import { shellEscapePath } from '../../utils/shell'
 import { POSITION, useToast } from 'vue-toastification'
 import { useI18n } from '../../composables/useI18n'
-import { formatMB, useUpload, type UploadProgress } from '../../composables/useUpload'
+import { useUpload } from '../../composables/useUpload'
 import { useScrollPosition, type ScrollPositionHandle } from '../../composables/useScrollPosition'
 import { useIsMobile } from '../../composables/useIsMobile'
 import { useSettings } from '../../composables/useSettings'
+import { useUploadProgress } from '../../composables/useUploadProgress'
+import { useScrollbarState } from '../../composables/useScrollbarState'
 
 const props = defineProps<{
   paneId: string
@@ -127,46 +129,30 @@ const scrollPos = shallowRef<ScrollPositionHandle | null>(null)
 const { isMobile } = useIsMobile()
 const { settings } = useSettings()
 
-// F2 — mobile-web custom scrollbar (scrollback only). Reuses the step-0 observer.
-const scrollbarVisible = ref(false)
-let scrollbarIdleTimer: ReturnType<typeof setTimeout> | null = null
-let scrollbarDragging = false
-const scrollbarWidthPx = computed(() => `${settings.text.scrollbar_width ?? 8}px`)
-
-const showScrollbar = computed(() => {
-  const h = scrollPos.value
-  if (!h) return false
-  const s = h.state
-  return isMobile.value && !s.isAltScreen && s.length > s.rows
+// F2 - mobile-web custom scrollbar (scrollback only). Reuses the step-0 observer.
+const {
+  scrollbarVisible,
+  scrollbarWidthPx,
+  showScrollbar,
+  thumbHeightPct,
+  thumbTopPct,
+  bumpScrollbarActivity,
+  scrollbarLineFromClientY,
+  onScrollbarDragTo,
+  onScrollbarTouchStart,
+  onScrollbarTouchMove,
+  onScrollbarTouchEnd,
+  dispose: disposeScrollbar,
+} = useScrollbarState({
+  scrollPos,
+  scrollbarTrackRef,
+  scrollbarThumbRef,
+  isMobile,
+  settings,
+  onScrollToLine: (line: number) => {
+    terminal?.xterm?.scrollToLine(line)
+  },
 })
-const thumbHeightPct = computed(() => {
-  const s = scrollPos.value?.state
-  if (!s || s.length <= 0) return 100
-  return Math.max(12, (s.rows / s.length) * 100)
-})
-const thumbTopPct = computed(() => {
-  const s = scrollPos.value?.state
-  if (!s) return 0
-  return (s.viewportY / Math.max(1, s.baseY)) * (100 - thumbHeightPct.value)
-})
-
-function bumpScrollbarActivity() {
-  scrollbarVisible.value = true
-  if (scrollbarIdleTimer) clearTimeout(scrollbarIdleTimer)
-  scrollbarIdleTimer = setTimeout(() => {
-    scrollbarVisible.value = false
-  }, 1200)
-}
-
-// Reveal the bar on any position change (onScroll is unreliable, so this tracks the
-// observer's viewportY), then fade on idle.
-watch(
-  () => scrollPos.value?.state.viewportY,
-  () => {
-    if (!showScrollbar.value || scrollbarDragging) return
-    bumpScrollbarActivity()
-  }
-)
 
 let terminal: TerminalInstance | null = null
 let pendingFocus = false
@@ -176,12 +162,18 @@ const searchVisible = ref(false)
 const toast = useToast()
 const { t } = useI18n()
 const { uploadFiles, uploadErrorStatus } = useUpload()
-const uploadInProgress = ref(false)
-const uploadProgress = ref(0)
-const uploadLoaded = ref(0)
-const uploadTotal = ref(0)
-const uploadProcessing = ref(false)
-let activeUploads = 0
+const {
+  uploadInProgress,
+  uploadProgress,
+  uploadLoaded,
+  uploadTotal,
+  uploadProcessing,
+  beginUploadProgress,
+  uploadProgressLabel,
+  updateUploadProgress,
+  finishUploadProgress,
+  uploadErrorMessage,
+} = useUploadProgress({ t, uploadErrorStatus })
 
 // Context menu state
 const menuVisible = ref(false)
@@ -212,45 +204,6 @@ let selWordEndCol = -1
 let dragHandle: 'start' | 'end' | null = null
 let selectionTouched = false
 
-function beginUploadProgress() {
-  activeUploads += 1
-  uploadInProgress.value = true
-  uploadProcessing.value = false
-  uploadProgress.value = 0
-  uploadLoaded.value = 0
-  uploadTotal.value = 0
-}
-
-function uploadProgressLabel() {
-  if (uploadProcessing.value) return t('settings.uploads.processing')
-  return `${formatMB(uploadLoaded.value)} / ${formatMB(uploadTotal.value)} MB`
-}
-
-function updateUploadProgress(p: UploadProgress) {
-  uploadLoaded.value = p.loaded
-  uploadTotal.value = p.total
-  const pct = Math.max(0, Math.min(100, Math.round((p.loaded / p.total) * 100)))
-  uploadProgress.value = pct
-  uploadProcessing.value = pct >= 100
-}
-
-function finishUploadProgress() {
-  activeUploads = Math.max(0, activeUploads - 1)
-  if (activeUploads === 0) {
-    uploadInProgress.value = false
-    uploadProcessing.value = false
-    uploadProgress.value = 0
-    uploadLoaded.value = 0
-    uploadTotal.value = 0
-  }
-}
-
-function uploadErrorMessage(err: unknown) {
-  const status = uploadErrorStatus(err)
-  if (status === 413) return t('mobileKb.uploadTooLarge')
-  if (status === 507) return t('settings.uploads.toastDiskFull')
-  return t('mobileKb.uploadFailed')
-}
 
 // Edge auto-scroll during selection drag (A4) — repeating scroll while the
 // finger is held in the top/bottom edge band, so selection can extend past the
@@ -315,43 +268,6 @@ function scrollToBottom() {
   scrollPos.value?.kick()
 }
 
-// F2 thumb drag → scrollToLine. Maps the thumb-center under the finger to a buffer line.
-// Measures the ACTUAL rendered track + thumb rects so the drag matches what the user sees
-// (the track is inset by top/bottom padding, and the thumb has a min-height clamp + border).
-function scrollbarLineFromClientY(clientY: number): number | null {
-  const track = scrollbarTrackRef.value
-  const thumb = scrollbarThumbRef.value
-  const state = scrollPos.value?.state
-  if (!track || !thumb || !state) return null
-  const trackRect = track.getBoundingClientRect()
-  const thumbH = thumb.getBoundingClientRect().height
-  const range = Math.max(1, trackRect.height - thumbH)
-  const thumbTop = clientY - trackRect.top - thumbH / 2
-  const ratio = Math.min(1, Math.max(0, thumbTop / range))
-  return Math.round(ratio * state.baseY)
-}
-
-function onScrollbarDragTo(clientY: number) {
-  const line = scrollbarLineFromClientY(clientY)
-  if (line === null) return
-  terminal?.xterm?.scrollToLine(line)
-  scrollPos.value?.kick()
-  scrollbarVisible.value = true
-  if (scrollbarIdleTimer) clearTimeout(scrollbarIdleTimer)
-}
-
-function onScrollbarTouchStart(e: TouchEvent) {
-  scrollbarDragging = true
-  onScrollbarDragTo(e.touches[0].clientY)
-}
-function onScrollbarTouchMove(e: TouchEvent) {
-  if (!scrollbarDragging) return
-  onScrollbarDragTo(e.touches[0].clientY)
-}
-function onScrollbarTouchEnd() {
-  scrollbarDragging = false
-  bumpScrollbarActivity()
-}
 
 function adjustFontSize(delta: number) {
   terminal?.adjustFontSize(delta)
@@ -1046,10 +962,7 @@ onBeforeUnmount(() => {
   stopAutoScroll()
   scrollPos.value?.dispose()
   scrollPos.value = null
-  if (scrollbarIdleTimer) {
-    clearTimeout(scrollbarIdleTimer)
-    scrollbarIdleTimer = null
-  }
+  disposeScrollbar()
   terminal?.destroy()
   terminal = null
 })

@@ -39,6 +39,14 @@ vi.mock('../composables/useTransport', () => ({
     onConnect() {}, onMessage() {}, onDisconnect() {}, connect() {}, disconnect() {}, send() {},
   }),
 }))
+vi.mock('../composables/useTerminalWheel', () => ({
+  createTerminalWheel: () => ({
+    setup: vi.fn(),
+    cleanup: vi.fn(),
+    sendWheelEvent: vi.fn(),
+    isBypassActive: () => false,
+  }),
+}))
 
 import { TerminalInstance } from '../composables/useTerminal'
 import { settings, notifyTextChange } from '../composables/useSettings'
@@ -60,7 +68,6 @@ class MemoryStorage implements Storage {
 
 function attach(id: string) {
   const term = new TerminalInstance(id)
-  vi.spyOn(term as any, '_setupAdaptiveWheel').mockImplementation(() => {})
   vi.spyOn(term as any, '_scheduleSettleResize').mockImplementation(() => {})
   vi.spyOn(term as any, '_refit').mockImplementation(() => {})
   term.attach(document.createElement('div'))

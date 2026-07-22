@@ -1,8 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 
 use dinotty_server::{
-    agent, audit, auth, file_watcher, history, mcp, monitor, notification, openapi, plugin, proxy,
-    session, settings, tabs, token, webhook, workspace, workspace_mgmt, ws,
+    agent, audit, auth, events, file_watcher, history, mcp, monitor, notification, openapi, plugin,
+    proxy, session, settings, tabs, token, webhook, workspace, workspace_mgmt, ws,
 };
 
 use axum::{
@@ -15,7 +15,6 @@ use axum::{
     Json, Router,
 };
 use rust_embed::Embed;
-use std::fs;
 use std::net::SocketAddr;
 
 use std::sync::Arc;
@@ -97,24 +96,10 @@ pub struct GitInfo {
 }
 
 fn read_git_info() -> GitInfo {
-    let lines: Vec<String> = fs::read_to_string("VERSION")
-        .ok()
-        .map(|s| s.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
-        .unwrap_or_default();
-
-    let version = lines
-        .first()
-        .cloned()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
-
-    let repo_url = lines
-        .get(1)
-        .cloned()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| env!("CARGO_PKG_REPOSITORY").to_string());
-
-    GitInfo { version, repo_url }
+    GitInfo {
+        version: env!("DINOTTY_VERSION").to_string(),
+        repo_url: env!("CARGO_PKG_REPOSITORY").to_string(),
+    }
 }
 
 #[derive(Clone)]
@@ -660,10 +645,10 @@ async fn main() {
     auth::set_session_cookie_port(port);
     let manager = Arc::new(SessionManager::new());
 
-    let monitor_state = MonitorState::new();
+    let monitor_state = MonitorState::new(Arc::clone(&manager.sync_clients));
     monitor_state.clone().start_collector();
 
-    let notifier = Arc::new(NotificationBroadcast::new());
+    let notifier = Arc::new(NotificationBroadcast::new(Arc::clone(&manager.sync_clients)));
     let settings_state = settings::create_settings_state();
     notifier.set_settings(settings_state.clone());
     manager.register_notifier(Arc::clone(&notifier));
@@ -679,7 +664,7 @@ async fn main() {
             }
         });
     }
-    let history_state = HistoryState::new();
+    let history_state = HistoryState::new(Arc::clone(&manager.sync_clients));
 
     // Load token from dedicated file or env var; empty means first-time setup
     let initial_token =
@@ -702,12 +687,13 @@ async fn main() {
     };
     let auth_token = Arc::new(tokio::sync::RwLock::new(initial_token));
 
-    let plugins = Arc::new(plugin::PluginManager::new());
-    plugins.scan();
-    tracing::info!("Loaded {} plugins", plugins.list().len());
-
     let git_info = read_git_info();
     tracing::info!("Git info: {}", git_info.version);
+
+    let plugins =
+        Arc::new(plugin::PluginManager::new(format!("http://127.0.0.1:{port}"), "server".into()));
+    plugins.scan();
+    tracing::info!("Loaded {} plugins", plugins.list().len());
 
     // Initialize new modules
     let tokens = Arc::new(token::TokenManager::new(auth_token.clone()));
@@ -748,7 +734,7 @@ async fn main() {
         history: history_state,
         auth_token: auth_token.clone(),
         port,
-        plugins,
+        plugins: Arc::clone(&plugins),
         git_info,
         tokens,
         audit: audit_logger,
@@ -768,9 +754,8 @@ async fn main() {
             .route("/ws", get(ws::ws_handler))
             .route("/ws/sync", get(ws::sync_handler))
             .route("/ws/watch", get(file_watcher::watch_handler))
-            .route("/ws/monitor", get(monitor::ws_monitor_handler))
-            .route("/ws/notify", get(ws::notification_ws_handler))
             .route("/api/notify", post(notification::post_notify))
+            .route("/api/events/emit", post(events::emit_event))
             .route("/api/input", post(ws::post_input))
             // Open API
             .route("/api/sessions", get(openapi::list_sessions))
@@ -778,7 +763,6 @@ async fn main() {
             .route("/api/sessions/:pane_id/scrollback", get(openapi::get_scrollback))
             .route("/api/sessions/:pane_id/input", post(openapi::session_input))
             .route("/api/sessions/:pane_id/resize", post(openapi::session_resize))
-            .route("/ws/api/sessions/:pane_id/stream", get(openapi::session_stream))
             // Tab/Pane management
             .route("/api/tabs", get(tabs::list_tabs).post(tabs::create_tab))
             // SSH tab routes (must be before :tab_id routes)
@@ -786,6 +770,12 @@ async fn main() {
             .route("/api/tabs/ssh", post(tabs::create_ssh_tab))
             .route("/api/tabs/:tab_id", delete(tabs::close_tab))
             .route("/api/tabs/:tab_id/pane", post(tabs::split_pane))
+            .route("/api/tabs/:tab_id/pane/plugin", post(tabs::create_plugin_pane))
+            .route("/api/tabs/:tab_id/pane/files", post(tabs::create_files_pane))
+            .route("/api/tabs/:tab_id/pane/web", post(tabs::create_web_pane))
+            .route("/api/tabs/:tab_id/pane/move", post(tabs::move_pane))
+            .route("/api/tabs/extract", post(tabs::extract_pane))
+            .route("/api/tabs/plugin", post(tabs::create_plugin_tab))
             .route("/api/tabs/:tab_id/pane/:pane_id", delete(tabs::close_pane))
             .route("/api/tabs/:tab_id/pane/:pane_id/activate", put(tabs::activate_pane))
             .route("/api/tabs/:tab_id/layout", put(tabs::update_layout))
@@ -829,9 +819,11 @@ async fn main() {
             .route("/api/workspace/move", post(workspace::workspace_move))
             .route("/api/workspace/git-status", get(workspace::workspace_git_status))
             .route("/api/workspace/git-diff", get(workspace::workspace_git_diff))
+            .route("/api/workspace/reveal", get(workspace::workspace_reveal))
             .route("/api/workspace/git-stage-lines", post(workspace::workspace_git_stage_lines))
             .route("/api/workspace/git-revert-lines", post(workspace::workspace_git_revert_lines))
             .route("/api/workspace/syntax-check", post(workspace::workspace_syntax_check))
+            .route("/api/workspace/search", post(workspace::workspace_search))
             // Workspace management
             .route(
                 "/api/workspaces",
@@ -845,7 +837,6 @@ async fn main() {
             .route("/api/workspaces/:id/activate", put(workspace_mgmt::activate_workspace))
             .route("/api/workspaces/active", delete(workspace_mgmt::deactivate_workspace))
             .route("/api/list-dirs", get(workspace_mgmt::list_dirs))
-            .route("/ws/history", get(history::ws_history_handler))
             .route("/api/history", get(history::get_history).delete(history::delete_history))
             .route("/api/proxy", any(proxy::external_proxy_handler))
             .route("/api/info", get(server_info))
@@ -879,6 +870,8 @@ async fn main() {
                     .put(plugin::plugin_storage_set)
                     .delete(plugin::plugin_storage_delete),
             )
+            .route("/api/plugins/:id/crypto/hash", post(plugin::plugin_crypto_hash))
+            .route("/api/plugins/:id/crypto/hmac", post(plugin::plugin_crypto_hmac))
             .route("/api/plugins/:id/*path", get(plugin::plugin_asset))
             // Agent API + Token management + MCP — protected by agent token middleware
             .merge(
@@ -952,5 +945,33 @@ async fn main() {
     tracing::info!("Listening on http://0.0.0.0:{}", port);
 
     notify_manager.set_notify_port(port);
-    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await.unwrap();
+    let shutdown_plugins = Arc::clone(&plugins);
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            shutdown_plugins.shutdown_all().await;
+        })
+        .await
+        .unwrap();
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c().await.expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        () = ctrl_c => {}
+        () = terminate => {}
+    }
 }

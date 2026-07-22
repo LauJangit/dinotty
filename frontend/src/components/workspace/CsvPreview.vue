@@ -40,21 +40,11 @@
         </span>
       </button>
 
-      <button
-        ref="columnsButtonElement"
-        type="button"
-        class="csv-preview-icon-button"
-        :class="{ active: columnDialogOpen || hiddenColumnIndexes.length > 0 }"
-        data-testid="csv-columns-toggle"
-        :title="t('csvPreview.chooseColumns')"
-        :aria-label="t('csvPreview.chooseColumns')"
-        aria-haspopup="dialog"
-        :aria-expanded="columnDialogOpen"
-        aria-controls="csv-preview-columns-dialog"
-        @click="openColumnDialog"
-      >
-        <Columns3 :size="16" aria-hidden="true" />
-      </button>
+      <CsvColumnDialog
+        v-model="hiddenColumnIndexes"
+        :column-count="columnCount"
+        :header-text="headerText"
+      />
 
       <label class="csv-preview-header-toggle">
         <input v-model="firstRowIsHeader" type="checkbox" @change="resetPage" />
@@ -252,95 +242,6 @@
       </div>
     </div>
 
-    <div
-      v-if="columnDialogOpen"
-      class="csv-preview-dialog-backdrop"
-      @click.self="cancelColumnDialog"
-    >
-      <section
-        id="csv-preview-columns-dialog"
-        ref="columnDialogElement"
-        class="csv-preview-columns-dialog"
-        data-testid="csv-columns-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="csv-preview-columns-title"
-        tabindex="-1"
-        @keydown.esc="cancelColumnDialog"
-      >
-        <header class="csv-preview-dialog-header">
-          <div>
-            <h2 id="csv-preview-columns-title">{{ t('csvPreview.chooseColumns') }}</h2>
-            <span>
-              {{ draftVisibleColumnIndexes.length }} / {{ columnCount }}
-              {{ t('csvPreview.columns') }}
-            </span>
-          </div>
-          <button
-            type="button"
-            class="csv-preview-icon-button"
-            :title="t('cancel')"
-            :aria-label="t('cancel')"
-            @click="cancelColumnDialog"
-          >
-            <X :size="16" aria-hidden="true" />
-          </button>
-        </header>
-
-        <div class="csv-preview-dialog-tools">
-          <button
-            type="button"
-            class="csv-preview-text-button"
-            data-testid="csv-columns-select-all"
-            :disabled="draftVisibleColumnIndexes.length === columnCount"
-            @click="selectAllDraftColumns"
-          >
-            {{ t('csvPreview.showAllColumns') }}
-          </button>
-          <button
-            type="button"
-            class="csv-preview-text-button"
-            data-testid="csv-columns-select-none"
-            :disabled="draftVisibleColumnIndexes.length === 0"
-            @click="selectNoDraftColumns"
-          >
-            {{ t('csvPreview.hideAllColumns') }}
-          </button>
-        </div>
-
-        <div class="csv-preview-dialog-column-list">
-          <label v-for="columnIndex in columnCount" :key="columnIndex">
-            <input
-              type="checkbox"
-              :checked="isDraftColumnVisible(columnIndex - 1)"
-              :data-testid="`csv-column-option-${columnIndex - 1}`"
-              @change="changeDraftColumnVisibility(columnIndex - 1, $event)"
-            />
-            <span :title="headerText(columnIndex - 1)">{{ headerText(columnIndex - 1) }}</span>
-          </label>
-        </div>
-
-        <footer class="csv-preview-dialog-footer">
-          <button
-            type="button"
-            class="csv-preview-text-button"
-            data-testid="csv-columns-cancel"
-            @click="cancelColumnDialog"
-          >
-            {{ t('cancel') }}
-          </button>
-          <button
-            type="button"
-            class="csv-preview-primary-button"
-            data-testid="csv-columns-confirm"
-            @click="confirmColumnDialog"
-          >
-            {{ t('csvPreview.confirm') }}
-          </button>
-        </footer>
-      </section>
-    </div>
-
     <div v-if="displayedContentIsTruncated" class="csv-preview-notice" role="status">
       {{ t('csvPreview.truncated') }}
     </div>
@@ -418,12 +319,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, ref, toRef } from 'vue'
 import {
   ChevronLeft,
   ChevronRight,
   Code2,
-  Columns3,
   ListFilter,
   Plus,
   Search,
@@ -433,41 +333,11 @@ import {
 } from 'lucide-vue-next'
 import { useI18n } from '../../composables/useI18n'
 import { detectCsvDelimiter, parseCsvText, type CsvRow } from '../../utils/csvPreview'
+import { useCsvFilter, type VisibleCsvRow } from '../../composables/useCsvFilter'
+import { useCsvEncoding } from '../../composables/useCsvEncoding'
+import CsvColumnDialog from './CsvColumnDialog.vue'
 
-interface VisibleCsvRow {
-  cells: CsvRow
-  sourceIndex: number
-}
-
-interface CsvFilterCondition {
-  id: number
-  columnIndex: number
-  operator: CsvFilterOperator
-  value: string
-  negated: boolean
-}
-
-type CsvFilterOperator =
-  | 'contains'
-  | 'notContains'
-  | 'equals'
-  | 'notEquals'
-  | 'startsWith'
-  | 'endsWith'
-  | 'isEmpty'
-  | 'isNotEmpty'
-  | 'numberEquals'
-  | 'numberGreaterThan'
-  | 'numberGreaterThanOrEqual'
-  | 'numberLessThan'
-  | 'numberLessThanOrEqual'
-  | 'dateEquals'
-  | 'dateBefore'
-  | 'dateBeforeOrEqual'
-  | 'dateAfter'
-  | 'dateAfterOrEqual'
-
-type CsvFilterLogicMode = 'and' | 'or'
+interface PaginatedRow extends VisibleCsvRow {}
 
 const props = withDefaults(
   defineProps<{
@@ -490,35 +360,37 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const searchText = ref('')
 const firstRowIsHeader = ref(true)
 const currentPage = ref(1)
-const selectedEncoding = ref('utf-8')
-const displayedContent = ref(props.content)
-const displayedContentIsTruncated = ref(props.truncated)
-const rawBytes = ref<ArrayBuffer | null>(null)
-const encodingLoading = ref(false)
-const encodingError = ref('')
-const filterPanelOpen = ref(false)
-const filterLogicMode = ref<CsvFilterLogicMode>('and')
-let nextFilterConditionId = 0
-const filterConditions = ref<CsvFilterCondition[]>([createFilterCondition()])
 const hiddenColumnIndexes = ref<number[]>([])
-const columnDialogOpen = ref(false)
-const draftVisibleColumnIndexes = ref<number[]>([])
-const columnDialogElement = ref<HTMLElement | null>(null)
-const columnsButtonElement = ref<HTMLButtonElement | null>(null)
+
+const encoding = useCsvEncoding({
+  content: toRef(props, 'content'),
+  filePath: toRef(props, 'filePath'),
+  rawUrl: toRef(props, 'rawUrl'),
+  truncated: toRef(props, 'truncated'),
+  t,
+  onFileChanged: () => {
+    currentPage.value = 1
+    filter.reset()
+    hiddenColumnIndexes.value = []
+  },
+})
+const {
+  selectedEncoding,
+  encodingLoading,
+  encodingError,
+  displayedContent,
+  displayedContentIsTruncated,
+  changeEncoding,
+} = encoding
 
 const parsedRows = computed(function computeParsedRows() {
-  // 步骤1：检测当前文件的分隔符。
   const delimiter = detectCsvDelimiter(displayedContent.value, props.filePath)
-
-  // 步骤2：解析全部预览文本。
   return parseCsvText(displayedContent.value, delimiter)
 })
 
 const columnCount = computed(function computeColumnCount() {
-  // 步骤1：以最长记录作为表格列数。
   let longestRowLength = 0
   for (let rowIndex = 0; rowIndex < parsedRows.value.length; rowIndex += 1) {
     const currentLength = parsedRows.value[rowIndex].length
@@ -528,7 +400,6 @@ const columnCount = computed(function computeColumnCount() {
 })
 
 const visibleColumnIndexes = computed(function computeVisibleColumnIndexes() {
-  // 步骤1：按文件中的原始顺序收集未隐藏的列。
   const columnIndexes: number[] = []
   for (let columnIndex = 0; columnIndex < columnCount.value; columnIndex += 1) {
     if (!hiddenColumnIndexes.value.includes(columnIndex)) columnIndexes.push(columnIndex)
@@ -536,538 +407,73 @@ const visibleColumnIndexes = computed(function computeVisibleColumnIndexes() {
   return columnIndexes
 })
 
-const activeFilterCount = computed(function computeActiveFilterCount() {
-  // 步骤1：统计已经填写完整的筛选条件。
-  let activeConditionCount = 0
-  for (
-    let conditionIndex = 0;
-    conditionIndex < filterConditions.value.length;
-    conditionIndex += 1
-  ) {
-    if (conditionIsComplete(filterConditions.value[conditionIndex])) activeConditionCount += 1
+function headerText(columnIndex: number): string {
+  if (firstRowIsHeader.value && parsedRows.value[0]?.[columnIndex] !== undefined) {
+    return parsedRows.value[0][columnIndex]
   }
-  return activeConditionCount
+  return `${t('csvPreview.column')} ${columnIndex + 1}`
+}
+
+const filter = useCsvFilter({
+  parsedRows,
+  columnCount,
+  firstRowIsHeader,
+  onFilterChanged: () => {
+    currentPage.value = 1
+  },
 })
 
-const filterIsActive = computed(function computeFilterIsActive() {
-  // 步骤1：至少有一条完整条件时筛选生效。
-  return activeFilterCount.value > 0
-})
-
-const filteredRows = computed(function computeFilteredRows() {
-  // 步骤1：确定数据起始行和搜索文本。
-  const firstDataRowIndex = firstRowIsHeader.value ? 1 : 0
-  const normalizedSearchText = searchText.value.trim().toLocaleLowerCase()
-  const matchingRows: VisibleCsvRow[] = []
-
-  // 步骤2：逐行、逐单元格匹配搜索内容。
-  for (let rowIndex = firstDataRowIndex; rowIndex < parsedRows.value.length; rowIndex += 1) {
-    const currentRow = parsedRows.value[rowIndex]
-    let rowMatches = normalizedSearchText === ''
-
-    if (!rowMatches) {
-      for (let columnIndex = 0; columnIndex < currentRow.length; columnIndex += 1) {
-        const normalizedCell = currentRow[columnIndex].toLocaleLowerCase()
-        if (normalizedCell.includes(normalizedSearchText)) {
-          rowMatches = true
-          break
-        }
-      }
-    }
-
-    if (rowMatches && rowMatchesFilter(currentRow)) {
-      matchingRows.push({ cells: currentRow, sourceIndex: rowIndex })
-    }
-  }
-
-  return matchingRows
-})
+const {
+  searchText,
+  filterPanelOpen,
+  filterLogicMode,
+  filterConditions,
+  activeFilterCount,
+  filterIsActive,
+  filteredRows,
+  cellText,
+  conditionNeedsValue,
+  conditionInputType,
+  toggleFilterPanel,
+  setFilterLogicMode,
+  addFilterCondition,
+  removeFilterCondition,
+  clearFilter,
+} = filter
 
 const pageCount = computed(function computePageCount() {
-  // 步骤1：至少保留一页，避免显示零页。
   return Math.max(1, Math.ceil(filteredRows.value.length / props.pageSize))
 })
 
 const pageStart = computed(function computePageStart() {
-  // 步骤1：计算当前页在过滤结果中的起始位置。
   return (currentPage.value - 1) * props.pageSize
 })
 
 const pageEnd = computed(function computePageEnd() {
-  // 步骤1：确保结束位置不会超过过滤结果长度。
   return Math.min(pageStart.value + props.pageSize, filteredRows.value.length)
 })
 
-const visibleRows = computed(function computeVisibleRows() {
-  // 步骤1：用普通循环收集当前页数据。
-  const currentRows: VisibleCsvRow[] = []
+const visibleRows = computed<PaginatedRow[]>(function computeVisibleRows() {
+  const currentRows: PaginatedRow[] = []
   for (let rowIndex = pageStart.value; rowIndex < pageEnd.value; rowIndex += 1) {
     currentRows.push(filteredRows.value[rowIndex])
   }
   return currentRows
 })
 
-function headerText(columnIndex: number): string {
-  // 步骤1：启用表头时优先使用文件首行内容。
-  if (firstRowIsHeader.value && parsedRows.value[0]?.[columnIndex] !== undefined) {
-    return parsedRows.value[0][columnIndex]
-  }
-
-  // 步骤2：没有表头时生成稳定的列名。
-  return `${t('csvPreview.column')} ${columnIndex + 1}`
-}
-
-function cellText(row: CsvRow, columnIndex: number): string {
-  // 步骤1：缺失字段显示为空字符串。
-  return row[columnIndex] ?? ''
-}
-
-function createFilterCondition(): CsvFilterCondition {
-  // 步骤1：创建一条可直接编辑的新条件。
-  const condition: CsvFilterCondition = {
-    id: nextFilterConditionId,
-    columnIndex: -1,
-    operator: 'contains',
-    value: '',
-    negated: false,
-  }
-  nextFilterConditionId += 1
-  return condition
-}
-
-function conditionNeedsValue(condition: CsvFilterCondition): boolean {
-  // 步骤1：为空和非空条件不需要额外输入值。
-  return condition.operator !== 'isEmpty' && condition.operator !== 'isNotEmpty'
-}
-
-function conditionInputType(condition: CsvFilterCondition): 'text' | 'number' | 'date' {
-  // 步骤1：数值运算符使用浏览器的数字输入控件。
-  if (condition.operator.startsWith('number')) return 'number'
-
-  // 步骤2：日期运算符使用浏览器的日期输入控件。
-  if (condition.operator.startsWith('date')) return 'date'
-
-  // 步骤3：其他运算符继续使用普通文本输入框。
-  return 'text'
-}
-
-function conditionIsComplete(condition: CsvFilterCondition): boolean {
-  // 步骤1：无需输入值的条件在选中后立即完整。
-  if (!conditionNeedsValue(condition)) return true
-
-  // 步骤2：其他条件必须填写匹配值。
-  return condition.value.trim() !== ''
-}
-
-function parseNumber(value: string): number | null {
-  // 步骤1：空文本不作为有效数值。
-  const trimmedValue = value.trim()
-  if (trimmedValue === '') return null
-
-  // 步骤2：只接受 JavaScript 能完整转换的有限数值。
-  const parsedValue = Number(trimmedValue)
-  if (!Number.isFinite(parsedValue)) return null
-  return parsedValue
-}
-
-function parseDate(value: string): number | null {
-  // 步骤1：优先读取单元格开头的标准年月日。
-  const trimmedValue = value.trim()
-  const standardDateMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(trimmedValue)
-  if (standardDateMatch) {
-    const year = Number(standardDateMatch[1])
-    const monthIndex = Number(standardDateMatch[2]) - 1
-    const day = Number(standardDateMatch[3])
-    const timestamp = Date.UTC(year, monthIndex, day)
-    const parsedDate = new Date(timestamp)
-    const dateIsValid =
-      parsedDate.getUTCFullYear() === year &&
-      parsedDate.getUTCMonth() === monthIndex &&
-      parsedDate.getUTCDate() === day
-    if (!dateIsValid) return null
-    return timestamp
-  }
-
-  // 步骤2：其他常见日期格式交给浏览器解析，再统一到 UTC 日历日。
-  const parsedTimestamp = Date.parse(trimmedValue)
-  if (!Number.isFinite(parsedTimestamp)) return null
-  const parsedDate = new Date(parsedTimestamp)
-  return Date.UTC(parsedDate.getUTCFullYear(), parsedDate.getUTCMonth(), parsedDate.getUTCDate())
-}
-
-function numberMatchesCondition(cellValue: string, condition: CsvFilterCondition): boolean {
-  // 步骤1：任一侧不是有效数值时不匹配。
-  const cellNumber = parseNumber(cellValue)
-  const filterNumber = parseNumber(condition.value)
-  if (cellNumber === null || filterNumber === null) return false
-
-  // 步骤2：按当前数值运算符比较。
-  switch (condition.operator) {
-    case 'numberGreaterThan':
-      return cellNumber > filterNumber
-    case 'numberGreaterThanOrEqual':
-      return cellNumber >= filterNumber
-    case 'numberLessThan':
-      return cellNumber < filterNumber
-    case 'numberLessThanOrEqual':
-      return cellNumber <= filterNumber
-    default:
-      return cellNumber === filterNumber
-  }
-}
-
-function dateMatchesCondition(cellValue: string, condition: CsvFilterCondition): boolean {
-  // 步骤1：任一侧不是有效日期时不匹配。
-  const cellDate = parseDate(cellValue)
-  const filterDate = parseDate(condition.value)
-  if (cellDate === null || filterDate === null) return false
-
-  // 步骤2：按当前日期运算符比较日历日。
-  switch (condition.operator) {
-    case 'dateBefore':
-      return cellDate < filterDate
-    case 'dateBeforeOrEqual':
-      return cellDate <= filterDate
-    case 'dateAfter':
-      return cellDate > filterDate
-    case 'dateAfterOrEqual':
-      return cellDate >= filterDate
-    default:
-      return cellDate === filterDate
-  }
-}
-
-function cellMatchesCondition(cellValue: string, condition: CsvFilterCondition): boolean {
-  // 步骤1：数值和日期条件分别使用对应类型进行比较。
-  if (condition.operator.startsWith('number')) {
-    return numberMatchesCondition(cellValue, condition)
-  }
-  if (condition.operator.startsWith('date')) {
-    return dateMatchesCondition(cellValue, condition)
-  }
-
-  // 步骤2：文本条件统一使用不区分大小写的内容进行匹配。
-  const normalizedCellValue = cellValue.toLocaleLowerCase()
-  const normalizedFilterValue = condition.value.trim().toLocaleLowerCase()
-
-  // 步骤3：按当前文本匹配方式判断单元格。
-  switch (condition.operator) {
-    case 'notContains':
-      return !normalizedCellValue.includes(normalizedFilterValue)
-    case 'equals':
-      return normalizedCellValue === normalizedFilterValue
-    case 'notEquals':
-      return normalizedCellValue !== normalizedFilterValue
-    case 'startsWith':
-      return normalizedCellValue.startsWith(normalizedFilterValue)
-    case 'endsWith':
-      return normalizedCellValue.endsWith(normalizedFilterValue)
-    case 'isEmpty':
-      return cellValue.trim() === ''
-    case 'isNotEmpty':
-      return cellValue.trim() !== ''
-    default:
-      return normalizedCellValue.includes(normalizedFilterValue)
-  }
-}
-
-function rowMatchesCondition(row: CsvRow, condition: CsvFilterCondition): boolean {
-  // 步骤1：选择了具体列时只判断该列。
-  let conditionMatches = false
-  if (condition.columnIndex >= 0) {
-    conditionMatches = cellMatchesCondition(cellText(row, condition.columnIndex), condition)
-  } else if (condition.operator === 'notContains') {
-    // 步骤2：“所有列不包含”要求每一列都不含筛选文本。
-    conditionMatches = true
-    for (let columnIndex = 0; columnIndex < columnCount.value; columnIndex += 1) {
-      if (!cellMatchesCondition(cellText(row, columnIndex), condition)) {
-        conditionMatches = false
-        break
-      }
-    }
-  } else {
-    // 步骤3：其他运算符选择全部列时，任意一列满足条件即匹配。
-    for (let columnIndex = 0; columnIndex < columnCount.value; columnIndex += 1) {
-      if (cellMatchesCondition(cellText(row, columnIndex), condition)) {
-        conditionMatches = true
-        break
-      }
-    }
-  }
-
-  // 步骤4：启用“非”时对整条条件结果取反。
-  if (condition.negated) return !conditionMatches
-  return conditionMatches
-}
-
-function rowMatchesFilter(row: CsvRow): boolean {
-  // 步骤1：没有完整条件时保留当前行。
-  if (!filterIsActive.value) return true
-
-  // 步骤2：逐条计算完整条件，忽略尚未填写的条件。
-  for (
-    let conditionIndex = 0;
-    conditionIndex < filterConditions.value.length;
-    conditionIndex += 1
-  ) {
-    const condition = filterConditions.value[conditionIndex]
-    if (!conditionIsComplete(condition)) continue
-
-    const conditionMatches = rowMatchesCondition(row, condition)
-    if (filterLogicMode.value === 'and' && !conditionMatches) return false
-    if (filterLogicMode.value === 'or' && conditionMatches) return true
-  }
-
-  // 步骤3：AND 全部通过时匹配，OR 全部未通过时不匹配。
-  return filterLogicMode.value === 'and'
-}
-
-function toggleFilterPanel(): void {
-  // 步骤1：切换多条件筛选面板显示状态。
-  filterPanelOpen.value = !filterPanelOpen.value
-}
-
-function setFilterLogicMode(logicMode: CsvFilterLogicMode): void {
-  // 步骤1：切换条件组合方式并回到第一页。
-  filterLogicMode.value = logicMode
-  resetPage()
-}
-
-function addFilterCondition(): void {
-  // 步骤1：在条件列表末尾添加空条件。
-  filterConditions.value.push(createFilterCondition())
-}
-
-function removeFilterCondition(conditionIndex: number): void {
-  // 步骤1：至少保留一条可编辑条件。
-  if (filterConditions.value.length <= 1) return
-
-  // 步骤2：用普通循环移除目标条件。
-  const updatedConditions: CsvFilterCondition[] = []
-  for (let index = 0; index < filterConditions.value.length; index += 1) {
-    if (index !== conditionIndex) updatedConditions.push(filterConditions.value[index])
-  }
-  filterConditions.value = updatedConditions
-  resetPage()
-}
-
-function clearFilter(): void {
-  // 步骤1：恢复一条空条件和默认 AND 模式。
-  filterLogicMode.value = 'and'
-  filterConditions.value = [createFilterCondition()]
-  resetPage()
-}
-
-function openColumnDialog(): void {
-  // 步骤1：复制当前可见列作为弹窗草稿。
-  const draftColumnIndexes: number[] = []
-  for (let index = 0; index < visibleColumnIndexes.value.length; index += 1) {
-    draftColumnIndexes.push(visibleColumnIndexes.value[index])
-  }
-  draftVisibleColumnIndexes.value = draftColumnIndexes
-
-  // 步骤2：打开弹窗并收起筛选面板。
-  columnDialogOpen.value = true
-  filterPanelOpen.value = false
-
-  // 步骤3：弹窗渲染后把键盘焦点移入弹窗。
-  void nextTick(function focusColumnDialog() {
-    columnDialogElement.value?.focus()
-  })
-}
-
-function isDraftColumnVisible(columnIndex: number): boolean {
-  // 步骤1：检查列是否包含在当前弹窗草稿中。
-  return draftVisibleColumnIndexes.value.includes(columnIndex)
-}
-
-function changeDraftColumnVisibility(columnIndex: number, event: Event): void {
-  // 步骤1：读取复选框状态并按原始列顺序重建草稿。
-  const checkbox = event.target as HTMLInputElement
-  const updatedDraftIndexes: number[] = []
-  for (let index = 0; index < columnCount.value; index += 1) {
-    if (index === columnIndex) {
-      if (checkbox.checked) updatedDraftIndexes.push(index)
-      continue
-    }
-    if (draftVisibleColumnIndexes.value.includes(index)) updatedDraftIndexes.push(index)
-  }
-  draftVisibleColumnIndexes.value = updatedDraftIndexes
-}
-
-function selectAllDraftColumns(): void {
-  // 步骤1：把全部列加入弹窗草稿。
-  const allColumnIndexes: number[] = []
-  for (let columnIndex = 0; columnIndex < columnCount.value; columnIndex += 1) {
-    allColumnIndexes.push(columnIndex)
-  }
-  draftVisibleColumnIndexes.value = allColumnIndexes
-}
-
-function selectNoDraftColumns(): void {
-  // 步骤1：清空弹窗草稿中的全部可见列。
-  draftVisibleColumnIndexes.value = []
-}
-
-function closeColumnDialog(): void {
-  // 步骤1：关闭弹窗并把键盘焦点还给列按钮。
-  columnDialogOpen.value = false
-  void nextTick(function focusColumnsButton() {
-    columnsButtonElement.value?.focus()
-  })
-}
-
-function cancelColumnDialog(): void {
-  // 步骤1：直接关闭弹窗，不应用草稿。
-  closeColumnDialog()
-}
-
-function confirmColumnDialog(): void {
-  // 步骤1：根据草稿生成新的隐藏列列表，空草稿表示隐藏全部数据列。
-  const updatedHiddenIndexes: number[] = []
-  for (let columnIndex = 0; columnIndex < columnCount.value; columnIndex += 1) {
-    if (!draftVisibleColumnIndexes.value.includes(columnIndex)) {
-      updatedHiddenIndexes.push(columnIndex)
-    }
-  }
-  hiddenColumnIndexes.value = updatedHiddenIndexes
-
-  // 步骤2：应用后关闭弹窗。
-  closeColumnDialog()
-}
-
 function resetPage(): void {
-  // 步骤1：筛选条件变化后回到第一页。
   currentPage.value = 1
 }
 
-async function loadRawBytes(): Promise<ArrayBuffer> {
-  // 步骤1：优先复用已经加载的原始字节。
-  if (rawBytes.value) return rawBytes.value
-
-  // 步骤2：没有原始文件地址时给出明确错误。
-  if (!props.rawUrl) throw new Error(t('csvPreview.rawUnavailable'))
-
-  // 步骤3：读取完整文件，保证表格行数、搜索和筛选覆盖全部记录。
-  const response = await fetch(props.rawUrl)
-  if (!response.ok) throw new Error(t('csvPreview.rawLoadFailed'))
-
-  // 步骤4：缓存完整响应字节供后续编码切换使用。
-  rawBytes.value = await response.arrayBuffer()
-  return rawBytes.value
-}
-
-async function changeEncoding(): Promise<void> {
-  // 步骤1：重置分页和错误状态。
-  resetPage()
-  encodingError.value = ''
-
-  // 步骤2：UTF-8 优先复用已加载的完整原始字节。
-  if (selectedEncoding.value === 'utf-8') {
-    if (rawBytes.value) {
-      const textDecoder = new TextDecoder('utf-8')
-      displayedContent.value = textDecoder.decode(rawBytes.value)
-      displayedContentIsTruncated.value = false
-    } else {
-      displayedContent.value = props.content
-      displayedContentIsTruncated.value = props.truncated
-    }
-    return
-  }
-
-  // 步骤3：其他编码读取完整原始字节并在浏览器解码。
-  encodingLoading.value = true
-  try {
-    const bytes = await loadRawBytes()
-    const textDecoder = new TextDecoder(selectedEncoding.value)
-    displayedContent.value = textDecoder.decode(bytes)
-    displayedContentIsTruncated.value = false
-  } catch (error) {
-    encodingError.value = error instanceof Error ? error.message : String(error)
-  } finally {
-    encodingLoading.value = false
-  }
-}
-
-async function loadCompleteContent(): Promise<void> {
-  // 步骤1：元数据内容完整或没有原始地址时无需额外读取。
-  const contentIsComplete = props.content !== '' && !props.truncated
-  if (contentIsComplete || !props.rawUrl) return
-
-  // 步骤2：读取完整原始字节并先按 UTF-8 展示。
-  encodingLoading.value = true
-  encodingError.value = ''
-  try {
-    const bytes = await loadRawBytes()
-    const textDecoder = new TextDecoder('utf-8')
-    displayedContent.value = textDecoder.decode(bytes)
-    displayedContentIsTruncated.value = false
-  } catch (error) {
-    encodingError.value = error instanceof Error ? error.message : String(error)
-  } finally {
-    encodingLoading.value = false
-  }
-}
-
-onMounted(function initializeCompleteContent() {
-  // 步骤1：元数据缺失或被截断时从原始文件初始化完整预览。
-  void loadCompleteContent()
-})
-
-function currentContent(): string {
-  // 步骤1：向 Vue 提供可监听的内容值。
-  return props.content
-}
-
-function currentFilePath(): string {
-  // 步骤1：向 Vue 提供可监听的文件路径。
-  return props.filePath
-}
-
-function currentTruncatedState(): boolean {
-  // 步骤1：向 Vue 提供可监听的截断状态。
-  return props.truncated
-}
-
-watch(
-  [currentContent, currentFilePath, currentTruncatedState],
-  function synchronizeSelectedFile(values) {
-    // 步骤1：读取新文件内容并清空旧文件缓存。
-    const newContent = values[0]
-    const newContentIsTruncated = values[2]
-    displayedContent.value = newContent
-    displayedContentIsTruncated.value = newContentIsTruncated
-    rawBytes.value = null
-
-    // 步骤2：恢复新文件的默认筛选、分页和编码状态。
-    searchText.value = ''
-    currentPage.value = 1
-    selectedEncoding.value = 'utf-8'
-    encodingError.value = ''
-    filterPanelOpen.value = false
-    filterLogicMode.value = 'and'
-    filterConditions.value = [createFilterCondition()]
-    hiddenColumnIndexes.value = []
-    columnDialogOpen.value = false
-    draftVisibleColumnIndexes.value = []
-
-    // 步骤3：元数据缺失或被截断时重新读取当前文件完整原始字节。
-    if (newContent === '' || newContentIsTruncated) void loadCompleteContent()
-  }
-)
-
 function goToPreviousPage(): void {
-  // 步骤1：尚有上一页时减少页码。
   if (currentPage.value > 1) currentPage.value -= 1
 }
 
 function goToNextPage(): void {
-  // 步骤1：尚有下一页时增加页码。
   if (currentPage.value < pageCount.value) currentPage.value += 1
 }
 
 function emitShowSource(): void {
-  // 步骤1：通知文件预览器切换到源码视图。
   emit('showSource')
 }
 </script>
@@ -1330,8 +736,7 @@ function emitShowSource(): void {
   cursor: pointer;
 }
 
-.csv-preview-filter-negate input,
-.csv-preview-dialog-column-list input {
+.csv-preview-filter-negate input {
   width: 14px;
   height: 14px;
   margin: 0;
@@ -1367,10 +772,7 @@ function emitShowSource(): void {
 .csv-preview-filter-value input:focus-visible,
 .csv-preview-filter-negate input:focus-visible,
 .csv-preview-logic-switch button:focus-visible,
-.csv-preview-text-button:focus-visible,
-.csv-preview-primary-button:focus-visible,
-.csv-preview-dialog-column-list input:focus-visible,
-.csv-preview-columns-dialog:focus-visible {
+.csv-preview-text-button:focus-visible {
   outline: 2px solid var(--accent, #89b4fa);
   outline-offset: 2px;
 }
@@ -1395,133 +797,6 @@ function emitShowSource(): void {
 }
 
 .csv-preview-text-button:disabled {
-  cursor: default;
-  opacity: 0.4;
-}
-
-.csv-preview-dialog-backdrop {
-  position: absolute;
-  z-index: 20;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 12px;
-  background: rgb(0 0 0 / 55%);
-  font-family: var(--font-sans, sans-serif);
-}
-
-.csv-preview-columns-dialog {
-  display: flex;
-  width: min(460px, 100%);
-  max-height: min(560px, 100%);
-  flex-direction: column;
-  overflow: hidden;
-  border: 1px solid var(--border, #3c3c3c);
-  border-radius: 6px;
-  outline: 0;
-  background: var(--tab-bg, #252525);
-  box-shadow: 0 12px 30px rgb(0 0 0 / 35%);
-  color: var(--fg, #cccccc);
-}
-
-.csv-preview-dialog-header {
-  display: flex;
-  min-height: 54px;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border, #333333);
-}
-
-.csv-preview-dialog-header > div {
-  min-width: 0;
-}
-
-.csv-preview-dialog-header h2 {
-  margin: 0;
-  color: var(--fg-bright, #eeeeee);
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.csv-preview-dialog-header span {
-  color: var(--fg-muted, #888888);
-  font-size: 11px;
-}
-
-.csv-preview-dialog-tools {
-  display: flex;
-  flex-shrink: 0;
-  justify-content: flex-end;
-  gap: 7px;
-  padding: 7px 12px;
-  border-bottom: 1px solid var(--border, #333333);
-}
-
-.csv-preview-dialog-column-list {
-  display: grid;
-  min-height: 0;
-  padding: 8px 12px;
-  overflow-y: auto;
-  gap: 5px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  scrollbar-width: thin;
-}
-
-.csv-preview-dialog-column-list label {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 7px;
-  padding: 6px 8px;
-  border: 1px solid var(--border, #3c3c3c);
-  border-radius: 4px;
-  color: var(--fg-muted, #888888);
-  cursor: pointer;
-}
-
-.csv-preview-dialog-column-list label:has(input:checked) {
-  border-color: color-mix(in srgb, var(--accent, #89b4fa) 45%, var(--border, #3c3c3c));
-  color: var(--fg, #cccccc);
-}
-
-.csv-preview-dialog-column-list input {
-  flex: 0 0 auto;
-}
-
-.csv-preview-dialog-column-list span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.csv-preview-dialog-footer {
-  display: flex;
-  min-height: 46px;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 7px;
-  padding: 7px 12px;
-  border-top: 1px solid var(--border, #333333);
-}
-
-.csv-preview-primary-button {
-  height: 28px;
-  padding: 0 12px;
-  border: 1px solid var(--accent, #89b4fa);
-  border-radius: 4px;
-  background: var(--accent, #89b4fa);
-  color: var(--bg, #1a1a1a);
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.csv-preview-primary-button:disabled {
   cursor: default;
   opacity: 0.4;
 }
@@ -1676,14 +951,6 @@ function emitShowSource(): void {
 
   .csv-preview-filter-header > * {
     flex-shrink: 0;
-  }
-
-  .csv-preview-dialog-backdrop {
-    padding: 8px;
-  }
-
-  .csv-preview-dialog-column-list {
-    grid-template-columns: minmax(0, 1fr);
   }
 }
 </style>

@@ -354,6 +354,16 @@ async fn shell_exit_notifies_ws_and_removes_tab() -> TestResult {
     let mut request = ws_url.into_client_request()?;
     request.headers_mut().insert(COOKIE, HeaderValue::from_str(&cookie)?);
     let (mut ws, _) = tokio_tungstenite::connect_async(request).await?;
+
+    // The real client sends `snapshot_request` on connect - the server won't
+    // push any `output` frames until the handshake arrives. Without this the
+    // wait below exhausts its 15s deadline. See frontend/src/types/protocol.ts
+    // SnapshotRequestMsg.
+    ws.send(Message::Text(
+        serde_json::json!({ "type": "snapshot_request", "cols": 80, "rows": 24 }).to_string(),
+    ))
+    .await?;
+
     wait_for_shell_prompt(&mut ws).await?;
 
     ws.send(Message::Text(serde_json::json!({ "type": "input", "data": "exit\r" }).to_string()))

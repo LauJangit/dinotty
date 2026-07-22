@@ -16,13 +16,22 @@ import {
 } from '../types/pane'
 import type TerminalPane from '../components/terminal/TerminalPane.vue'
 import type { SyncClientMsg } from '../types/protocol'
-import { apiSplitPane, apiClosePane } from './useTabApi'
+import {
+  apiSplitPane,
+  apiClosePane,
+  apiCreatePluginPane,
+  apiCreateFilesPane,
+  apiCreateWebPane,
+  apiMovePane,
+  apiExtractPane,
+} from './useTabApi'
 import { setActivePaneId } from './useTerminal'
 import { useI18n } from './useI18n'
 import { usePaneWarning } from './usePaneWarning'
 import { reconcilePaneMru, removePaneFromMru, touchPaneMru } from '../types/paneMru'
 import { getIsAppForeground } from './useAppForeground'
 import { markPaneReadIfUnread } from './useNotification'
+import { clearFileWorkspaceState } from './useFileWorkspaceState'
 
 export function useSplitPane(opts: {
   tabs: Ref<Tab[]>
@@ -126,6 +135,7 @@ export function useSplitPane(opts: {
       }
       setActivePaneId(tab.activePaneId)
       delete termRefs[paneId]
+      clearFileWorkspaceState(paneId)
       persist()
       syncTabLayout(tab)
       nextTick(() => {
@@ -142,6 +152,231 @@ export function useSplitPane(opts: {
     } catch (e) {
       console.error('Failed to close pane:', e)
       return false
+    }
+  }
+
+  /** Insert a non-terminal pane (plugin/files/web) by splitting the target pane. */
+  async function insertNonTerminalPane(
+    kind: 'plugin' | 'files' | 'web',
+    payload: { pluginId?: string; path?: string; url?: string },
+    direction: 'horizontal' | 'vertical' = 'horizontal'
+  ) {
+    const tab = getActiveTerminal()
+    if (!tab) return
+    const apiDirection =
+      direction === 'horizontal' ? 'right' : 'bottom'
+    try {
+      let result
+      if (kind === 'plugin') {
+        if (!payload.pluginId) throw new Error('pluginId required')
+        result = await apiCreatePluginPane(
+          tab.paneId,
+          payload.pluginId,
+          tab.activePaneId,
+          apiDirection
+        )
+      } else if (kind === 'files') {
+        if (!payload.path) throw new Error('path required')
+        result = await apiCreateFilesPane(
+          tab.paneId,
+          payload.path,
+          tab.activePaneId,
+          apiDirection
+        )
+      } else {
+        if (!payload.url) throw new Error('url required')
+        result = await apiCreateWebPane(
+          tab.paneId,
+          payload.url,
+          tab.activePaneId,
+          apiDirection
+        )
+      }
+      tab.layout = ensureSplitRoot(result.layout)
+      tab.paneMru = reconcilePaneMru(
+        touchPaneMru(tab.paneMru, result.new_pane_id),
+        getAllLeaves(tab.layout).map((leaf) => leaf.paneId),
+        result.new_pane_id
+      )
+      tab.activePaneId = result.new_pane_id
+      setActivePaneId(result.new_pane_id)
+      persist()
+      syncTabLayout(tab)
+    } catch (e) {
+      console.error(`Failed to create ${kind} pane:`, e)
+    }
+  }
+
+  /** Move whole source tab as subtree into dst tab (Mode A). */
+  async function moveTabToPane(
+    srcTabId: string,
+    dstTabId: string,
+    targetPaneId: string,
+    direction: 'left' | 'right' | 'top' | 'bottom'
+  ) {
+    try {
+      const result = await apiMovePane(dstTabId, {
+        source_tab_id: srcTabId,
+        target_pane_id: targetPaneId,
+        direction,
+      })
+      // Update destination tab local layout
+      const dst = tabs.value.find(
+        (t) => t.type === 'terminal' && t.paneId === dstTabId
+      ) as TerminalTab | undefined
+      if (dst) {
+        dst.layout = ensureSplitRoot(result.layout)
+        // Reconcile paneMru so the newly-merged leaves are tracked and the
+        // active pane is marked most-recent. Without this, focus shortcuts
+        // (focusNext/Prev/Neighbor) would skip the merged panes until the
+        // next layout_updated broadcast arrives to fix it.
+        dst.paneMru = reconcilePaneMru(
+          touchPaneMru(dst.paneMru, result.active_pane_id),
+          getAllLeaves(dst.layout).map((leaf) => leaf.paneId),
+          result.active_pane_id
+        )
+        dst.activePaneId = result.active_pane_id
+        setActivePaneId(dst.activePaneId)
+        activePaneId.value = dst.paneId
+      }
+      // Remove source tab locally (backend already removed + broadcasted TabClosed)
+      const srcIdx = tabs.value.findIndex((t) => t.paneId === srcTabId)
+      if (srcIdx !== -1) tabs.value.splice(srcIdx, 1)
+      persist()
+    } catch (e) {
+      console.error('Failed to move tab to pane:', e)
+    }
+  }
+
+  /** Move a single pane across tabs (Mode B). */
+  async function movePaneToTab(
+    srcTabId: string,
+    paneId: string,
+    dstTabId: string,
+    targetPaneId: string,
+    direction: 'left' | 'right' | 'top' | 'bottom'
+  ) {
+    try {
+      const result = await apiMovePane(dstTabId, {
+        source_tab_id: srcTabId,
+        source_pane_id: paneId,
+        target_pane_id: targetPaneId,
+        direction,
+      })
+      // Update source tab local layout
+      const src = tabs.value.find(
+        (t) => t.type === 'terminal' && t.paneId === srcTabId
+      ) as TerminalTab | undefined
+      if (src && result.source_layout) {
+        src.layout = ensureSplitRoot(result.source_layout)
+        src.paneMru = removePaneFromMru(src.paneMru, paneId).paneMru
+      }
+      // Update destination tab local layout
+      const dst = tabs.value.find(
+        (t) => t.type === 'terminal' && t.paneId === dstTabId
+      ) as TerminalTab | undefined
+      if (dst) {
+        dst.layout = ensureSplitRoot(result.layout)
+        dst.paneMru = reconcilePaneMru(
+          touchPaneMru(dst.paneMru, result.active_pane_id),
+          getAllLeaves(dst.layout).map((leaf) => leaf.paneId),
+          result.active_pane_id
+        )
+        dst.activePaneId = result.active_pane_id
+        setActivePaneId(dst.activePaneId)
+      }
+      persist()
+    } catch (e) {
+      console.error('Failed to move pane to tab:', e)
+    }
+  }
+
+  /** Promote a single pane to a new tab. */
+  async function promotePaneToTab(srcTabId: string, paneId: string) {
+    // Capture the source leaf BEFORE extraction. After `apiExtractPane`
+    // returns, `result.source_layout` no longer contains this paneId, so the
+    // non-terminal metadata (kind/pluginId/path/url/title) can only be
+    // recovered from the pre-extraction layout. Without this capture, the
+    // fallback below would hardcode `title: 'Terminal'` and drop plugin/files/
+    // web metadata - producing an empty "Terminal" tab when the source was a
+    // non-terminal pane and the REST response wins the race against the
+    // TabCreated broadcast (which would otherwise restore the layout).
+    const srcBefore = tabs.value.find(
+      (t) => t.type === 'terminal' && t.paneId === srcTabId
+    ) as TerminalTab | undefined
+    const sourceLeaf = srcBefore ? findLeaf(srcBefore.layout, paneId) : null
+
+    try {
+      const result = await apiExtractPane(srcTabId, paneId)
+      // Update source tab local layout
+      const src = tabs.value.find(
+        (t) => t.type === 'terminal' && t.paneId === srcTabId
+      ) as TerminalTab | undefined
+      let inheritedCwd: string | undefined
+      let inheritedConnectionId: string | undefined
+      let inheritedWorkspaceId: string | undefined
+      if (src) {
+        src.layout = ensureSplitRoot(result.source_layout)
+        src.paneMru = removePaneFromMru(src.paneMru, paneId).paneMru
+        inheritedCwd = src.cwd
+        inheritedConnectionId = src.connectionId
+        inheritedWorkspaceId = src.workspaceId
+      }
+      // Push locally with inherited fields so the new tab lands in the
+      // same workspace as its source. The TabCreated broadcast will
+      // find this existing entry and skip pushing a duplicate.
+      //
+      // Dedup guard: if the TabCreated broadcast arrived before the REST
+      // response, the sync WS handler already pushed this tab. Filling in
+      // inherited cwd/connectionId/workspaceId on the existing entry instead
+      // of pushing again prevents duplicate tabs (visible as the "multiple
+      // tabs in default workspace" symptom after pane->tab-blank drop).
+      const existing = tabs.value.find(
+        (t) => t.type === 'terminal' && t.paneId === result.new_tab_id
+      ) as TerminalTab | undefined
+      if (existing) {
+        if (inheritedCwd && !existing.cwd) existing.cwd = inheritedCwd
+        if (inheritedConnectionId && !existing.connectionId) {
+          existing.connectionId = inheritedConnectionId
+        }
+        if (inheritedWorkspaceId && !existing.workspaceId) {
+          existing.workspaceId = inheritedWorkspaceId
+        }
+      } else {
+        // Build the new tab's root leaf from the captured source leaf so
+        // kind/title/pluginId/path/url survive the extraction. Falls back to
+        // a plain terminal leaf only when the source was already gone.
+        const fallbackLeaf: LeafPane = sourceLeaf
+          ? { ...sourceLeaf, ratio: 1, zoomed: false }
+          : {
+              type: 'leaf',
+              paneId: result.pane_id,
+              title: 'Terminal',
+              ratio: 1,
+              zoomed: false,
+            }
+        tabs.value.push({
+          type: 'terminal',
+          paneId: result.new_tab_id,
+          layout: ensureSplitRoot(fallbackLeaf),
+          activePaneId: result.pane_id,
+          paneMru: [result.pane_id],
+          broadcastMode: false,
+          broadcastActivity: 0,
+          previewVisible: false,
+          previewAddress: '',
+          previewUrl: '',
+          previewKind: 'web',
+          cwd: inheritedCwd,
+          connectionId: inheritedConnectionId,
+          workspaceId: inheritedWorkspaceId,
+        })
+      }
+      setActivePaneId(result.pane_id)
+      activePaneId.value = result.new_tab_id
+      persist()
+    } catch (e) {
+      console.error('Failed to promote pane to tab:', e)
     }
   }
 
@@ -527,6 +762,10 @@ export function useSplitPane(opts: {
   return {
     splitPane,
     closePane,
+    insertNonTerminalPane,
+    moveTabToPane,
+    movePaneToTab,
+    promotePaneToTab,
     focusPane,
     focusNeighbor,
     focusNext,

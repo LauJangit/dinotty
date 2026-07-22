@@ -127,6 +127,7 @@ const BINDING_KEYS: Record<string, string> = {
   fontSizeReset: '0',
 }
 vi.mock('../composables/useKeybindings', () => ({
+  defs: [],
   useKeybindings: () => ({
     getBinding: (id: string) => ({ key: BINDING_KEYS[id] ?? 'x', shift: false }),
     formatBinding: (b: any) => b.key,
@@ -503,6 +504,50 @@ afterAll(() => {
   else (global as any).localStorage = originalLocalStorage
 })
 
+describe('App.vue - plugin tab close persistence', () => {
+  const terminalTab = (paneId: string): Tab => ({
+    type: 'terminal',
+    paneId,
+    layout: { type: 'leaf', paneId: `${paneId}-leaf`, title: paneId, ratio: 1, zoomed: false },
+    activePaneId: `${paneId}-leaf`,
+    paneMru: [`${paneId}-leaf`],
+    broadcastMode: false,
+    broadcastActivity: 0,
+    previewVisible: false,
+    previewAddress: '',
+    previewUrl: '',
+    previewKind: 'web',
+  })
+
+  it('flushes plugin tab closures synchronously to avoid resurrect race', async () => {
+    const wrapper = await mountWithTabs()
+    const session = useSessionStore()
+    const terminal = session.tabs[0]
+    if (!terminal || terminal.type !== 'terminal') {
+      throw new Error('expected seeded terminal tab')
+    }
+    session.setTabs([
+      terminal,
+      { type: 'plugin', paneId: 'plugin:memory', title: 'Memory', pluginId: 'memory' },
+    ])
+    session.setActivePane('plugin:memory')
+
+    const splitContainer = wrapper.findComponent(SplitContainerStub)
+    splitContainer.vm.$emit('divider-drag-end')
+    window.dispatchEvent(new Event('beforeunload'))
+    expect(JSON.parse(localStorageMock.getItem('dinotty_tabs')!).tabs).toHaveLength(2)
+
+    await (wrapper.vm as any).closeTab('plugin:memory')
+
+    // Synchronous flush: localStorage must reflect the close immediately,
+    // not after a 200ms debounce. Otherwise a tab_list arriving in the
+    // window would re-read stale storage and resurrect the closed plugin tab.
+    const saved = JSON.parse(localStorageMock.getItem('dinotty_tabs')!)
+    expect(saved.tabs).toHaveLength(1)
+    expect(saved.tabs[0].paneId).toBe(terminal.paneId)
+  })
+})
+
 describe('App.vue - onClosePane routes through confirmation gate', () => {
   beforeEach(() => {
     settings.confirm_before_close_tab = true
@@ -666,6 +711,137 @@ describe('App.vue - onClosePane routes through confirmation gate', () => {
 
     expect(currentRevealNavGen()).toBe(navGenBeforeClose + 1)
     expect(session.activePaneId).toBe('tab-survivor')
+  })
+
+  it('selects the same-workspace successor instead of the flat-array neighbour', async () => {
+    const wrapper = await mountWithTabs()
+    const session = useSessionStore()
+    const workspaceState = useWorkspaces()
+    workspaceState.workspaces.value = [
+      { id: 'workspace-a', name: 'Workspace A', path: '/workspace/a', order: 0 },
+      { id: 'workspace-b', name: 'Workspace B', path: '/workspace/b', order: 1 },
+    ]
+    const terminalTab = (paneId: string, cwd: string): Tab => ({
+      type: 'terminal',
+      paneId,
+      layout: {
+        type: 'leaf',
+        paneId: `${paneId}-leaf`,
+        title: paneId,
+        ratio: 1,
+        zoomed: false,
+      },
+      activePaneId: `${paneId}-leaf`,
+      paneMru: [`${paneId}-leaf`],
+      broadcastMode: false,
+      broadcastActivity: 0,
+      previewVisible: false,
+      previewAddress: '',
+      previewUrl: '',
+      previewKind: 'web',
+      cwd,
+    })
+    session.setTabs([
+      terminalTab('workspace-a-closed', '/workspace/a'),
+      terminalTab('workspace-b-neighbour', '/workspace/b'),
+      terminalTab('workspace-a-successor', '/workspace/a'),
+    ])
+    session.setActivePane('workspace-a-closed')
+
+    const app = wrapper.vm as unknown as { closeTab: (tabId: string) => Promise<void> }
+    await app.closeTab('workspace-a-closed')
+    await nextTick()
+
+    expect(session.activePaneId).toBe('workspace-a-successor')
+  })
+
+  it('moves to the successor workspace when closing its active workspace last tab', async () => {
+    const wrapper = await mountWithTabs()
+    const session = useSessionStore()
+    const workspaceState = useWorkspaces()
+    workspaceState.workspaces.value = [
+      { id: 'workspace-a', name: 'Workspace A', path: '/workspace/a', order: 0 },
+      { id: 'workspace-b', name: 'Workspace B', path: '/workspace/b', order: 1 },
+    ]
+    workspaceState.activeWorkspaceId.value = 'workspace-a'
+    const terminalTab = (paneId: string, cwd: string): Tab => ({
+      type: 'terminal',
+      paneId,
+      layout: {
+        type: 'leaf',
+        paneId: `${paneId}-leaf`,
+        title: paneId,
+        ratio: 1,
+        zoomed: false,
+      },
+      activePaneId: `${paneId}-leaf`,
+      paneMru: [`${paneId}-leaf`],
+      broadcastMode: false,
+      broadcastActivity: 0,
+      previewVisible: false,
+      previewAddress: '',
+      previewUrl: '',
+      previewKind: 'web',
+      cwd,
+    })
+    session.setTabs([
+      terminalTab('workspace-a-only-tab', '/workspace/a'),
+      terminalTab('workspace-b-successor', '/workspace/b'),
+    ])
+    session.setActivePane('workspace-a-only-tab')
+
+    const app = wrapper.vm as unknown as { closeTab: (tabId: string) => Promise<void> }
+    await app.closeTab('workspace-a-only-tab')
+    await nextTick()
+
+    expect(mocks.apiActivateWorkspace).toHaveBeenCalledWith('workspace-b')
+    expect(workspaceState.activeWorkspaceId.value).toBe('workspace-b')
+    expect(session.activePaneId).toBe('workspace-b-successor')
+  })
+
+  it('uses a positional fallback when the successor workspace hop fails', async () => {
+    const wrapper = await mountWithTabs()
+    const session = useSessionStore()
+    const workspaceState = useWorkspaces()
+    workspaceState.workspaces.value = [
+      { id: 'workspace-a', name: 'Workspace A', path: '/workspace/a', order: 0 },
+      { id: 'workspace-b', name: 'Workspace B', path: '/workspace/b', order: 1 },
+    ]
+    workspaceState.activeWorkspaceId.value = 'workspace-a'
+    const terminalTab = (paneId: string, cwd: string): Tab => ({
+      type: 'terminal',
+      paneId,
+      layout: {
+        type: 'leaf',
+        paneId: `${paneId}-leaf`,
+        title: paneId,
+        ratio: 1,
+        zoomed: false,
+      },
+      activePaneId: `${paneId}-leaf`,
+      paneMru: [`${paneId}-leaf`],
+      broadcastMode: false,
+      broadcastActivity: 0,
+      previewVisible: false,
+      previewAddress: '',
+      previewUrl: '',
+      previewKind: 'web',
+      cwd,
+    })
+    session.setTabs([
+      terminalTab('workspace-a-only-tab', '/workspace/a'),
+      terminalTab('workspace-b-fallback', '/workspace/b'),
+    ])
+    session.setActivePane('workspace-a-only-tab')
+    mocks.apiActivateWorkspace.mockRejectedValueOnce(new Error('activation failed'))
+
+    const app = wrapper.vm as unknown as { closeTab: (tabId: string) => Promise<void> }
+    await app.closeTab('workspace-a-only-tab')
+    await nextTick()
+
+    expect(mocks.apiActivateWorkspace).toHaveBeenNthCalledWith(2, 'workspace-b')
+    expect(workspaceState.activeWorkspaceId.value).toBe('workspace-b')
+    expect(session.activePaneId).toBe('workspace-b-fallback')
   })
 })
 

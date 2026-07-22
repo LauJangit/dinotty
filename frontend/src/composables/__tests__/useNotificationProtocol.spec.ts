@@ -1,33 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-class FakeWebSocket {
-  static OPEN = 1
-  static instances: FakeWebSocket[] = []
-
-  url: string
-  readyState = FakeWebSocket.OPEN
-  sent: string[] = []
-  onopen: ((event: Event) => void) | null = null
-  onmessage: ((event: MessageEvent) => void) | null = null
-  onclose: ((event: CloseEvent) => void) | null = null
-  onerror: ((event: Event) => void) | null = null
-
-  constructor(url: string) {
-    this.url = url
-    FakeWebSocket.instances.push(this)
-  }
-
-  send(data: string) {
-    this.sent.push(data)
-  }
-
-  close() {
-    this.readyState = 3
-  }
-}
-
-vi.stubGlobal('WebSocket', FakeWebSocket)
-
 function memoryStorage(): Storage {
   const values = new Map<string, string>()
   return {
@@ -46,11 +18,9 @@ vi.stubGlobal('localStorage', memoryStorage())
 vi.stubGlobal('sessionStorage', memoryStorage())
 
 const transportMock = vi.hoisted(() => ({ tauri: false }))
-const reloadMock = vi.hoisted(() => vi.fn())
 vi.stubGlobal('location', {
   protocol: 'http:',
   host: 'localhost',
-  reload: reloadMock,
 })
 
 vi.mock('vue-toastification', () => ({
@@ -63,9 +33,14 @@ vi.mock('../useI18n', () => ({
 
 vi.mock('../useTransport', () => ({ isTauri: () => transportMock.tauri }))
 
-vi.mock('../apiBase', () => ({
-  getApiBase: async () => 'http://127.0.0.1:28999',
-  wsUrlWithToken: (url: string) => url,
+const syncMock = vi.hoisted(() => ({
+  sentPayloads: [] as any[],
+  clientId: 'client-test',
+}))
+vi.mock('../useSyncWebSocket', () => ({
+  onNotification: () => () => {},
+  getClientId: () => syncMock.clientId,
+  sendMarkRead: (payload: any) => { syncMock.sentPayloads.push(payload) },
 }))
 
 import { settings } from '../useSettings'
@@ -138,11 +113,11 @@ function current() {
 beforeEach(() => {
   vi.useFakeTimers()
   __resetForTest()
-  FakeWebSocket.instances = []
+  syncMock.sentPayloads = []
+  syncMock.clientId = 'client-test'
   localStorage.clear()
   sessionStorage.clear()
   transportMock.tauri = false
-  reloadMock.mockReset()
   ;(settings as any).notification = {
     enabled: true,
     osc_notify: true,
@@ -159,9 +134,8 @@ afterEach(() => {
 })
 
 describe('useNotification protocol dispatcher', () => {
-  it('connects to protocol v1 and dispatches state, resync, snapshot, ack, and legacy envelopes', () => {
+  it('dispatches state, resync, snapshot, ack, and legacy envelopes', () => {
     const notif = current()
-    expect(FakeWebSocket.instances[0].url).toContain('/ws/notify?v=1')
 
     __dispatchServerMessageForTest(
       snapshot('1', [
@@ -173,9 +147,10 @@ describe('useNotification protocol dispatcher', () => {
     notif.markPanesRead([{ paneId: 'pane-a' }], 'focus')
     expect(notif.unreadAttentionCount.value).toBe(0)
 
-    const payload = JSON.parse(FakeWebSocket.instances[0].sent[0])
+    expect(syncMock.sentPayloads).toHaveLength(1)
+    const payload = syncMock.sentPayloads[0]
     expect(payload).toMatchObject({
-      type: 'notification.mark_read',
+      type: 'mark_read',
       v: 1,
       epoch: 'epoch-a',
       reason: 'focus',
@@ -212,7 +187,6 @@ describe('useNotification protocol dispatcher', () => {
 
   it('bounds ack-timeout resends and rolls back the overlay after exhaustion', async () => {
     const notif = current()
-    const socket = FakeWebSocket.instances[0]
     __dispatchServerMessageForTest(
       snapshot('1', [
         { paneId: 'pane-a', latestEventSeq: '7', readThroughSeq: '0', severity: 'warning' },
@@ -220,16 +194,16 @@ describe('useNotification protocol dispatcher', () => {
     )
 
     notif.markPanesRead([{ paneId: 'pane-a' }], 'terminal_input')
-    expect(socket.sent).toHaveLength(1)
+    expect(syncMock.sentPayloads).toHaveLength(1)
     expect(notif.unreadAttentionCount.value).toBe(0)
 
     await vi.advanceTimersByTimeAsync(15_000)
-    expect(socket.sent).toHaveLength(4)
-    expect(new Set(socket.sent).size).toBe(1)
+    expect(syncMock.sentPayloads).toHaveLength(4)
+    expect(new Set(syncMock.sentPayloads).size).toBe(1)
     expect(notif.unreadAttentionCount.value).toBe(0)
 
     await vi.advanceTimersByTimeAsync(5_000)
-    expect(socket.sent).toHaveLength(4)
+    expect(syncMock.sentPayloads).toHaveLength(4)
     expect(notif.unreadAttentionCount.value).toBe(1)
   })
 
@@ -308,7 +282,6 @@ describe('useNotification protocol dispatcher', () => {
 
   it('clearAll sends one combined request with authoritative pane and notif targets', () => {
     const notif = current()
-    const socket = FakeWebSocket.instances[0]
     __dispatchServerMessageForTest(
       snapshot(
         '1',
@@ -319,8 +292,8 @@ describe('useNotification protocol dispatcher', () => {
 
     notif.clearAll()
 
-    expect(socket.sent).toHaveLength(1)
-    expect(JSON.parse(socket.sent[0])).toMatchObject({
+    expect(syncMock.sentPayloads).toHaveLength(1)
+    expect(syncMock.sentPayloads[0]).toMatchObject({
       reason: 'clear_all',
       panes: [{ paneId: 'pane-a', throughEventSeq: '8' }],
       notifs: [{ notifId: 'notif-a' }],
@@ -330,7 +303,6 @@ describe('useNotification protocol dispatcher', () => {
 
   it('stale_epoch cancels every pending overlay', () => {
     const notif = current()
-    const socket = FakeWebSocket.instances[0]
     __dispatchServerMessageForTest(
       snapshot('1', [
         { paneId: 'a', latestEventSeq: '1', readThroughSeq: '0', severity: 'info' },
@@ -341,7 +313,7 @@ describe('useNotification protocol dispatcher', () => {
     notif.markPanesRead([{ paneId: 'b' }], 'focus')
     expect(notif.unreadAttentionCount.value).toBe(0)
 
-    const firstPayload = JSON.parse(socket.sent[0])
+    const firstPayload = syncMock.sentPayloads[0]
     __dispatchServerMessageForTest({
       type: 'mark_read_result',
       requestId: firstPayload.requestId,
@@ -352,56 +324,8 @@ describe('useNotification protocol dispatcher', () => {
     expect(notif.unreadAttentionCount.value).toBe(2)
   })
 
-  it('close 4001 cancels pending timers, restores authoritative state, and reloads the web app once', async () => {
+  it('bounds pending requests, evicts the oldest at 64, and expires all overlays', async () => {
     const notif = current()
-    const socket = FakeWebSocket.instances[0]
-    __dispatchServerMessageForTest(
-      snapshot('1', [
-        { paneId: 'pane-a', latestEventSeq: '1', readThroughSeq: '0', severity: 'error' },
-      ])
-    )
-    notif.markPanesRead([{ paneId: 'pane-a' }], 'focus')
-    expect(notif.unreadAttentionCount.value).toBe(0)
-    expect(__pendingRequestCountForTest()).toBe(1)
-    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout')
-
-    socket.onclose?.({ code: 4001, reason: 'protocol_upgrade_required' } as CloseEvent)
-    expect(clearTimeoutSpy).toHaveBeenCalledOnce()
-    expect(__pendingRequestCountForTest()).toBe(0)
-    expect(notif.unreadAttentionCount.value).toBe(1)
-    await vi.advanceTimersByTimeAsync(120_000)
-
-    expect(socket.sent).toHaveLength(1)
-    expect(FakeWebSocket.instances).toHaveLength(1)
-    expect(reloadMock).toHaveBeenCalledOnce()
-  })
-
-  it('close 4001 in Tauri cancels pending timers without reload or reconnect', async () => {
-    transportMock.tauri = true
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const notif = current()
-    await Promise.resolve()
-    const socket = FakeWebSocket.instances[0]
-    __dispatchServerMessageForTest(
-      snapshot('1', [
-        { paneId: 'pane-a', latestEventSeq: '1', readThroughSeq: '0', severity: 'error' },
-      ])
-    )
-    notif.markPanesRead([{ paneId: 'pane-a' }], 'focus')
-
-    socket.onclose?.({ code: 4001, reason: 'protocol_upgrade_required' } as CloseEvent)
-    await vi.advanceTimersByTimeAsync(120_000)
-
-    expect(socket.sent).toHaveLength(1)
-    expect(__pendingRequestCountForTest()).toBe(0)
-    expect(FakeWebSocket.instances).toHaveLength(1)
-    expect(reloadMock).not.toHaveBeenCalled()
-    expect(errorSpy).toHaveBeenCalled()
-  })
-
-  it('bounds disconnected requests, evicts the oldest at 64, and expires all overlays', async () => {
-    const notif = current()
-    const socket = FakeWebSocket.instances[0]
     const panes = Array.from({ length: 65 }, (_, index) => ({
       paneId: `pane-${index}`,
       latestEventSeq: String(index + 1),
@@ -409,12 +333,10 @@ describe('useNotification protocol dispatcher', () => {
       severity: 'warning',
     }))
     __dispatchServerMessageForTest(snapshot('1', panes))
-    socket.readyState = 3
     const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout')
 
     for (const pane of panes) notif.markPanesRead([{ paneId: pane.paneId }], 'focus')
 
-    expect(socket.sent).toHaveLength(0)
     expect(__pendingRequestCountForTest()).toBe(64)
     expect(notif.unreadAttentionCount.value).toBe(1)
     expect(clearTimeoutSpy).toHaveBeenCalled()
@@ -426,7 +348,6 @@ describe('useNotification protocol dispatcher', () => {
 
   it('dismisses a stale-epoch history card locally without sending mark_read', () => {
     const notif = current()
-    const socket = FakeWebSocket.instances[0]
     __dispatchServerMessageForTest(
       snapshot('1', [
         { paneId: 'pane-a', latestEventSeq: '1', readThroughSeq: '0', severity: 'info' },
@@ -446,46 +367,20 @@ describe('useNotification protocol dispatcher', () => {
     notif.dismissOne(item.id)
 
     expect(notif.notifications.value).toHaveLength(0)
-    expect(socket.sent).toHaveLength(0)
+    expect(syncMock.sentPayloads).toHaveLength(0)
     expect(notif.unreadAttentionCount.value).toBe(1)
   })
 
-  it('reconnect resend uses the current snapshot epoch', async () => {
+  it('drops pending entries on epoch change instead of resending them', () => {
     const notif = current()
-    const firstSocket = FakeWebSocket.instances[0]
     __dispatchServerMessageForTest(
       snapshot('1', [
         { paneId: 'pane-a', latestEventSeq: '3', readThroughSeq: '0', severity: 'info' },
       ])
     )
     notif.markPanesRead([{ paneId: 'pane-a' }], 'focus')
+    expect(syncMock.sentPayloads).toHaveLength(1)
 
-    firstSocket.onclose?.({ code: 1006 } as CloseEvent)
-    await vi.advanceTimersByTimeAsync(3000)
-    const reconnected = FakeWebSocket.instances[1]
-    __dispatchServerMessageForTest(
-      snapshot('2', [
-        { paneId: 'pane-a', latestEventSeq: '3', readThroughSeq: '0', severity: 'info' },
-      ])
-    )
-
-    expect(reconnected.sent).toHaveLength(1)
-    expect(JSON.parse(reconnected.sent[0]).epoch).toBe('epoch-a')
-  })
-
-  it('drops old-epoch pending entries after reconnect instead of resending them', async () => {
-    const notif = current()
-    const firstSocket = FakeWebSocket.instances[0]
-    __dispatchServerMessageForTest(
-      snapshot('1', [
-        { paneId: 'pane-a', latestEventSeq: '3', readThroughSeq: '0', severity: 'info' },
-      ])
-    )
-    notif.markPanesRead([{ paneId: 'pane-a' }], 'focus')
-
-    firstSocket.onclose?.({ code: 1006 } as CloseEvent)
-    await vi.advanceTimersByTimeAsync(3000)
-    const reconnected = FakeWebSocket.instances[1]
     __dispatchServerMessageForTest(
       snapshot(
         '1',
@@ -495,79 +390,20 @@ describe('useNotification protocol dispatcher', () => {
       )
     )
 
-    expect(reconnected.sent).toHaveLength(0)
+    expect(syncMock.sentPayloads).toHaveLength(1)
     expect(__pendingRequestCountForTest()).toBe(0)
     expect(notif.unreadAttentionCount.value).toBe(1)
-  })
-
-  it('keeps retrying through the real disconnected close path until the overlay expires', async () => {
-    const notif = current()
-    const firstSocket = FakeWebSocket.instances[0]
-    __dispatchServerMessageForTest(
-      snapshot('1', [
-        { paneId: 'pane-a', latestEventSeq: '3', readThroughSeq: '0', severity: 'info' },
-      ])
-    )
-
-    notif.markPanesRead([{ paneId: 'pane-a' }], 'focus')
-    expect(__pendingRequestCountForTest()).toBe(1)
-    expect(notif.unreadAttentionCount.value).toBe(0)
-    firstSocket.onclose?.({ code: 1006 } as CloseEvent)
-
-    await vi.advanceTimersByTimeAsync(20_000)
-
-    expect(__pendingRequestCountForTest()).toBe(0)
-    expect(notif.unreadAttentionCount.value).toBe(1)
-    expect(firstSocket.sent).toHaveLength(1)
-    expect(FakeWebSocket.instances[1].sent).toHaveLength(0)
-  })
-
-  it('counts a retry in the reconnect pre-snapshot window but waits for snapshot to send', async () => {
-    const notif = current()
-    const firstSocket = FakeWebSocket.instances[0]
-    __dispatchServerMessageForTest(
-      snapshot(
-        '1',
-        [{ paneId: 'pane-a', latestEventSeq: '3', readThroughSeq: '0', severity: 'info' }],
-        [],
-        'epoch-current'
-      )
-    )
-    notif.markPanesRead([{ paneId: 'pane-a' }], 'focus')
-    expect(firstSocket.sent).toHaveLength(1)
-
-    firstSocket.onclose?.({ code: 1006 } as CloseEvent)
-    await vi.advanceTimersByTimeAsync(5000)
-    const reconnected = FakeWebSocket.instances[1]
-    expect(reconnected.sent).toHaveLength(0)
-
-    __dispatchServerMessageForTest(
-      snapshot(
-        '2',
-        [{ paneId: 'pane-a', latestEventSeq: '3', readThroughSeq: '0', severity: 'info' }],
-        [],
-        'epoch-current'
-      )
-    )
-
-    expect(reconnected.sent).toHaveLength(1)
-    expect(JSON.parse(reconnected.sent[0])).toMatchObject({ epoch: 'epoch-current' })
-
-    await vi.advanceTimersByTimeAsync(10_000)
-    expect(reconnected.sent).toHaveLength(2)
-    expect(__pendingRequestCountForTest()).toBe(0)
   })
 
   it('cancels the resend timer when mark_read_result arrives', async () => {
     const notif = current()
-    const socket = FakeWebSocket.instances[0]
     __dispatchServerMessageForTest(
       snapshot('1', [
         { paneId: 'pane-a', latestEventSeq: '3', readThroughSeq: '0', severity: 'info' },
       ])
     )
     notif.markPanesRead([{ paneId: 'pane-a' }], 'focus')
-    const payload = JSON.parse(socket.sent[0])
+    const payload = syncMock.sentPayloads[0]
 
     __dispatchServerMessageForTest({
       type: 'mark_read_result',
@@ -578,13 +414,12 @@ describe('useNotification protocol dispatcher', () => {
     })
     await vi.advanceTimersByTimeAsync(20_000)
 
-    expect(socket.sent).toHaveLength(1)
+    expect(syncMock.sentPayloads).toHaveLength(1)
     expect(__pendingRequestCountForTest()).toBe(0)
   })
 
   it('retires a proved overlay through snapshot message dispatch', async () => {
     const notif = current()
-    const socket = FakeWebSocket.instances[0]
     __dispatchServerMessageForTest(
       snapshot('1', [
         { paneId: 'pane-a', latestEventSeq: '3', readThroughSeq: '0', severity: 'info' },
@@ -600,13 +435,12 @@ describe('useNotification protocol dispatcher', () => {
     await vi.advanceTimersByTimeAsync(20_000)
 
     expect(__pendingRequestCountForTest()).toBe(0)
-    expect(socket.sent).toHaveLength(1)
+    expect(syncMock.sentPayloads).toHaveLength(1)
     expect(notif.unreadAttentionCount.value).toBe(0)
   })
 
   it('retires and cancels a proved overlay through delta message dispatch', async () => {
     const notif = current()
-    const socket = FakeWebSocket.instances[0]
     __dispatchServerMessageForTest(
       snapshot('1', [
         { paneId: 'pane-a', latestEventSeq: '3', readThroughSeq: '0', severity: 'info' },
@@ -622,7 +456,7 @@ describe('useNotification protocol dispatcher', () => {
     await vi.advanceTimersByTimeAsync(20_000)
 
     expect(__pendingRequestCountForTest()).toBe(0)
-    expect(socket.sent).toHaveLength(1)
+    expect(syncMock.sentPayloads).toHaveLength(1)
     expect(notif.unreadAttentionCount.value).toBe(0)
   })
 

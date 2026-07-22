@@ -67,20 +67,24 @@ export function useSuperviseTabs() {
       orderedTabIds.add(tab.paneId)
     }
 
-    return orderedTabs.map((tab) => ({
-      id: tab.paneId,
-      reminderAt: reminderAt(tab),
-    }))
+    return orderedTabs
+      .filter((tab) => tab.type !== 'plugin')
+      .map((tab) => ({
+        id: tab.paneId,
+        reminderAt: reminderAt(tab),
+      }))
   }
 
-  async function supervise(activate: (id: string) => Promise<boolean>): Promise<void> {
+  async function supervise(activate: (id: string) => Promise<boolean>): Promise<boolean> {
+    if (disposed) return false
+
     const result = pickSupervisedTab({
       tabs: orderedCandidates(),
       currentTabId: session.activePaneId,
       pendingTabIds: new Set(pending.keys()),
     })
 
-    if (result.targetTabId === null) return
+    if (result.targetTabId === null) return false
 
     const target = result.targetTabId
     const token = ++tokenCounter
@@ -97,13 +101,14 @@ export function useSuperviseTabs() {
       activation = activate(target)
     } catch {
       settle()
-      return
+      return false
     }
     // If activate() synchronously disposed the scope, skip watchdog registration —
     // onScopeDispose has already run and would not clean up a watchdog registered now.
     if (disposed) {
       settle()
-      return
+      void activation.catch(() => {})
+      return false
     }
     const attemptGen = currentRevealNavGen()
 
@@ -111,8 +116,14 @@ export function useSuperviseTabs() {
     let raceResolver: (() => void) | null = null
     const activationSettled = Promise.resolve(activation)
       .then(
-        () => settle(),
-        () => settle()
+        (activated) => {
+          settle()
+          return !!activated
+        },
+        () => {
+          settle()
+          return false
+        },
       )
       .finally(() => {
         if (timeoutId !== null) {
@@ -121,9 +132,10 @@ export function useSuperviseTabs() {
         }
         if (raceResolver !== null) pendingRaceResolvers.delete(raceResolver)
       })
-    const timedOut = new Promise<void>((resolve) => {
-      raceResolver = resolve
-      pendingRaceResolvers.add(resolve)
+    const timedOut = new Promise<boolean>((resolve) => {
+      const resolveFalse = () => resolve(false)
+      raceResolver = resolveFalse
+      pendingRaceResolvers.add(resolveFalse)
       const watchdogId = setTimeout(() => {
         activeWatchdogs.delete(watchdogId)
         timeoutId = null
@@ -134,14 +146,14 @@ export function useSuperviseTabs() {
             nextRevealNavGen()
           }
         }
-        pendingRaceResolvers.delete(resolve)
-        resolve()
+        pendingRaceResolvers.delete(resolveFalse)
+        resolveFalse()
       }, 10_000)
       timeoutId = watchdogId
       activeWatchdogs.add(watchdogId)
     })
 
-    await Promise.race([activationSettled, timedOut])
+    return await Promise.race([activationSettled, timedOut])
   }
 
   return { supervise }

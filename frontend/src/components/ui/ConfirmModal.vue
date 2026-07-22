@@ -184,6 +184,7 @@ onUnmounted(() => {
   font-size: 13px;
   color: var(--fg);
   line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .confirm-footer {

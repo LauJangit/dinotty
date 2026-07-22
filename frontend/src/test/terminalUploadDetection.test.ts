@@ -11,6 +11,7 @@ vi.mock('../composables/useTransport', () => ({
 }))
 
 import { TerminalInstance } from '../composables/useTerminal'
+import { setupTerminalDrop } from '../composables/useTerminalDrop'
 
 function eventWithData<T extends Event>(event: T, prop: string, value: unknown): T {
   Object.defineProperty(event, prop, { value })
@@ -37,7 +38,10 @@ describe('terminal upload detection', () => {
     wrapper.appendChild(xterm)
     const upload = vi.fn()
     term.onFileUpload = upload
-    ;(term as any)._setupDragDrop(wrapper)
+    setupTerminalDrop(wrapper, {
+      sendData: (d) => term.sendData(d),
+      onFileUpload: (files) => term.onFileUpload?.(files),
+    })
 
     const file = new File(['x'], 'x.txt')
     const drop = eventWithData(new Event('drop', { bubbles: true, cancelable: true }), 'dataTransfer', {
@@ -61,7 +65,10 @@ describe('terminal upload detection', () => {
     wrapper.appendChild(xterm)
     const upload = vi.fn()
     term.onFileUpload = upload
-    ;(term as any)._setupDragDrop(wrapper)
+    setupTerminalDrop(wrapper, {
+      sendData: (d) => term.sendData(d),
+      onFileUpload: (files) => term.onFileUpload?.(files),
+    })
 
     const drop = eventWithData(new Event('drop', { bubbles: true, cancelable: true }), 'dataTransfer', {
       files: [{ path: '/tmp/a b.txt', name: 'a b.txt' }],
@@ -76,17 +83,20 @@ describe('terminal upload detection', () => {
 
   it('uploads pasted files, leaves text-only paste alone, and treats mixed paste as upload-only', () => {
     const term = new TerminalInstance('p1')
-    const target = document.createElement('div')
+    const wrapper = document.createElement('div')
     const upload = vi.fn()
     term.onFileUpload = upload
-    ;(term as any)._setupPasteUpload(target)
+    setupTerminalDrop(wrapper, {
+      sendData: (d) => term.sendData(d),
+      onFileUpload: (files) => term.onFileUpload?.(files),
+    })
 
     const textPaste = eventWithData(
       new Event('paste', { bubbles: true, cancelable: true }),
       'clipboardData',
       { items: [{ kind: 'string', getAsFile: () => null }] }
     )
-    target.dispatchEvent(textPaste)
+    wrapper.dispatchEvent(textPaste)
     expect(textPaste.defaultPrevented).toBe(false)
     expect(upload).not.toHaveBeenCalled()
 
@@ -101,7 +111,7 @@ describe('terminal upload detection', () => {
         ],
       }
     )
-    target.dispatchEvent(mixedPaste)
+    wrapper.dispatchEvent(mixedPaste)
 
     expect(mixedPaste.defaultPrevented).toBe(true)
     expect(upload).toHaveBeenCalledWith([file])
@@ -117,10 +127,13 @@ describe('terminal upload detection', () => {
     Object.defineProperty(navigator, 'clipboard', { value: { read }, configurable: true })
 
     const term = new TerminalInstance('p1')
-    const target = document.createElement('div')
+    const wrapper = document.createElement('div')
     const upload = vi.fn()
     term.onFileUpload = upload
-    ;(term as any)._setupPasteUpload(target)
+    setupTerminalDrop(wrapper, {
+      sendData: (d) => term.sendData(d),
+      onFileUpload: (files) => term.onFileUpload?.(files),
+    })
 
     const pasteShortcut = new KeyboardEvent('keydown', {
       key: 'v',
@@ -128,7 +141,7 @@ describe('terminal upload detection', () => {
       bubbles: true,
       cancelable: true,
     })
-    target.dispatchEvent(pasteShortcut)
+    wrapper.dispatchEvent(pasteShortcut)
     await flushAsync()
 
     expect(pasteShortcut.defaultPrevented).toBe(false)

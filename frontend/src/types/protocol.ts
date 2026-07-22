@@ -175,21 +175,6 @@ export interface SyncWorkspaceList {
   active_workspace_id: string | null
 }
 
-export type SyncServerMsg =
-  | SyncTabList
-  | SyncTabCreated
-  | SyncTabClosed
-  | SyncTabActivated
-  | SyncPluginChanged
-  | SyncLayoutUpdated
-  | SyncSshAuthPrompt
-  | SyncWorkspaceCreated
-  | SyncWorkspaceUpdated
-  | SyncWorkspaceDeleted
-  | SyncWorkspaceActivated
-  | SyncWorkspaceReordered
-  | SyncWorkspaceList
-
 export interface SyncCreateTab {
   type: 'create_tab'
   layout: any
@@ -225,6 +210,161 @@ export interface SyncSshAuthResponse {
   responses: string[]
 }
 
+export interface SyncEvent {
+  type: 'event'
+  event_name: string
+  data: unknown
+  source_pane_id?: string
+  plugin_id?: string
+  target_plugin_id?: string
+}
+
+export interface SyncHello {
+  type: 'sync_hello'
+  client_id: string
+}
+
+export interface SyncBell {
+  type: 'bell'
+  v: number
+  pane_id: string
+  title?: string
+  body: string
+  notification_type: string
+  eventSeq: string
+  occurredAt: number
+  severity: 'info' | 'success' | 'warning' | 'error' | 'urgent'
+  notifId?: string
+}
+
+export interface SyncNotify {
+  type: 'notify'
+  v: number
+  pane_id: string
+  title?: string
+  body: string
+  notification_type: string
+  eventSeq: string
+  occurredAt: number
+  severity: 'info' | 'success' | 'warning' | 'error' | 'urgent'
+  notifId?: string
+}
+
+export interface SyncStateDelta {
+  type: 'state_delta'
+  epoch: string
+  revision: string
+  panes: Array<{
+    paneId: string
+    latestEventSeq: string | null
+    readThroughSeq: string | null
+    firstUnreadAt: number | null
+    severity: string | null
+    removed?: true
+  }>
+  notifs: Array<{
+    notifId: string
+    read: boolean | null
+    removed?: true
+  }>
+}
+
+export interface SyncSnapshot {
+  type: 'snapshot'
+  epoch: string
+  revision: string
+  panes: Array<{
+    paneId: string
+    latestEventSeq: string | null
+    readThroughSeq: string | null
+    firstUnreadAt: number | null
+    severity: string | null
+    removed?: true
+  }>
+  notifs: Array<{
+    notifId: string
+    read: boolean | null
+    removed?: true
+  }>
+}
+
+export interface SyncMarkReadResult {
+  type: 'mark_read_result'
+  requestId: string
+  epoch: string
+  appliedAtRevision: string | null
+  results: Array<{
+    target: { paneId: string } | { notifId: string }
+    status: 'applied' | 'stale_epoch' | 'invalid' | 'not_found' | 'conflict'
+  }>
+}
+
+export interface SyncResyncRequired {
+  type: 'resync_required'
+  v: number
+}
+
+export interface SyncSuggestions {
+  type: 'suggestions'
+  items: Array<{ command: string; frequency: number }>
+}
+
+export interface SyncMonitorData {
+  type: 'monitor_data'
+  data: Record<string, unknown>
+}
+
+export interface SyncMonitorHistory {
+  type: 'monitor_history'
+  data: Record<string, unknown>[]
+}
+
+export type SyncServerMsg =
+  | SyncTabList
+  | SyncTabCreated
+  | SyncTabClosed
+  | SyncTabActivated
+  | SyncPluginChanged
+  | SyncLayoutUpdated
+  | SyncSshAuthPrompt
+  | SyncWorkspaceCreated
+  | SyncWorkspaceUpdated
+  | SyncWorkspaceDeleted
+  | SyncWorkspaceActivated
+  | SyncWorkspaceReordered
+  | SyncWorkspaceList
+  | SyncEvent
+  | SyncHello
+  | SyncBell
+  | SyncNotify
+  | SyncStateDelta
+  | SyncSnapshot
+  | SyncMarkReadResult
+  | SyncResyncRequired
+  | SyncSuggestions
+  | SyncMonitorData
+  | SyncMonitorHistory
+
+export interface SyncMarkRead {
+  type: 'mark_read'
+  v: number
+  epoch: string
+  clientId: string
+  requestId: string
+  reason:
+    | 'focus'
+    | 'terminal_input'
+    | 'tab_activate'
+    | 'tab_close'
+    | 'pane_close'
+    | 'goto'
+    | 'active_observed'
+    | 'dismiss'
+    | 'clear_all'
+  panes: Array<{ paneId: string; throughEventSeq: string }>
+  notifs: Array<{ notifId: string }>
+}
+
 export type SyncClientMsg =
   | SyncCreateTab
   | SyncCloseTab
@@ -232,3 +372,4 @@ export type SyncClientMsg =
   | SyncActivateTab
   | SyncUpdateLayout
   | SyncSshAuthResponse
+  | SyncMarkRead

@@ -23,6 +23,8 @@ import {
   ArrowLeftToLine,
   ArrowRightToLine,
   Delete,
+  Layers,
+  RefreshCw,
 } from 'lucide-vue-next'
 
 export interface KeyBinding {
@@ -43,7 +45,7 @@ export interface KeyBindingDef {
   sequence?: string
 }
 
-const defs: KeyBindingDef[] = [
+export const defs: KeyBindingDef[] = [
   {
     id: 'togglePalette',
     defaultBinding: { key: 'k', shift: false },
@@ -117,6 +119,12 @@ const defs: KeyBindingDef[] = [
     titleKey: 'keybinding.searchTerminal',
   },
   {
+    id: 'addCursorsInFiles',
+    defaultBinding: { key: 'l', shift: true },
+    icon: Layers,
+    titleKey: 'keybinding.addCursorsInFiles',
+  },
+  {
     id: 'switchTab',
     defaultBinding: { key: '1', shift: false },
     icon: SquareStack,
@@ -152,6 +160,12 @@ const defs: KeyBindingDef[] = [
     defaultBinding: { key: '-', shift: false },
     icon: ArrowDown,
     titleKey: 'keybinding.fontSizeDown',
+  },
+  {
+    id: 'reloadApp',
+    defaultBinding: { key: 'r', shift: false },
+    icon: RefreshCw,
+    titleKey: 'keybinding.reloadApp',
   },
   {
     id: 'fontSizeReset',

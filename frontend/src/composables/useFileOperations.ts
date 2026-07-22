@@ -5,7 +5,27 @@ import { isTauri, tauriInvoke } from './useTransport'
 import { isInternalDragActive, getInternalDragRel, clearInternalDrag } from './internalDragState'
 import type { DirEntry } from '../components/workspace/TreeRows'
 
+interface ParsedUploadBody {
+  saved?: string[]
+  errors?: string[]
+}
+
+function parseUploadBody(body: string): ParsedUploadBody {
+  try {
+    return JSON.parse(body) as ParsedUploadBody
+  } catch {
+    return {}
+  }
+}
+
 // --- Tauri native drag-drop support ---
+// Listener is registered ONCE on first mount and never unregistered - this
+// eliminates the mount/unmount race where listen()'s async unlisten fn
+// resolves after the component has already unmounted, leaking a duplicate
+// listener on each cycle (which caused N concurrent upload requests for a
+// single drop). The listener guards on _activeUploadFn, which
+// clearActiveWorkspace() nulls out, so it's a no-op when no workspace is
+// active.
 let tauriFileDropRegistered = false
 let _activeUploadFn:
   | ((files: { file: File; path: string }[], targetDir?: string) => Promise<void>)
@@ -13,8 +33,6 @@ let _activeUploadFn:
 let _workspaceDropHover = false
 let _hoveredDir: string | undefined = undefined
 let _dragCounterRef: { value: number } | null = null
-
-let _tauriUnlisten: (() => void) | null = null
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -34,6 +52,19 @@ function setupTauriFileDrop() {
   const w = window as any
   const listen = w.__TAURI__?.event?.listen
   if (!listen) return
+
+  // Resolve the drop target directory from the OS-level drop position.
+  // Tauri v2 intercepts native dragover/drop events, so the DOM-side
+  // onDirDragEnter path that sets _hoveredDir never fires - we must compute
+  // the target dir from elementFromPoint at drop time.
+  function resolveDropDir(cx: number, cy: number): string | undefined {
+    const el = document.elementFromPoint(cx, cy)
+    if (!el) return _hoveredDir
+    const dirRow = (el as HTMLElement).closest('.tree-row.dir') as HTMLElement | null
+    if (!dirRow) return _hoveredDir
+    const rel = dirRow.dataset.rel
+    return rel === undefined ? _hoveredDir : rel
+  }
 
   // Tauri v2 listen() returns Promise<UnlistenFn>
   const unlistenDrop = listen('file-drop-paths', async (event: any) => {
@@ -75,6 +106,11 @@ function setupTauriFileDrop() {
     const payload = event.payload || []
     const paths: string[] = Array.isArray(payload) ? payload : (payload.paths || [])
     if (!paths.length) return
+    const pos = (payload && payload.position) || { x: 0, y: 0 }
+    const dpr = window.devicePixelRatio || 1
+    const cx = (pos.x ?? 0) / dpr
+    const cy = (pos.y ?? 0) / dpr
+    const targetDir = cx && cy ? resolveDropDir(cx, cy) : _hoveredDir
     const files: { file: File; path: string }[] = []
     for (const p of paths) {
       try {
@@ -89,7 +125,7 @@ function setupTauriFileDrop() {
         console.error('[upload] failed to read dropped file:', p, e)
       }
     }
-    if (files.length) await _activeUploadFn!(files, _hoveredDir)
+    if (files.length) await _activeUploadFn!(files, targetDir)
   })
 
   // Listen for drag-enter/leave to show drop overlay
@@ -99,27 +135,15 @@ function setupTauriFileDrop() {
     _dragCounterRef.value = event.payload ? 1 : 0
   })
 
-  const unlistens: Promise<void>[] = []
-  if (unlistenDrop && typeof unlistenDrop.then === 'function') {
-    unlistens.push(unlistenDrop.then((fn: () => void) => { _tauriUnlisten = fn }))
-  }
-  if (unlistenActive && typeof unlistenActive.then === 'function') {
-    unlistens.push(unlistenActive.then((fn: () => void) => {
-      // chain with existing unlisten
-      const prev = _tauriUnlisten
-      _tauriUnlisten = () => { prev?.(); fn() }
-    }))
-  }
+  // Swallow the unlisten promises - the listener is intentionally never
+  // removed (see comment on tauriFileDropRegistered above).
+  void unlistenDrop
+  void unlistenActive
 }
 
 function teardownWorkspaceDragDrop() {
-  if (_tauriUnlisten) {
-    _tauriUnlisten()
-    _tauriUnlisten = null
-  }
-  // Allow re-registration on next mount (orphaned listener is safe —
-  // callback guards on _activeUploadFn which is cleared by clearActiveWorkspace)
-  tauriFileDropRegistered = false
+  // No-op: the Tauri listener is registered once and never unregistered.
+  // _activeUploadFn is cleared separately by clearActiveWorkspace().
 }
 
 interface Meta {
@@ -199,6 +223,7 @@ export function useFileOperations(opts: {
         : opts.selectedIsDir.value && opts.selectedRel.value
           ? opts.selectedRel.value
           : ''
+    let hadErrors = false
     try {
       if (isTauri()) {
         const token = getAuthToken()
@@ -219,6 +244,14 @@ export function useFileOperations(opts: {
         if (resp.status >= 400) {
           console.error('[upload] server error:', resp.status, resp.body)
           alert(`Upload failed: HTTP ${resp.status}\n${resp.body}`)
+          hadErrors = true
+        } else {
+          const parsed = parseUploadBody(resp.body)
+          if (parsed.errors?.length) {
+            console.error('[upload] server errors:', parsed.errors)
+            alert(`Upload failed:\n${parsed.errors.join('\n')}`)
+            hadErrors = true
+          }
         }
       } else {
         const q = new URLSearchParams({ pane_id: opts.paneId(), dir })
@@ -236,12 +269,22 @@ export function useFileOperations(opts: {
           const body = await res.text().catch(() => '')
           console.error('[upload] server error:', res.status, body)
           alert(`Upload failed: HTTP ${res.status}\n${body}`)
+          hadErrors = true
+        } else {
+          const parsed = await res.json().catch(() => null) as ParsedUploadBody | null
+          if (parsed?.errors?.length) {
+            console.error('[upload] server errors:', parsed.errors)
+            alert(`Upload failed:\n${parsed.errors.join('\n')}`)
+            hadErrors = true
+          }
         }
       }
     } catch (e) {
       console.error('[upload] request failed:', e)
       alert(`Upload failed: ${e}`)
+      hadErrors = true
     }
+    if (hadErrors) return
     const next = { ...opts.childCache.value }
     delete next[dir]
     opts.childCache.value = next

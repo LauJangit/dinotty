@@ -16,10 +16,14 @@
       :is-mobile="isMobile"
       :current-tab-title="currentTabTitle"
       :current-tab-index="currentTabIndex"
+      :active-workspace-abbr="activeWorkspaceAbbr"
+      :active-workspace-color="activeWorkspaceColor"
       @activate="activateTab"
       @close="requestCloseTab"
+      @close-tabs="onCloseTabsBulk"
       @action="onNewMenuAction"
       @reorder="reorderTab"
+      @merge-tab-into-pane="onMergeTabIntoPane"
       @open-plugin="openPlugin"
       @rename="onRenameTab"
       @open-overview="openOverview"
@@ -99,6 +103,7 @@
             :broadcast-mode="tab.broadcastMode"
             :broadcast-activity="tab.broadcastActivity"
             :allow-close="getAllLeaves(tab.layout).length > 1"
+            :tab-id="tab.paneId"
             @register="registerTermRef"
             @title-change="onTitleChange"
             @shell-info="onShellInfo"
@@ -116,6 +121,11 @@
               (src: string, tgt: string, pos: DropPosition) =>
                 splitPane.reorderPane(src, tgt, pos)
             "
+            @drop-on-tab="
+              (srcTab: string, srcPane: string, dstTab: string, pos: DropPosition) =>
+                onDropOnTab(srcTab, srcPane, dstTab, pos)
+            "
+            @drop-extract="(srcTab: string, srcPane: string, idx: number) => onDropExtract(srcTab, srcPane, idx)"
             @divider-drag-end="onDividerDragEnd(tab)"
             @reconnect="onSshReconnect"
           />
@@ -150,22 +160,23 @@
             "
           />
         </template>
-        <PluginView
-          v-else-if="tab.type === 'plugin'"
-          :data-plugin-pane-id="tab.paneId"
-          :plugin="loadedPlugins.get(tab.pluginId)!"
-          :api="getPluginContext(tab.pluginId)"
-        />
       </div>
     </div>
 
     <NotificationPanel :pane-labels="notificationPaneLabels" @goto-pane="revealPane" />
 
+    <DropPreview />
+
     <StatusBar />
 
     <CommandPalette ref="paletteRef" :commands="paletteCommands" />
 
-    <SettingsPanel :open="settingsOpen" @close="settingsOpen = false" @token-changed="onTokenChanged" />
+    <SettingsPanel
+      :open="settingsOpen"
+      @close="settingsOpen = false"
+      @token-changed="onTokenChanged"
+      @open-plugin="openPlugin"
+    />
 
     <ConfirmCloseDialog @confirm="onConfirmClose" />
 
@@ -220,6 +231,7 @@
       :get-send-fn="getSendFn"
       @update:visible="(v: boolean) => (kbVisible = v)"
       @bookmarks="bookmarksRef?.open()"
+      @app-action="dispatchAppAction"
     />
 
     <KbToggleButton
@@ -236,9 +248,18 @@
       @close="overviewOpen = false"
       @activate="onOverviewActivate"
       @close-tab="onOverviewCloseTab"
+      @close-tabs="onCloseTabsBulk"
       @new-tab="onOverviewNewTab"
       @new-tab-ssh="onOverviewNewTabSsh"
       @rename-tab="onOverviewRenameTab"
+    />
+
+    <MultiSelectPicker
+      :visible="cursorPickerVisible"
+      :title="t('palette.addCursors')"
+      :items="cursorPickerItems"
+      @confirm="onCursorPickerConfirm"
+      @cancel="cursorPickerVisible = false"
     />
   </div>
 </template>
@@ -248,6 +269,7 @@ import {
   ref,
   reactive,
   shallowReactive,
+  shallowRef,
   computed,
   watch,
   onMounted,
@@ -258,6 +280,7 @@ import TabBar from './components/terminal/TabBar.vue'
 import type { TabInfo } from './components/terminal/TabBar.vue'
 import TerminalPane from './components/terminal/TerminalPane.vue'
 import SplitContainer from './components/split/SplitContainer.vue'
+import DropPreview from './components/split/DropPreview.vue'
 import CommandPalette from './components/command/CommandPalette.vue'
 import type { Command } from './components/command/CommandPalette.vue'
 import MobileKeyboard from './components/keyboard/MobileKeyboard.vue'
@@ -267,6 +290,7 @@ import ConfirmCloseDialog from './components/ui/ConfirmCloseDialog.vue'
 import ConfirmModal from './components/ui/ConfirmModal.vue'
 import { confirmState, uiConfirm, confirmResolve, confirmCancel } from './composables/useConfirm'
 import PromptModal from './components/ui/PromptModal.vue'
+import MultiSelectPicker from './components/ui/MultiSelectPicker.vue'
 import { promptState, promptResolve, promptCancel } from './composables/usePrompt'
 import PreviewPanel from './components/preview/PreviewPanel.vue'
 import CommandBookmarks from './components/command/CommandBookmarks.vue'
@@ -291,12 +315,23 @@ import { isTauri, tauriInvoke } from './composables/useTransport'
 import { isTouchDevice, setActivePaneId } from './composables/useTerminal'
 import { useI18n } from './composables/useI18n'
 import { keyEventMatchesBinding, useKeybindings } from './composables/useKeybindings'
+import { usePluginNotifyBridge } from './composables/usePluginNotifyBridge'
+import { useSshAuth } from './composables/useSshAuth'
+import { useCursorPicker } from './composables/useCursorPicker'
+import { useOverviewCallbacks } from './composables/useOverviewCallbacks'
+import { useTabPersistence } from './composables/useTabPersistence'
+import { useViewportResize } from './composables/useViewportResize'
+import { usePluginLauncher } from './composables/usePluginLauncher'
+import { useSshConnectFlow } from './composables/useSshConnectFlow'
+import { useTabLifecycle } from './composables/useTabLifecycle'
+import { clearFileWorkspaceState } from './composables/useFileWorkspaceState'
 import { useSplitPane } from './composables/useSplitPane'
 import { useSuperviseTabs } from './composables/useSuperviseTabs'
 import { useSyncWebSocket } from './composables/useSyncWebSocket'
 import { isWebPreviewInput } from './utils/previewRouting'
 import { isWindowsClient } from './utils/clientPlatform'
 import { nextRevealNavGen, currentRevealNavGen } from './utils/navGen'
+import { pickSuccessorTab } from './utils/tabSuccessor'
 import { initMonitorHistory } from './composables/useMonitor'
 import NotificationPanel from './components/notification/NotificationPanel.vue'
 import { useToast } from 'vue-toastification'
@@ -313,6 +348,7 @@ import {
 } from './composables/useNotification'
 import { useNotificationPresentation } from './composables/useNotificationPresentation'
 import { getIsAppForeground, onAppForegroundGain } from './composables/useAppForeground'
+import { getEffectiveSuperviseReload } from './composables/useDeviceSuperviseReload'
 import { usePluginLoader } from './composables/usePluginLoader'
 import PluginView from './components/plugin/PluginView.vue'
 import {
@@ -322,6 +358,7 @@ import {
   apiClosePane,
   apiActivatePane,
   apiListTabs,
+  apiCreatePluginTab,
 } from './composables/useTabApi'
 import { Settings, Bell, Monitor, Plus, X, Star, AppWindow, Radar, RefreshCw } from 'lucide-vue-next'
 import WorkspaceOverview from './components/overview/WorkspaceOverview.vue'
@@ -337,11 +374,15 @@ import { useUiStore } from './stores/uiStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { shellEscapePath } from './utils/shell'
 import { buildRunCodeCommand } from './utils/runCodeCommand'
+import { resolveAbbr, resolveColor } from './utils/workspaceIcon'
+import { APP_ACTION_IDS } from './utils/appActionCatalog'
 
 // ── Stores ──────────────────────────────────────────────────────
 const session = useSessionStore()
 const { tabs, activePaneId, tabList, activeTabType, activeTab, isBroadcastActive, canBroadcast } =
   storeToRefs(session)
+
+const { persist, persistNow, flushOnUnload, dispose: disposePersist } = useTabPersistence({ tabs, activePaneId })
 
 const ui = useUiStore()
 const { syncConnected, kbVisible, settingsOpen, authenticated, authProbe, needsSetup } = storeToRefs(ui)
@@ -366,16 +407,25 @@ function setPreviewPanelRef(el: any) {
 const bookmarksRef = ref<InstanceType<typeof CommandBookmarks>>()
 const serverListRef = ref<InstanceType<typeof ServerList>>()
 const sshPanelRef = ref<InstanceType<typeof SshHostsPanel>>()
-const sshAuthVisible = ref(false)
-const sshAuthHost = ref('')
-const sshAuthPaneId = ref('')
-const sshAuthPrompts = ref<Array<{ prompt: string; echo: boolean }>>([])
 const { t } = useI18n()
 const { getBinding, formatBinding } = useKeybindings()
 const notif = useNotification()
 const presentationSettings = useNotificationPresentation().settings
 const { supervise } = useSuperviseTabs()
-const clearToastInstance = setToastInstance(useToast())
+const toast = useToast()
+const cursorPicker = useCursorPicker({
+  tabs,
+  activePaneId,
+  toast,
+  t,
+})
+const {
+  cursorPickerVisible,
+  cursorPickerItems,
+  triggerAddCursors,
+  onCursorPickerConfirm,
+} = cursorPicker
+const clearToastInstance = setToastInstance(toast)
 const clearActiveReadContext = setActiveReadContext({
   getActiveFocusedPaneId: () =>
     activeTab.value?.type === 'terminal' ? activeTab.value.activePaneId : null,
@@ -393,8 +443,18 @@ const { loadedPlugins, loadAll, getPluginContext, pluginList, allCommands } = us
 const { isMobile } = useIsMobile()
 
 // Workspace filtering
-const { workspaces, activeWorkspaceId, activeWorkspacePath, activeWorkspaceName, matchWorkspace, activateWorkspace, cancelPendingWorkspaceActivation } = useWorkspaces()
-const activeWorkspace = computed(() => workspaces.value.find((w) => w.id === activeWorkspaceId.value))
+const { workspaces, activeWorkspaceId, activeWorkspace, activeWorkspacePath, activeWorkspaceName, matchWorkspace, activateWorkspace, cancelPendingWorkspaceActivation } = useWorkspaces()
+
+function workspaceIdOfTab(tab: Tab): string | null {
+  if (tab.type === 'plugin') return tab.workspaceId ?? null
+  return matchWorkspace(tab.cwd ?? '', tab.connectionId, tab.workspaceId)?.id ?? null
+}
+const activeWorkspaceAbbr = computed(() =>
+  activeWorkspace.value ? resolveAbbr(activeWorkspace.value) : ''
+)
+const activeWorkspaceColor = computed(() =>
+  activeWorkspace.value ? resolveColor(activeWorkspace.value) : undefined
+)
 
 const visibleTabList = computed(() => {
   const list = tabList.value.filter((info) => {
@@ -457,10 +517,74 @@ const notificationPaneLabels = computed(() => {
   return result
 })
 
-const isLandscape = ref(window.innerWidth > window.innerHeight)
+const termRefs = shallowReactive<Record<string, InstanceType<typeof TerminalPane>>>({})
 
-// Mission Control
-const overviewOpen = ref(false)
+const { isLandscape, dispose: disposeViewport } = useViewportResize({ kbVisible, activePaneId, tabs, termRefs })
+
+const onSshConnectRef = shallowRef<(result: { tab_id: string; pane_id: string; layout: any; connection_id?: string }) => Promise<void>>(
+  async () => { throw new Error('onSshConnect not wired') },
+)
+
+const {
+  newTab,
+  resolveTab,
+  resolveTabWorkspace,
+  clearResolvedTabNotifications,
+  commitLocalActivePane,
+  scrollActiveTabIntoView,
+  activateTab,
+  revealPane,
+  reorderTab,
+  onRenameTab,
+  requestCloseTab,
+  closeTab,
+  focusActive,
+} = useTabLifecycle({
+  tabs,
+  activePaneId,
+  session,
+  ui,
+  appSettings,
+  activeWorkspaceId,
+  workspaces,
+  matchWorkspace,
+  activateWorkspace,
+  cancelPendingWorkspaceActivation,
+  workspaceIdOfTab,
+  activeWorkspacePath,
+  notif,
+  termRefs,
+  isMobile,
+  tabBarRef,
+  kbVisible,
+  persist,
+  persistNow,
+  onSshConnectRef,
+})
+
+const {
+  overviewOpen,
+  openOverview,
+  onOverviewActivate,
+  onOverviewCloseTab,
+  onCloseTabsBulk,
+  onOverviewNewTab,
+  onOverviewNewTabSsh,
+  onOverviewRenameTab,
+} = useOverviewCallbacks({
+  tabs,
+  activePaneId,
+  activeWorkspaceId,
+  termRefs,
+  session,
+  activateTab,
+  closeTab,
+  requestCloseTab,
+  newTab,
+  persist,
+  commitLocalActivePane,
+  focusActive,
+})
 const currentTabIndex = computed(() =>
   visibleTabList.value.findIndex((t) => t.paneId === activePaneId.value) + 1
 )
@@ -470,10 +594,6 @@ const currentTabTitle = computed(() => {
   if (tab.type === 'terminal') return tab.customTitle ?? findLeaf(tab.layout, tab.activePaneId)?.title ?? 'Terminal'
   return tab.title
 })
-
-function openOverview() {
-  overviewOpen.value = true
-}
 
 function adjustActiveTerminalFontSize(delta: number) {
   if (!activePaneId.value) return
@@ -488,70 +608,18 @@ function adjustActiveTerminalFontSize(delta: number) {
   }
 }
 
-function onOverviewActivate(paneId: string) {
-  activateTab(paneId)
-  overviewOpen.value = false
-  nextTick(() => {
-    const ref = termRefs[paneId]
-    ref?.focus()
-  })
-}
-
-function onOverviewCloseTab(tabId: string) {
-  requestCloseTab(tabId)
-}
-
-async function onOverviewNewTab(cwd?: string) {
-  overviewOpen.value = false
-  await newTab(cwd)
-}
-
-async function onOverviewNewTabSsh(connectionId: string, initialCwd?: string) {
-  overviewOpen.value = false
-  try {
-    const result = await apiCreateSshTab(connectionId, initialCwd)
-    const existing = tabs.value.find((t) => t.type === 'terminal' && t.paneId === result.tab_id)
-    if (existing) {
-      commitLocalActivePane(result.tab_id)
-      persist()
-      nextTick(() => focusActive())
-      return
-    }
-    const layout = ensureSplitRoot(result.layout)
-    tabs.value.push({
-      type: 'terminal',
-      paneId: result.tab_id,
-      layout,
-      activePaneId: result.pane_id,
-      paneMru: [result.pane_id],
-      broadcastMode: false,
-      broadcastActivity: 0,
-      previewVisible: false,
-      previewAddress: '',
-      previewUrl: '',
-      previewKind: 'web',
-      connectionId,
-    })
-    commitLocalActivePane(result.tab_id)
-    persist()
-    nextTick(() => focusActive())
-  } catch (e) {
-    console.error('Failed to create SSH tab:', e)
-  }
-}
-
-function onOverviewRenameTab(paneId: string, title: string) {
-  session.renameTab(paneId, title)
-  persist()
-}
-
 // Capture plugin preview when active tab changes to a plugin tab (handles initial load)
 watch(
   activePaneId,
   (paneId) => {
     const tab = tabs.value.find((t) => t.paneId === paneId)
-    if (tab?.type === 'plugin') {
+    if (!tab) return
+    // Legacy PluginTab or migrated TerminalTab-with-plugin-leaf.
+    if (tab.type === 'plugin') {
       nextTick(() => refreshPluginPreview(tab.paneId))
+    } else if (tab.type === 'terminal') {
+      const pluginLeaf = getAllLeaves(tab.layout).find((l) => l.kind === 'plugin')
+      if (pluginLeaf) nextTick(() => refreshPluginPreview(pluginLeaf.paneId))
     }
   }
 )
@@ -604,7 +672,6 @@ watch(
   (paneId) => setActivePaneId(paneId),
 )
 
-const termRefs = shallowReactive<Record<string, InstanceType<typeof TerminalPane>>>({})
 const outputListeners = new Set<(paneId: string, data: string) => void>()
 
 const syncWs = useSyncWebSocket({
@@ -614,22 +681,26 @@ const syncWs = useSyncWebSocket({
   newTab: async () => { await newTab() },
 })
 
+const sshAuth = useSshAuth({ syncWs })
+const {
+  sshAuthVisible,
+  sshAuthHost,
+  sshAuthPrompts,
+} = sshAuth
+
 // Set up SSH keyboard-interactive auth handler
 syncWs.setSshAuthPromptHandler((paneId: string, prompts: Array<{ prompt: string; echo: boolean }>) => {
-  sshAuthPaneId.value = paneId
-  sshAuthPrompts.value = prompts
   // Find the host info from tabs
   const tab = tabs.value.find((t) => {
     if (t.type !== 'terminal') return false
     return t.paneId === paneId || !!findLeaf(t.layout, paneId)
   })
+  let host = paneId
   if (tab && tab.type === 'terminal') {
     const leaf = findLeaf(tab.layout, paneId)
-    sshAuthHost.value = leaf?.title || paneId
-  } else {
-    sshAuthHost.value = paneId
+    host = leaf?.title || paneId
   }
-  sshAuthVisible.value = true
+  sshAuth.showPrompt(paneId, prompts, host)
 })
 
 const splitPane = useSplitPane({
@@ -650,36 +721,6 @@ function registerTermRef(paneId: string, el: InstanceType<typeof TerminalPane> |
     })
   }
 }
-
-let viewportRefitTimer = 0
-let naturalVH = 0
-
-function onViewportResize() {
-  if (!window.visualViewport) return
-  const vh = window.visualViewport.height
-  if (vh > naturalVH) naturalVH = vh
-  const off = window.innerHeight - (window.visualViewport.offsetTop + vh)
-  // Shrink #app-root when system keyboard is visible (even without custom keyboard)
-  document.documentElement.style.setProperty('--sys-kb-height', `${Math.max(0, off)}px`)
-  // Set --kb-open: either system keyboard or custom mobile keyboard is visible
-  const sysKbOpen = naturalVH > 0 && naturalVH - vh > 120
-  document.documentElement.style.setProperty('--kb-open', (sysKbOpen || kbVisible.value) ? '1' : '0')
-
-  clearTimeout(viewportRefitTimer)
-  viewportRefitTimer = window.setTimeout(() => {
-    if (!activePaneId.value) return
-    const tab = tabs.value.find((t) => t.paneId === activePaneId.value)
-    if (!tab || tab.type !== 'terminal') return
-    for (const leaf of getAllLeaves(tab.layout)) {
-      termRefs[leaf.paneId]?.fit()
-    }
-  }, 100)
-}
-
-// Set --kb-open when custom keyboard visibility changes
-watch(kbVisible, (v) => {
-  document.documentElement.style.setProperty('--kb-open', v ? '1' : '0')
-})
 
 function genPaneId(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -702,443 +743,52 @@ function onDividerDragEnd(tab: Tab) {
   }
 }
 
-let persistTimer: ReturnType<typeof setTimeout> | null = null
-function persistNow() {
-  if (typeof localStorage === "undefined") return
-  const state = tabs.value.map((t) => {
-    if (t.type === 'terminal') {
-      return {
-        type: t.type,
-        paneId: t.paneId,
-        layout: t.layout,
-        activePaneId: t.activePaneId,
-        broadcastMode: t.broadcastMode,
-        previewVisible: t.previewVisible,
-        previewAddress: t.previewAddress,
-        previewUrl: t.previewUrl,
-        previewKind: t.previewKind,
-        customTitle: t.customTitle,
-        connectionId: t.connectionId,
-      }
-    }
-    return {
-      type: t.type,
-      paneId: t.paneId,
-      title: t.title,
-      pluginId: t.pluginId,
-      workspaceId: t.workspaceId,
-    }
-  })
-  const activeIdx = tabs.value.findIndex((t) => t.paneId === activePaneId.value)
-  localStorage.setItem('dinotty_tabs', JSON.stringify({ tabs: state, activeIdx }))
+function onDropOnTab(
+  srcTabId: string,
+  srcPaneId: string,
+  dstTabId: string,
+  pos: DropPosition
+) {
+  // Find the active pane in dst tab as the drop target
+  const dstTab = tabs.value.find((t) => t.paneId === dstTabId)
+  if (!dstTab || dstTab.type !== 'terminal') return
+  const direction = pos === 'left' || pos === 'right' ? 'left' : 'right' as const
+  void splitPane.movePaneToTab(srcTabId, srcPaneId, dstTabId, dstTab.activePaneId, direction)
 }
-function persist() {
-  if (persistTimer) clearTimeout(persistTimer)
-  persistTimer = setTimeout(persistNow, 200)
+
+function onDropExtract(srcTabId: string, srcPaneId: string, _targetIndex: number) {
+  void splitPane.promotePaneToTab(srcTabId, srcPaneId)
 }
-// Flush pending persist on page unload
-window.addEventListener('beforeunload', (e) => {
-  if (persistTimer) {
-    clearTimeout(persistTimer)
-    persistNow()
-  }
-})
+
+function onMergeTabIntoPane(
+  srcTabId: string,
+  targetPaneId: string,
+  direction: 'left' | 'right' | 'top' | 'bottom'
+) {
+  // Mode A: merge whole source tab as subtree into a pane of another tab.
+  // The drop target is a leaf paneId; locate its containing tab.
+  const dstTab = tabs.value.find(
+    (t) => t.type === 'terminal' && !!findLeaf(t.layout, targetPaneId)
+  ) as TerminalTab | undefined
+  if (!dstTab) return
+  if (dstTab.paneId === srcTabId) return // self-loop guard
+  void splitPane.moveTabToPane(srcTabId, dstTab.paneId, targetPaneId, direction)
+}
+
+function onPaneDragHoverSwitch(e: Event) {
+  const detail = (e as CustomEvent).detail as { tabId: string } | undefined
+  if (!detail?.tabId) return
+  // Switch active tab to allow dropping into its panes
+  const tab = tabs.value.find((t) => t.paneId === detail.tabId)
+  if (!tab) return
+  activePaneId.value = tab.paneId
+}
 
 const DEFAULT_PREVIEW_URL = ''
-
-function newTab(cwd?: string): Promise<void>
-function newTab(cwd: string, argv: string[], title?: string): Promise<string>
-async function newTab(cwd?: string, argv?: string[], title?: string): Promise<string | void> {
-  try {
-    // Remote workspace: open an SSH terminal and cd into the workspace's remote path.
-    const activeWs = workspaces.value.find((w) => w.id === activeWorkspaceId.value)
-    if (!argv && activeWs?.connection_id) {
-      const result = await apiCreateSshTab(activeWs.connection_id, activeWs.path)
-      await onSshConnect(result)
-      return result.pane_id
-    }
-    const effectiveCwd = cwd ?? activeWorkspacePath.value
-    const result = await apiCreateTab(effectiveCwd, argv, title)
-    // Dedup: broadcast_sync echoes back to sender — tab_created handler may
-    // have already added this tab if the sync message arrived before the
-    // REST response.
-    const existing = tabs.value.find((t) => t.type === 'terminal' && t.paneId === result.tab_id)
-    if (existing) {
-      // Ensure cwd is set (sync message may have arrived without it)
-      if (result.cwd && existing.type === 'terminal' && !existing.cwd) {
-        existing.cwd = result.cwd
-      }
-      if (title && existing.type === 'terminal') existing.customTitle = title
-      commitLocalActivePane(result.tab_id)
-      persist()
-      nextTick(() => focusActive())
-      return result.pane_id
-    }
-    const layout = ensureSplitRoot(result.layout)
-    tabs.value.push({
-      type: 'terminal',
-      paneId: result.tab_id,
-      layout,
-      activePaneId: result.pane_id,
-      paneMru: [result.pane_id],
-      broadcastMode: false,
-      broadcastActivity: 0,
-      previewVisible: false,
-      previewAddress: '',
-      previewUrl: '',
-      previewKind: 'web',
-      customTitle: title,
-      cwd: result.cwd,
-    })
-    commitLocalActivePane(result.tab_id)
-    persist()
-    nextTick(() => focusActive())
-    return result.pane_id
-  } catch (e) {
-    console.error('Failed to create tab:', e)
-    if (argv) throw e
-    return ''
-  }
-}
-
-function onNewMenuAction(type: 'new-tab' | 'split-h' | 'split-v' | 'broadcast' | 'ssh-connect') {
-  switch (type) {
-    case 'new-tab':
-      return newTab()
-    case 'split-h':
-      return splitPane.splitPane('horizontal')
-    case 'split-v':
-      return splitPane.splitPane('vertical')
-    case 'broadcast':
-      return splitPane.toggleBroadcast()
-    case 'ssh-connect':
-      return sshPanelRef.value?.open()
-  }
-}
-
-function resolveTab(tabId: string): Tab | undefined {
-  // Try tab-level paneId first, then search by leaf paneId
-  let tab = tabs.value.find((t) => t.paneId === tabId)
-  if (!tab) {
-    tab = tabs.value.find((t) => {
-      if (t.type !== 'terminal') return false
-      return !!findLeaf(t.layout, tabId)
-    })
-  }
-  return tab
-}
-
-function resolveTabWorkspace(tab: Tab) {
-  return tab.type === 'terminal'
-    ? matchWorkspace(tab.cwd ?? '', tab.connectionId, tab.workspaceId)
-    : tab.workspaceId ? workspaces.value.find((w) => w.id === tab.workspaceId) ?? null : null
-}
-
-function clearResolvedTabNotifications(tab: Tab, reason: 'tab_activate' | 'goto' = 'tab_activate') {
-  // Clear notifications for this tab on activation (terminal: tab-level + all leaves; plugin: tab-level)
-  const activatedPaneIds = tab.type === 'terminal'
-    ? [tab.paneId, ...getAllLeaves(tab.layout).map((l) => l.paneId)]
-    : [tab.paneId]
-  notif.clearForPaneIds(activatedPaneIds, reason)
-}
-
-function commitLocalActivePane(paneId: string) {
-  // User-initiated local navigation participates in latest-wins ordering so it supersedes any in-flight supervised hop.
-  nextRevealNavGen()
-  activePaneId.value = paneId
-}
-
-async function scrollActiveTabIntoView(targetPaneId: string, navGen: number) {
-  await nextTick()
-  if (navGen !== currentRevealNavGen()) return
-  if (tabBarRef.value?.scrollTabIntoView(targetPaneId)) return
-  await nextTick()
-  if (navGen !== currentRevealNavGen()) return
-  tabBarRef.value?.scrollTabIntoView(targetPaneId)
-}
-
-async function activateTab(tabId: string, opts?: { defer?: boolean }): Promise<boolean> {
-  const gen = nextRevealNavGen()
-  const defer = opts?.defer === true
-  let tab = resolveTab(tabId)
-  if (!tab) return false
-
-  // Switch workspace if the tab belongs to a different one. Terminal tabs
-  // force a switch when filtered out of the current view; plugin tabs stay
-  // visible regardless, so only switch when the tab carries an explicit ws.
-  const targetWs = resolveTabWorkspace(tab)
-  const needsSwitch = tab.type === 'terminal'
-    ? (targetWs?.id ?? null) !== activeWorkspaceId.value
-    : targetWs && targetWs.id !== activeWorkspaceId.value
-  if (needsSwitch) {
-    try {
-      const committed = await activateWorkspace(targetWs?.id ?? null)
-      if (!committed) return false
-    } catch {
-      return false
-    }
-    if (gen !== currentRevealNavGen()) return false
-    tab = resolveTab(tabId)
-    if (!tab) return false
-  } else {
-    cancelPendingWorkspaceActivation()
-  }
-
-  if (!defer) {
-    activePaneId.value = tab.paneId
-    clearResolvedTabNotifications(tab)
-  }
-
-  if (tab.type === 'terminal') {
-    try {
-      await apiActivatePane(tab.paneId, tab.activePaneId)
-    } catch (e) {
-      if (defer) return false
-      console.error('Failed to activate pane:', e)
-    }
-    if (gen !== currentRevealNavGen()) return false
-  }
-
-  if (!defer) {
-    persist()
-    nextTick(() => focusActive())
-    void scrollActiveTabIntoView(tab.paneId, gen)
-    return gen === currentRevealNavGen()
-  }
-
-  if (gen !== currentRevealNavGen()) return false
-  const live = resolveTab(tabId)
-  if (!live) return false
-  activePaneId.value = live.paneId
-  clearResolvedTabNotifications(live)
-  persist()
-  nextTick(() => focusActive())
-  void scrollActiveTabIntoView(live.paneId, gen)
-  return true
-}
-
-async function revealPane(paneId: string): Promise<boolean> {
-  const gen = nextRevealNavGen()
-  let tab = resolveTab(paneId)
-  if (!tab) return false
-
-  // Terminal tabs force a switch when filtered out of the current view
-  // (targetWs may be null → deactivate). Plugin tabs stay visible regardless,
-  // so only switch when they carry an explicit workspace id.
-  const targetWs = resolveTabWorkspace(tab)
-  const needsSwitch = tab.type === 'terminal'
-    ? (targetWs?.id ?? null) !== activeWorkspaceId.value
-    : targetWs && targetWs.id !== activeWorkspaceId.value
-  if (needsSwitch) {
-    try {
-      const committed = await activateWorkspace(targetWs?.id ?? null)
-      if (!committed) return false
-    } catch {
-      return false
-    }
-    if (gen !== currentRevealNavGen()) return false
-    tab = resolveTab(paneId)
-    if (!tab) return false
-  } else {
-    cancelPendingWorkspaceActivation()
-  }
-
-  await nextTick()
-  if (gen !== currentRevealNavGen()) return false
-  tab = resolveTab(paneId)
-  if (!tab) return false
-
-  // Desktop renders a horizontal tab-strip; wait for the target tab element to
-  // exist before scrolling it into view. Mobile has no #tabs-list DOM, so skip
-  // this gate entirely — otherwise reveal-goto would always no-op on touch /
-  // narrow viewports (hasTab() can never succeed there).
-  if (!isMobile.value) {
-    let tabElementFound = false
-    for (let attempt = 0; attempt < 5; attempt++) {
-      if (tabBarRef.value?.hasTab(tab.paneId)) {
-        tabElementFound = true
-        break
-      }
-      if (attempt < 4) {
-        await new Promise((resolve) => setTimeout(resolve, 50))
-        if (gen !== currentRevealNavGen()) return false
-      }
-    }
-    if (!tabElementFound) return false
-    if (gen !== currentRevealNavGen()) return false
-    tab = resolveTab(paneId)
-    if (!tab) return false
-  }
-
-  if (tab.type === 'terminal') {
-    try {
-      await apiActivatePane(tab.paneId, tab.activePaneId)
-    } catch {
-      return false
-    }
-    // The backend pointer may transiently lag a newer navigation, like rapid activateTab clicks.
-    if (gen !== currentRevealNavGen()) return false
-  }
-
-  tab = resolveTab(paneId)
-  if (!tab) return false
-
-  activePaneId.value = tab.paneId
-  clearResolvedTabNotifications(tab, 'goto')
-  persist()
-  nextTick(() => focusActive())
-
-  tabBarRef.value?.scrollTabIntoView(tab.paneId)
-  return true
-}
 
 // Wire up toast notification direct-jump handler
 notif.setGoToPaneHandler((paneId: string) => revealPane(paneId))
 
-function reorderTab(fromId: string, toId: string) {
-  session.reorderTab(fromId, toId)
-  persist()
-}
-
-function onRenameTab(paneId: string, title: string) {
-  session.renameTab(paneId, title)
-  persist()
-}
-
-async function onClosePane(tabId: string, paneId: string) {
-  const tab = tabs.value.find((t) => t.paneId === tabId)
-  if (!tab) return
-
-  // Bypass 1: non-terminal tab
-  if (tab.type !== 'terminal') {
-    const closed = await splitPane.closePane(paneId)
-    if (!closed) await closeTab(tabId)
-    return
-  }
-
-  // Bypass 2: user disabled confirmation
-  if (appSettings.confirm_before_close_tab === false) {
-    const closed = await splitPane.closePane(paneId)
-    if (!closed) await closeTab(tabId)
-    return
-  }
-
-  // Show confirmation (handles both pane and tab close)
-  ui.requestClosePane(tabId, paneId)
-}
-
-async function requestCloseTab(tabId: string) {
-  const tab = tabs.value.find((t) => t.paneId === tabId)
-  if (!tab) return
-
-  // Bypass 1: non-terminal tabs (plugins) — close immediately, no prompt
-  if (tab.type !== 'terminal') {
-    await closeTab(tabId)
-    return
-  }
-
-  // Bypass 2: user disabled confirmation in settings
-  if (appSettings.confirm_before_close_tab === false) {
-    await closeTab(tabId)
-    return
-  }
-
-  // Otherwise: show confirmation
-  ui.requestCloseTab(tabId)
-}
-
-async function onConfirmClose(tabId: string, paneId: string | null) {
-  if (paneId) {
-    // Pane close: try close pane first, fall back to tab close if last
-    const closed = await splitPane.closePane(paneId)
-    if (!closed && tabId) {
-      await closeTab(tabId)
-    }
-  } else if (tabId) {
-    // Tab close (no pane specified)
-    await closeTab(tabId)
-  }
-  ui.cancelClose()
-}
-
-async function closeTab(tabId: string) {
-  const tab = tabs.value.find((t) => t.paneId === tabId)
-  if (!tab) return
-
-  // Clean up notifications associated with this tab (tab-level + all leaves)
-  const closedPaneIds = tab.type === 'terminal'
-    ? [tab.paneId, ...getAllLeaves(tab.layout).map((l) => l.paneId)]
-    : [tab.paneId]
-  // Invalidate plugin preview cache when closing a plugin tab
-  if (tab.type === 'plugin') {
-    invalidatePluginPreview(tab.paneId)
-  }
-
-  if (tab.type === 'terminal') {
-    // Clean up local term refs
-    for (const leaf of getAllLeaves(tab.layout)) {
-      delete termRefs[leaf.paneId]
-    }
-
-    try {
-      await apiCloseTab(tabId)
-    } catch (e) {
-      console.error('Failed to close tab:', e)
-      return
-    }
-  }
-
-  notif.clearForPaneIds(closedPaneIds, 'tab_close')
-
-  // Remove tab from local array
-  const idx = tabs.value.findIndex((t) => t.paneId === tabId)
-  if (idx === -1) return
-
-  tabs.value.splice(idx, 1)
-
-  // If this was the last tab, create a new one
-  if (tabs.value.length === 0) {
-    await newTab()
-    return
-  }
-
-  if (activePaneId.value === tabId) {
-    const newIdx = Math.min(idx, tabs.value.length - 1)
-    // Close-induced reselection is the newest navigation: supersede any in-flight
-    // deferred/supervised hop so a late older-generation commit cannot clobber it.
-    nextRevealNavGen()
-    activePaneId.value = tabs.value[newIdx].paneId
-  }
-
-  persist()
-  nextTick(() => focusActive())
-}
-
-function focusActive() {
-  if (!activePaneId.value) return
-  const tab = tabs.value.find((t) => t.paneId === activePaneId.value)
-  if (!tab) return
-  if (tab.type === 'terminal') {
-    const paneId = tab.activePaneId
-    // Defer focus/blur/fit if ANY pane in this tab is mid-IME-composition.
-    // Calling .blur()/.focus()/.fit() during composition aborts the IME
-    // session and causes xterm's diff-fallback to leak preedit text as
-    // raw input (P3).
-    for (const leaf of getAllLeaves(tab.layout)) {
-      if (termRefs[leaf.paneId]?.isComposing()) return
-    }
-    if (!(isTouchDevice() && kbVisible.value)) {
-      // Blur all other panes first to prevent duplicate input in Tauri WKWebView
-      for (const leaf of getAllLeaves(tab.layout)) {
-        if (leaf.paneId !== paneId) {
-          termRefs[leaf.paneId]?.blur()
-        }
-      }
-      termRefs[paneId]?.focus()
-    }
-    termRefs[paneId]?.fit()
-  }
-}
 
 function onTitleChange(paneId: string, title: string) {
   // Find terminal tab containing this leaf pane
@@ -1319,7 +969,7 @@ function onTerminalTouch(e: TouchEvent) {
     // Don't show keyboard when a scroll gesture was just detected
     if (scrollGestureDetected) {
       scrollGestureDetected = false
-      if (kbVisible.value) kbVisible.value = false
+      if (kbVisible.value && !appSettings.keyboard_keep_on_scroll) kbVisible.value = false
       return
     }
     const tab = tabs.value.find((t) => t.paneId === activePaneId.value)
@@ -1327,7 +977,7 @@ function onTerminalTouch(e: TouchEvent) {
     const term = paneId ? termRefs[paneId]?.getTerminal() : null
     if (term && term.touchMoved) {
       term.touchMoved = false
-      if (kbVisible.value) kbVisible.value = false
+      if (kbVisible.value && !appSettings.keyboard_keep_on_scroll) kbVisible.value = false
       return
     }
     kbVisible.value = true
@@ -1338,6 +988,9 @@ function onTerminalScroll() {
   scrollGestureDetected = true
   clearTimeout(scrollGestureTimer)
   scrollGestureTimer = window.setTimeout(() => { scrollGestureDetected = false }, 300)
+  // With keep-on-scroll enabled, scrolling back through history must not
+  // dismiss the keyboard the user is typing on.
+  if (appSettings.keyboard_keep_on_scroll) return
   if (kbVisible.value) kbVisible.value = false
 }
 
@@ -1346,101 +999,84 @@ function onTokenChanged() {
   syncWs.connectSyncWS()
 }
 
-function onServerConnect(host: string, port: number) {
-  const proto = location.protocol
-  window.location.href = `${proto}//${host}:${port}/`
+const { onServerConnect, onSshConnect, onSshReconnect, onSshAuthSubmit, onSshAuthCancel } = useSshConnectFlow({
+  tabs,
+  activeWorkspaceId,
+  workspaces,
+  syncWs,
+  sshAuth,
+  sshPanelRef,
+  ensureSplitRoot,
+  commitLocalActivePane,
+  persist,
+  focusActive,
+})
+
+const { openPlugin } = usePluginLauncher({
+  tabs,
+  activeWorkspaceId,
+  loadedPlugins,
+  syncWs,
+  ensureSplitRoot,
+  activateTab,
+  commitLocalActivePane,
+  persist,
+  focusActive,
+})
+
+onSshConnectRef.value = onSshConnect
+
+function onNewMenuAction(
+  type:
+    | 'new-tab'
+    | 'split-h'
+    | 'split-v'
+    | 'broadcast'
+    | 'ssh-connect',
+) {
+  switch (type) {
+    case 'new-tab':
+      return newTab()
+    case 'split-h':
+      return splitPane.splitPane('horizontal')
+    case 'split-v':
+      return splitPane.splitPane('vertical')
+    case 'broadcast':
+      return splitPane.toggleBroadcast()
+    case 'ssh-connect':
+      return sshPanelRef.value?.open()
+  }
 }
 
-async function onSshConnect(result: { tab_id: string; pane_id: string; layout: any; connection_id?: string }) {
-  // If API didn't return connection_id, inherit from the active workspace
-  const resolvedConnectionId = result.connection_id
-    ?? workspaces.value.find((w) => w.id === activeWorkspaceId.value)?.connection_id
+async function onClosePane(tabId: string, paneId: string) {
+  const tab = tabs.value.find((t) => t.paneId === tabId)
+  if (!tab) return
 
-  const existing = tabs.value.find((t) => t.paneId === result.tab_id)
-  if (existing) {
-    if (existing.type === 'terminal') {
-      if (resolvedConnectionId && !existing.connectionId) {
-        existing.connectionId = resolvedConnectionId
-      }
-      if (!existing.workspaceId && activeWorkspaceId.value) {
-        existing.workspaceId = activeWorkspaceId.value
-      }
-    }
-    commitLocalActivePane(result.tab_id)
-    persist()
-    nextTick(() => focusActive())
+  if (tab.type !== 'terminal') {
+    const closed = await splitPane.closePane(paneId)
+    if (!closed) await closeTab(tabId)
     return
   }
-  syncWs.markRecentlyCreated(result.tab_id)
-  tabs.value.push({
-    type: 'terminal',
-    paneId: result.tab_id,
-    layout: ensureSplitRoot(result.layout),
-    activePaneId: result.pane_id,
-    paneMru: [result.pane_id],
-    broadcastMode: false,
-    broadcastActivity: 0,
-    previewVisible: false,
-    previewAddress: '',
-    previewUrl: '',
-    previewKind: 'web',
-    connectionId: resolvedConnectionId,
-    workspaceId: activeWorkspaceId.value ?? undefined,
-  })
-  commitLocalActivePane(result.tab_id)
-  persist()
-  nextTick(() => focusActive())
-}
 
-function onSshReconnect() {
-  sshPanelRef.value?.open()
-}
-
-function onSshAuthSubmit(responses: string[]) {
-  syncWs.sendSshAuthResponse(sshAuthPaneId.value, responses)
-  sshAuthVisible.value = false
-}
-
-function onSshAuthCancel() {
-  sshAuthVisible.value = false
-}
-
-function openPlugin(pluginId: string) {
-  try {
-    const wsId = activeWorkspaceId.value ?? ''
-    const paneId = `plugin:${pluginId}:${wsId}`
-    const existing = tabs.value.find((t) => t.paneId === paneId)
-    if (existing) {
-      activateTab(paneId)
-      return
-    }
-
-    const plugin = loadedPlugins.get(pluginId)
-    if (!plugin || plugin.state !== 'active') {
-      const msg =
-        plugin?.state === 'error'
-          ? `Plugin "${pluginId}" failed to load: ${plugin.error ?? 'unknown error'}`
-          : `Plugin "${pluginId}" is not loaded.`
-      console.warn('[openPlugin]', msg)
-      window.__dinotty_ui_notify?.(msg, 'error')
-      return
-    }
-
-    const newTab = {
-      type: 'plugin' as const,
-      paneId,
-      title: plugin.manifest.name,
-      pluginId,
-      workspaceId: activeWorkspaceId.value ?? undefined,
-    }
-    tabs.value.push(newTab)
-    commitLocalActivePane(paneId)
-    syncWs.sendSync({ type: 'activate_tab', pane_id: paneId })
-    persist()
-    nextTick(() => focusActive())
-  } catch (err) {
-    console.error('[openPlugin] error:', err)
+  if (appSettings.confirm_before_close_tab === false) {
+    const closed = await splitPane.closePane(paneId)
+    if (!closed) await closeTab(tabId)
+    return
   }
+
+  ui.requestClosePane(tabId, paneId)
+}
+
+async function onConfirmClose(tabId: string, paneId: string | null) {
+  if (paneId) {
+    const closed = await splitPane.closePane(paneId)
+    if (!closed && tabId) {
+      await closeTab(tabId)
+    }
+  } else if (tabId) {
+    await closeTab(tabId)
+  }
+  ui.cancelClose()
 }
 
 // Window globals for plugin context
@@ -1489,159 +1125,9 @@ window.__dinotty_terminal_api = {
 // Test hooks for P3 verification (focusActive + isComposing guard).
 window.__dinotty_test_focus_active = focusActive
 window.__dinotty_test_is_composing = (paneId: string) => termRefs[paneId]?.isComposing() ?? false
-const PLUGIN_NOTIFY_RETRY_DELAYS_MS = [1000, 2000, 4000] as const
-const BRIDGE_MAX_CONCURRENT = 3
-const BRIDGE_QUEUE_CAP = 64
-
-interface PluginNotifyBridgeJob {
-  readonly requestId: string
-  readonly body: string
-}
-
-const pluginNotifyBridgeQueue: PluginNotifyBridgeJob[] = []
-const pluginNotifyBridgeRetryTimers = new Map<
-  ReturnType<typeof setTimeout>,
-  (shouldContinue: boolean) => void
->()
-const pluginNotifyBridgeAbortControllers = new Set<AbortController>()
-let pluginNotifyBridgeActiveJobs = 0
-let pluginNotifyBridgeDisposed = false
-let pluginNotifyBridgeOverflowDropped = 0
-let pluginNotifyBridgeOverflowWarnScheduled = false
-
-function waitForPluginNotifyRetry(delayMs: number) {
-  if (pluginNotifyBridgeDisposed) return Promise.resolve(false)
-  return new Promise<boolean>((resolve) => {
-    const timer = setTimeout(() => {
-      pluginNotifyBridgeRetryTimers.delete(timer)
-      resolve(!pluginNotifyBridgeDisposed)
-    }, delayMs)
-    pluginNotifyBridgeRetryTimers.set(timer, resolve)
-  })
-}
-
-async function runPluginNotifyBridgeJob(job: PluginNotifyBridgeJob) {
-  for (let attempt = 0; attempt < 4; attempt++) {
-    try {
-      await getApiBase()
-      if (pluginNotifyBridgeDisposed) return
-
-      const controller = new AbortController()
-      pluginNotifyBridgeAbortControllers.add(controller)
-      let response: Awaited<ReturnType<typeof authFetch>>
-      try {
-        response = await authFetch(apiUrl('/api/notify'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: job.body,
-          signal: controller.signal,
-        })
-      } finally {
-        pluginNotifyBridgeAbortControllers.delete(controller)
-      }
-      if (pluginNotifyBridgeDisposed) return
-
-      const responseBody = await response.json().catch(() => null)
-      if (pluginNotifyBridgeDisposed) return
-
-      if (response.status === 200) {
-        const accepted =
-          responseBody?.status === 'accepted' ||
-          (typeof responseBody?.eventSeq === 'string' &&
-            (typeof responseBody?.notifId === 'string' || typeof responseBody?.paneId === 'string'))
-        if (accepted || responseBody?.status === 'suppressed') return
-        console.error('[notification] plugin notify returned an unexpected 200 response')
-        return
-      }
-
-      if (response.status === 503) {
-        if (attempt < PLUGIN_NOTIFY_RETRY_DELAYS_MS.length) {
-          if (!(await waitForPluginNotifyRetry(PLUGIN_NOTIFY_RETRY_DELAYS_MS[attempt]))) return
-          continue
-        }
-        break
-      }
-
-      console.error(`[notification] plugin notify failed with HTTP ${response.status}`)
-      return
-    } catch (error) {
-      if (pluginNotifyBridgeDisposed) return
-      if (attempt < PLUGIN_NOTIFY_RETRY_DELAYS_MS.length) {
-        if (!(await waitForPluginNotifyRetry(PLUGIN_NOTIFY_RETRY_DELAYS_MS[attempt]))) return
-        continue
-      }
-      console.error('[notification] plugin notify retry exhausted', error)
-      break
-    }
-  }
-
-  if (pluginNotifyBridgeDisposed) return
-  const request = JSON.parse(job.body) as {
-    type: 'info' | 'warning' | 'error'
-    title: string
-    body: string
-  }
-  console.error('[notification] plugin notify retry exhausted; inserting locally')
-  pushNotification({
-    type: request.type,
-    title: request.title,
-    body: request.body,
-    source: 'plugin',
-  })
-}
-
-function pumpPluginNotifyBridgeQueue() {
-  while (
-    !pluginNotifyBridgeDisposed &&
-    pluginNotifyBridgeActiveJobs < BRIDGE_MAX_CONCURRENT &&
-    pluginNotifyBridgeQueue.length > 0
-  ) {
-    const job = pluginNotifyBridgeQueue.shift()!
-    pluginNotifyBridgeActiveJobs++
-    void runPluginNotifyBridgeJob(job).finally(() => {
-      pluginNotifyBridgeActiveJobs--
-      pumpPluginNotifyBridgeQueue()
-    })
-  }
-}
-
-function enqueuePluginNotifyBridgeJob(job: PluginNotifyBridgeJob) {
-  if (pluginNotifyBridgeDisposed) return
-  if (pluginNotifyBridgeQueue.length >= BRIDGE_QUEUE_CAP) {
-    pluginNotifyBridgeQueue.shift()
-    pluginNotifyBridgeOverflowDropped++
-    if (!pluginNotifyBridgeOverflowWarnScheduled) {
-      pluginNotifyBridgeOverflowWarnScheduled = true
-      queueMicrotask(() => {
-        pluginNotifyBridgeOverflowWarnScheduled = false
-        if (pluginNotifyBridgeDisposed) {
-          pluginNotifyBridgeOverflowDropped = 0
-          return
-        }
-        const dropped = pluginNotifyBridgeOverflowDropped
-        pluginNotifyBridgeOverflowDropped = 0
-        console.warn(
-          `[notification] plugin notify bridge queue full; evicted ${dropped} oldest pending ${dropped === 1 ? 'job' : 'jobs'}`
-        )
-      })
-    }
-  }
-  pluginNotifyBridgeQueue.push(job)
-  pumpPluginNotifyBridgeQueue()
-}
-
-function disposePluginNotifyBridge() {
-  pluginNotifyBridgeDisposed = true
-  pluginNotifyBridgeQueue.length = 0
-  pluginNotifyBridgeOverflowDropped = 0
-  for (const [timer, resolve] of pluginNotifyBridgeRetryTimers) {
-    clearTimeout(timer)
-    resolve(false)
-  }
-  pluginNotifyBridgeRetryTimers.clear()
-  for (const controller of pluginNotifyBridgeAbortControllers) controller.abort()
-  pluginNotifyBridgeAbortControllers.clear()
-}
+const pluginNotifyBridge = usePluginNotifyBridge({
+  pushNotification,
+})
 
 window.__dinotty_ui_notify = (
   message: string,
@@ -1662,7 +1148,7 @@ window.__dinotty_ui_notify = (
     }),
   })
 
-  enqueuePluginNotifyBridgeJob(job)
+  pluginNotifyBridge.enqueueJob(job)
 }
 window.__dinotty_ui_confirm = (message: string) => uiConfirm(message)
 window.__dinotty_open_plugin = openPlugin
@@ -1720,6 +1206,13 @@ const paletteCommands = computed<Command[]>(() => {
       action: () => openPreview(),
     },
     {
+      icon: '⠿',
+      title: t('palette.addCursors'),
+      subtitle: t('palette.addCursorsDesc'),
+      kbd: formatBinding(getBinding('addCursorsInFiles')),
+      action: () => triggerAddCursors(),
+    },
+    {
       icon: '⇄',
       title: t('palette.sshConnect'),
       subtitle: t('palette.sshConnectDesc'),
@@ -1766,6 +1259,54 @@ const paletteCommands = computed<Command[]>(() => {
   return base
 })
 
+const keyActions: Record<string, () => void> = {
+  togglePalette: () => paletteRef.value?.toggle(),
+  openBookmarks: () => bookmarksRef.value?.open(),
+  newTab: () => newTab(),
+  closeTab: async () => {
+    if (!activePaneId.value) return
+    const tab = tabs.value.find((t) => t.paneId === activePaneId.value)
+    if (tab?.type === 'terminal' && getAllLeaves(tab.layout).length > 1) {
+      // Multi-pane: route through confirmation gate (consistent with X button)
+      await onClosePane(tab.paneId, tab.activePaneId)
+    } else {
+      await requestCloseTab(activePaneId.value)
+    }
+  },
+  splitHorizontal: () => splitPane.splitPane('horizontal'),
+  splitVertical: () => splitPane.splitPane('vertical'),
+  toggleBroadcast: () => splitPane.toggleBroadcast(),
+  toggleZoom: () => splitPane.toggleZoom(),
+  equalizePanes: () => splitPane.equalizePanes(),
+  focusNextPane: () => splitPane.focusNext(),
+  focusPrevPane: () => splitPane.focusPrev(),
+  searchTerminal: () => {
+    if (!activePaneId.value) return
+    const tab = tabs.value.find((t) => t.paneId === activePaneId.value)
+    if (!tab || tab.type !== 'terminal') return
+    termRefs[tab.activePaneId]?.toggleSearch()
+  },
+  missionControl: () => openOverview(),
+  superviseTabs: () =>
+    void supervise((id) => activateTab(id, { defer: true }))
+      .then((activated) => {
+        if (activated && getEffectiveSuperviseReload()) reloadApp()
+      })
+      .catch(console.error),
+  sshConnect: () => sshPanelRef.value?.open(),
+  fontSizeUp: () => adjustActiveTerminalFontSize(1),
+  fontSizeDown: () => adjustActiveTerminalFontSize(-1),
+  reloadApp: () => reloadApp(),
+  fontSizeReset: () => adjustActiveTerminalFontSize(0),
+  addCursorsInFiles: () => triggerAddCursors(),
+}
+
+function dispatchAppAction(id: string) {
+  if (!APP_ACTION_IDS.has(id)) return
+  if (id === 'closeTab') lastTabCloseShortcutAt = Date.now()
+  keyActions[id]?.()
+}
+
 function onGlobalKeydown(e: KeyboardEvent) {
   const cmd = e.metaKey || e.ctrlKey
   const altAsCmd = appSettings.windowsAltAsCmd && isWindowsClient
@@ -1774,41 +1315,6 @@ function onGlobalKeydown(e: KeyboardEvent) {
   // (isWindowsClient=false) is unaffected.
   const appCmd = (cmd || (altAsCmd && e.altKey)) && !(isWindowsClient && e.ctrlKey && e.altKey)
   if (!appCmd) return
-
-  const keyActions: Record<string, () => void> = {
-    togglePalette: () => paletteRef.value?.toggle(),
-    openBookmarks: () => bookmarksRef.value?.open(),
-    newTab: () => newTab(),
-    closeTab: async () => {
-      if (!activePaneId.value) return
-      const tab = tabs.value.find((t) => t.paneId === activePaneId.value)
-      if (tab?.type === 'terminal' && getAllLeaves(tab.layout).length > 1) {
-        // Multi-pane: route through confirmation gate (consistent with X button)
-        await onClosePane(tab.paneId, tab.activePaneId)
-      } else {
-        await requestCloseTab(activePaneId.value)
-      }
-    },
-    splitHorizontal: () => splitPane.splitPane('horizontal'),
-    splitVertical: () => splitPane.splitPane('vertical'),
-    toggleBroadcast: () => splitPane.toggleBroadcast(),
-    toggleZoom: () => splitPane.toggleZoom(),
-    equalizePanes: () => splitPane.equalizePanes(),
-    focusNextPane: () => splitPane.focusNext(),
-    focusPrevPane: () => splitPane.focusPrev(),
-    searchTerminal: () => {
-      if (!activePaneId.value) return
-      const tab = tabs.value.find((t) => t.paneId === activePaneId.value)
-      if (!tab || tab.type !== 'terminal') return
-      termRefs[tab.activePaneId]?.toggleSearch()
-    },
-    missionControl: () => openOverview(),
-    superviseTabs: () => void supervise((id) => activateTab(id, { defer: true })),
-    sshConnect: () => sshPanelRef.value?.open(),
-    fontSizeUp: () => adjustActiveTerminalFontSize(1),
-    fontSizeDown: () => adjustActiveTerminalFontSize(-1),
-    fontSizeReset: () => adjustActiveTerminalFontSize(0),
-  }
 
   for (const [id, action] of Object.entries(keyActions)) {
     const binding = getBinding(id)
@@ -1861,10 +1367,6 @@ function onGlobalKeydown(e: KeyboardEvent) {
   }
 }
 
-function onOrientationChange() {
-  isLandscape.value = window.innerWidth > window.innerHeight
-}
-
 const _focusHandler = () => {
   nextTick(() => focusActive())
 }
@@ -1895,10 +1397,7 @@ function setupTauriWindowClose() {
 }
 function onWindowCloseConfirm() {
   windowCloseConfirmVisible.value = false
-  if (persistTimer) {
-    clearTimeout(persistTimer)
-    persistNow()
-  }
+  flushOnUnload()
   tauriInvoke('close_window')
 }
 function onWindowCloseCancel() {
@@ -1910,14 +1409,10 @@ onMounted(async () => {
   document.addEventListener('keydown', onGlobalKeydown)
   document.addEventListener('terminal-scroll', onTerminalScroll)
   window.addEventListener('focus', _focusHandler)
-  window.addEventListener('resize', onOrientationChange)
   window.addEventListener('terminal-insert-path', onTerminalInsertPath)
   window.addEventListener('terminal-insert-text', onTerminalInsertText)
   window.addEventListener('terminal-run-code', onTerminalRunCode)
-  if (window.visualViewport) {
-    naturalVH = window.visualViewport.height
-    window.visualViewport.addEventListener('resize', onViewportResize)
-  }
+  window.addEventListener('pane-drag-hover-switch', onPaneDragHoverSwitch)
   try {
     if (authenticated.value) {
     await getApiBase()
@@ -2027,23 +1522,20 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   stopForegroundGainSubscription()
-  disposePluginNotifyBridge()
+  pluginNotifyBridge.dispose()
   disposeNotificationPresentationScheduler()
   clearActiveReadContext()
   clearToastInstance()
+  disposePersist()
   unlistenWindowClose?.()
   document.removeEventListener('keydown', onGlobalKeydown)
   document.removeEventListener('terminal-scroll', onTerminalScroll)
   window.removeEventListener('focus', _focusHandler)
-  window.removeEventListener('resize', onOrientationChange)
   window.removeEventListener('terminal-insert-path', onTerminalInsertPath)
   window.removeEventListener('terminal-insert-text', onTerminalInsertText)
   window.removeEventListener('terminal-run-code', onTerminalRunCode)
-  if (window.visualViewport) {
-    window.visualViewport.removeEventListener('resize', onViewportResize)
-  }
-  document.documentElement.style.removeProperty('--sys-kb-height')
-  document.documentElement.style.setProperty('--kb-open', '0')
+  window.removeEventListener('pane-drag-hover-switch', onPaneDragHoverSwitch)
+  disposeViewport()
   syncWs.closeWs()
 })
 </script>

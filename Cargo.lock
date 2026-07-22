@@ -1615,11 +1615,12 @@ dependencies = [
 
 [[package]]
 name = "dinotty-desktop"
-version = "0.17.2"
+version = "0.18.0"
 dependencies = [
  "axum 0.7.9",
  "base64 0.22.1",
  "dinotty-server",
+ "dunce",
  "local-ip-address",
  "mime_guess",
  "portable-pty",
@@ -1645,7 +1646,7 @@ dependencies = [
 
 [[package]]
 name = "dinotty-server"
-version = "0.17.2"
+version = "0.18.0"
 dependencies = [
  "axum 0.7.9",
  "axum-extra",
@@ -1653,6 +1654,7 @@ dependencies = [
  "bytes",
  "dashmap 5.5.3",
  "dirs 5.0.1",
+ "dunce",
  "flate2",
  "futures-util",
  "hmac 0.12.1",
@@ -1660,6 +1662,7 @@ dependencies = [
  "libc",
  "local-ip-address",
  "lol_html",
+ "md-5",
  "mime_guess",
  "notify",
  "portable-pty",
@@ -1671,8 +1674,10 @@ dependencies = [
  "russh-keys",
  "russh-sftp",
  "rust-embed",
+ "semver",
  "serde",
  "serde_json",
+ "sha1 0.10.6",
  "sha2 0.10.9",
  "similar",
  "syn 2.0.117",
@@ -3727,6 +3732,16 @@ name = "matchit"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
+
+[[package]]
+name = "md-5"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d89e7ee0cfbedfc4da3340218492196241d89eefb6dab27de5df917a6d2e78cf"
+dependencies = [
+ "cfg-if",
+ "digest 0.10.7",
+]
 
 [[package]]
 name = "md5"

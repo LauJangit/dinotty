@@ -31,12 +31,14 @@ const APP_DEFAULTS = [
   ['focusNextPane', ']', false, false],
   ['focusPrevPane', '[', false, false],
   ['searchTerminal', 'f', false, false],
+  ['addCursorsInFiles', 'l', true, false],
   ['switchTab', '1', false, true],
   ['missionControl', 'm', true, false],
   ['superviseTabs', '`', false, false],
   ['sshConnect', 'n', true, false],
   ['fontSizeUp', '=', true, false],
   ['fontSizeDown', '-', false, false],
+  ['reloadApp', 'r', false, false],
   ['fontSizeReset', '0', false, false],
 ] as const
 
@@ -89,10 +91,10 @@ describe('unified keybindings', () => {
     vi.restoreAllMocks()
   })
 
-  it('keeps the 19 app defaults and persisted shape unchanged', () => {
+  it('keeps the 21 app defaults and persisted shape unchanged', () => {
     const appDefs = keyBindingDefs.filter((def) => (def.kind ?? 'app') === 'app')
 
-    expect(appDefs).toHaveLength(19)
+    expect(appDefs).toHaveLength(21)
     expect(
       appDefs.map((def) => [
         def.id,

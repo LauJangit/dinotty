@@ -1,8 +1,6 @@
 import { ref, shallowReactive, computed, h, watch } from 'vue'
 import { TYPE } from 'vue-toastification'
 import type { ToastInterface } from 'vue-toastification'
-import { getApiBase, wsUrlWithToken } from './apiBase'
-import { isTauri } from './useTransport'
 import { settings } from './useSettings'
 import { useI18n } from './useI18n'
 import {
@@ -19,93 +17,21 @@ import {
   type PresentationEvent,
   type PresentationOutput,
 } from './useNotificationPresentation'
+import { getClientId, onNotification, sendMarkRead } from './useSyncWebSocket'
 
-// ── Sound ──────────────────────────────────────────────
-
-export interface SoundConfig {
-  source: 'builtin' | 'custom'
-  value: string
-  volume: number
-}
+// ── Sound (moved to useNotificationAudio) ──────────────
+export type { SoundConfig } from './useNotificationAudio'
+export {
+  playSound,
+  getBuiltinSoundNames,
+  __setPresentationEffectsForTest,
+} from './useNotificationAudio'
+import {
+  notificationPresentationEffects,
+  resetPresentationEffects,
+} from './useNotificationAudio'
 
 export type NotificationType = 'info' | 'success' | 'warning' | 'error' | 'urgent'
-
-interface BuiltinDef {
-  type: OscillatorType
-  freqs: number[]
-  duration: number
-  gap: number
-}
-
-const BUILTIN_SOUNDS: Record<string, BuiltinDef> = {
-  ding: { type: 'sine', freqs: [880], duration: 150, gap: 0 },
-  'chime-up': { type: 'sine', freqs: [523, 659, 784], duration: 100, gap: 80 },
-  'chime-down': { type: 'sine', freqs: [784, 659, 523], duration: 100, gap: 80 },
-  'double-beep': { type: 'square', freqs: [660, 660], duration: 80, gap: 100 },
-  alarm: { type: 'sawtooth', freqs: [440, 440, 440], duration: 200, gap: 150 },
-  'soft-ping': { type: 'triangle', freqs: [1200], duration: 100, gap: 0 },
-  'task-done': { type: 'sine', freqs: [523, 659, 784, 1047], duration: 80, gap: 60 },
-  'error-buzz': { type: 'sawtooth', freqs: [220], duration: 300, gap: 0 },
-}
-
-let audioCtx: AudioContext | null = null
-
-function getAudioContext(): AudioContext {
-  if (!audioCtx) {
-    audioCtx = new AudioContext()
-  }
-  if (audioCtx.state === 'suspended') {
-    audioCtx.resume()
-  }
-  return audioCtx
-}
-
-function playBuiltin(name: string, volume: number) {
-  const def = BUILTIN_SOUNDS[name]
-  if (!def) return
-  const ctx = getAudioContext()
-  const gainNode = ctx.createGain()
-  gainNode.gain.value = Math.max(0, Math.min(1, volume))
-  gainNode.connect(ctx.destination)
-
-  let offset = ctx.currentTime
-  for (const freq of def.freqs) {
-    const osc = ctx.createOscillator()
-    osc.type = def.type
-    osc.frequency.value = freq
-    osc.connect(gainNode)
-    osc.start(offset)
-    osc.stop(offset + def.duration / 1000)
-    offset += (def.duration + def.gap) / 1000
-  }
-}
-
-export function playSound(config: SoundConfig) {
-  if (config.source === 'builtin') {
-    playBuiltin(config.value, config.volume)
-  } else {
-    const audio = new Audio(config.value)
-    audio.volume = Math.max(0, Math.min(1, config.volume))
-    audio.play().catch(() => {})
-  }
-}
-
-const productionNotificationPresentationEffects = { playSound }
-const notificationPresentationEffects = { ...productionNotificationPresentationEffects }
-
-export function __setPresentationEffectsForTest(
-  overrides: Partial<typeof notificationPresentationEffects>,
-) {
-  Object.assign(notificationPresentationEffects, overrides)
-}
-
-function resetPresentationEffects() {
-  Object.assign(notificationPresentationEffects, productionNotificationPresentationEffects)
-}
-
-export function getBuiltinSoundNames(): string[] {
-  return Object.keys(BUILTIN_SOUNDS)
-}
 
 export interface NotificationItem {
   id: string
@@ -146,7 +72,7 @@ interface LegacyEvent {
 }
 
 interface MarkReadPayload {
-  type: 'notification.mark_read'
+  type: 'mark_read'
   v: 1
   epoch: string
   clientId: string
@@ -168,8 +94,6 @@ const MAX_SEND_ATTEMPTS = 4
 const PENDING_CAP = 64
 const HISTORY_DEDUP_CAP = 512
 const PANEL_EMPTY_AUTOHIDE_MS = 250
-const CLIENT_ID_KEY = 'dinotty.notifClientId'
-const PROTO_RELOAD_KEY = 'dinotty.protoReloadAt'
 
 const notifications = ref<NotificationItem[]>([])
 const panelVisible = ref(false)
@@ -219,17 +143,9 @@ const unreadAttentionCount = computed(() => {
 })
 
 let attentionStore = createAttentionStore()
-let ws: WebSocket | null = null
 let idCounter = 0
 let initialized = false
-let reconnectDelay = 3000
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null
-let connectionNeedsSnapshot = false
-let protocolUpgradeStopped = false
-let suppressClose = false
-let connectGeneration = 0
 let requestCounter = 0
-let cachedClientId: string | null = null
 const pendingRequests = new Map<string, PendingRequest>()
 const historyDedup = new Set<string>()
 
@@ -332,20 +248,7 @@ function randomToken(): string {
 const tabNonce = randomToken()
 
 export function getNotificationClientId(): string {
-  if (cachedClientId) return cachedClientId
-  try {
-    const stored = localStorage.getItem(CLIENT_ID_KEY)
-    if (stored) {
-      cachedClientId = stored
-      return stored
-    }
-    cachedClientId = randomToken()
-    localStorage.setItem(CLIENT_ID_KEY, cachedClientId)
-    return cachedClientId
-  } catch {
-    cachedClientId = randomToken()
-    return cachedClientId
-  }
+  return getClientId() ?? ''
 }
 
 export function mintNotificationRequestId(): string {
@@ -384,11 +287,16 @@ export function aggregateSeverity(paneIds: string[]): NotificationType | null {
   return highest
 }
 
+function safeBigInt(s: string): bigint | null {
+  try { return BigInt(s) } catch { return null }
+}
+
 function historyItemMatchesReadTarget(card: NotificationItem, target: OverlayTarget): boolean {
   if ('paneId' in target) {
+    const seq = card.eventSeq !== undefined ? safeBigInt(card.eventSeq) : null
     return card.paneId === target.paneId
-      && card.eventSeq !== undefined
-      && BigInt(card.eventSeq) <= target.throughEventSeq
+      && seq !== null
+      && seq <= target.throughEventSeq
   }
   return card.notifId === target.notifId
 }
@@ -412,9 +320,10 @@ function pruneHistoryByAuthoritativeRead() {
     let paneRead = false
     if (card.paneId !== undefined) {
       const pane = attentionStore.panes.get(card.paneId)
+      const seq = card.eventSeq !== undefined ? safeBigInt(card.eventSeq) : null
       paneRead = pane !== undefined
-        && card.eventSeq !== undefined
-        && pane.readThroughSeq >= BigInt(card.eventSeq)
+        && seq !== null
+        && pane.readThroughSeq >= seq
     }
 
     let notifRead = false
@@ -668,10 +577,6 @@ function showToast(item: NotificationItem, retire: () => void) {
   return dismissToast
 }
 
-function isSocketOpen(): boolean {
-  return ws !== null && ws.readyState === WebSocket.OPEN
-}
-
 function cancelPending(requestId: string) {
   const pending = pendingRequests.get(requestId)
   if (!pending) return
@@ -720,8 +625,8 @@ function sendPending(pending: PendingRequest) {
     return
   }
   pending.attempts++
-  if (isSocketOpen() && !connectionNeedsSnapshot && pending.payload.epoch) {
-    ws!.send(JSON.stringify(pending.payload))
+  if (pending.payload.epoch) {
+    sendMarkRead(pending.payload)
   }
   scheduleAckTimeout(pending)
 }
@@ -735,7 +640,7 @@ function createPending(
   if (targets.length === 0) return
   const requestId = mintNotificationRequestId()
   const payload: MarkReadPayload = {
-    type: 'notification.mark_read',
+    type: 'mark_read',
     v: 1,
     epoch: attentionStore.epoch ?? '',
     clientId: getNotificationClientId(),
@@ -809,53 +714,6 @@ function resendPendingAfterSnapshot() {
   }
 }
 
-function handleProtocolUpgradeRequired() {
-  protocolUpgradeStopped = true
-  if (reconnectTimer !== null) {
-    clearTimeout(reconnectTimer)
-    reconnectTimer = null
-  }
-  if (isTauri()) {
-    console.error('[notification] protocol update required; update the desktop application')
-    if (toastInstance)
-      toastInstance('Notification update required', { type: TYPE.ERROR, timeout: false })
-    return
-  }
-
-  let lastReload = 0
-  try {
-    lastReload = Number(sessionStorage.getItem(PROTO_RELOAD_KEY) ?? '0')
-  } catch {}
-  const now = Date.now()
-  if (!Number.isFinite(lastReload) || now - lastReload > 60_000) {
-    try {
-      sessionStorage.setItem(PROTO_RELOAD_KEY, String(now))
-    } catch {}
-    location.reload()
-  } else {
-    console.error('[notification] protocol update required; automatic reload already attempted')
-  }
-}
-
-function handleClose(event: CloseEvent) {
-  ws = null
-  connectionNeedsSnapshot = false
-  if (suppressClose) return
-  if (event.code === 4001) {
-    cancelAllPending()
-    attentionStore.overlays.clear()
-    refreshProjection()
-    handleProtocolUpgradeRequired()
-    return
-  }
-  if (protocolUpgradeStopped) return
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null
-    connectWs()
-  }, reconnectDelay)
-  reconnectDelay = Math.min(reconnectDelay * 2, 30000)
-}
-
 export function __dispatchServerMessageForTest(msg: unknown) {
   if (!msg || typeof msg !== 'object' || !('type' in msg)) return
   const envelope = msg as { type: string }
@@ -872,7 +730,9 @@ export function __dispatchServerMessageForTest(msg: unknown) {
       break
     case 'snapshot': {
       const snapshot = msg as unknown as AttentionStateEnvelope
-      if (attentionStore.epoch !== null && attentionStore.epoch !== snapshot.epoch) {
+      const previousEpoch = attentionStore.epoch
+      const epochChanged = previousEpoch !== snapshot.epoch
+      if (previousEpoch !== null && epochChanged) {
         presentationScheduler.clear()
       }
       const applied = attentionStore.applySnapshot(snapshot)
@@ -880,8 +740,7 @@ export function __dispatchServerMessageForTest(msg: unknown) {
       prunePendingWithoutOverlay()
       refreshProjection()
       if (applied) evaluateActiveRead()
-      if (connectionNeedsSnapshot) {
-        connectionNeedsSnapshot = false
+      if (previousEpoch !== null && epochChanged) {
         resendPendingAfterSnapshot()
       }
       break
@@ -915,6 +774,8 @@ export function __dispatchServerMessageForTest(msg: unknown) {
   }
 }
 
+onNotification(__dispatchServerMessageForTest)
+
 export function __pendingRequestCountForTest(): number {
   return pendingRequests.size
 }
@@ -923,50 +784,10 @@ export function __pendingPresentationCountForTest(): number {
   return presentationScheduler.pendingCount()
 }
 
-function connectWs() {
-  if (ws || protocolUpgradeStopped) return
-  const generation = connectGeneration
-  const connect = async () => {
-    let url: string
-    if (isTauri()) {
-      const origin = await getApiBase()
-      url = `${origin.replace(/^http/, 'ws')}/ws/notify?v=1`
-    } else {
-      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-      url = `${proto}//${location.host}/ws/notify?v=1`
-    }
-    if (generation !== connectGeneration || protocolUpgradeStopped || ws) return
-    const socket = new WebSocket(wsUrlWithToken(url))
-    ws = socket
-    connectionNeedsSnapshot = true
-    socket.onopen = () => {
-      reconnectDelay = 3000
-    }
-    socket.onmessage = (event) => {
-      try {
-        __dispatchServerMessageForTest(JSON.parse(event.data))
-      } catch {}
-    }
-    socket.onclose = handleClose
-    socket.onerror = () => {}
-  }
-  void connect()
-}
-
 export function __resetForTest() {
   resetPresentationEffects()
   clearPanelEmptyAutohide()
-  connectGeneration++
-  if (reconnectTimer !== null) clearTimeout(reconnectTimer)
-  reconnectTimer = null
   cancelAllPending()
-  suppressClose = true
-  if (ws) {
-    ws.onclose = null
-    ws.close()
-  }
-  suppressClose = false
-  ws = null
   notifications.value = []
   panelVisible.value = false
   for (const paneId of Object.keys(unreadByPane)) delete unreadByPane[paneId]
@@ -976,11 +797,7 @@ export function __resetForTest() {
   historyDedup.clear()
   idCounter = 0
   requestCounter = 0
-  cachedClientId = null
   initialized = false
-  reconnectDelay = 3000
-  connectionNeedsSnapshot = false
-  protocolUpgradeStopped = false
   toastInstance = null
   goToHandler = null
   activeReadContext = null
@@ -989,10 +806,7 @@ export function __resetForTest() {
 }
 
 export function useNotification() {
-  if (!initialized) {
-    initialized = true
-    connectWs()
-  }
+  initialized = true
   return {
     notifications,
     panelVisible,

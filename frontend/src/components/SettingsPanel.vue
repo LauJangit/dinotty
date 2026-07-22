@@ -25,7 +25,7 @@
         <KeyboardTab v-show="activeTab === 'keyboard'" />
         <MonitorTab v-show="activeTab === 'monitor'" />
         <NotificationTab v-show="activeTab === 'notification'" />
-        <PluginsTab v-show="activeTab === 'plugins'" />
+        <PluginsTab v-show="activeTab === 'plugins'" @open-plugin="openPlugin" />
         <AboutTab v-show="activeTab === 'about'" />
       </div>
     </div>
@@ -56,10 +56,19 @@ import PluginsTab from './settings/PluginsTab.vue'
 import AboutTab from './settings/AboutTab.vue'
 
 const props = defineProps<{ open: boolean }>()
-const emit = defineEmits<{ close: []; 'token-changed': [] }>()
+const emit = defineEmits<{
+  close: []
+  'token-changed': []
+  'open-plugin': [pluginId: string]
+}>()
 
 const { settings, saveSettings, loadSettings, applyCurrentTheme } = useSettings()
 const { t } = useI18n()
+
+function openPlugin(pluginId: string) {
+  emit('close')
+  emit('open-plugin', pluginId)
+}
 
 const activeTab = ref<
   'general' | 'appearance' | 'keyboard' | 'monitor' | 'notification' | 'plugins' | 'about'
@@ -86,12 +95,22 @@ watch(settings, scheduleSave, { deep: true })
 // Cancel any pending debounced save and suppress the autosave that the
 // remote Object.assign would trigger, so we neither PUT back the fetched
 // value nor let a stale pending timer overwrite it.
-watch(() => props.open, (v) => {
-  if (!v) return
-  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
-  suppressSave = true
-  void loadSettings().finally(() => nextTick(() => { suppressSave = false }))
-})
+watch(
+  () => props.open,
+  (v) => {
+    if (!v) return
+    if (saveTimer) {
+      clearTimeout(saveTimer)
+      saveTimer = null
+    }
+    suppressSave = true
+    void loadSettings().finally(() =>
+      nextTick(() => {
+        suppressSave = false
+      })
+    )
+  }
+)
 
 const tabs = computed(() => [
   { id: 'general' as const, label: t('settings.tab.general'), icon: SettingsIcon },
@@ -517,7 +536,6 @@ const tabs = computed(() => [
   top: calc(100% + 4px);
   left: 0;
   right: 0;
-  max-height: 260px;
   overflow-y: auto;
   overscroll-behavior: contain;
   background: var(--bg-surface);
@@ -526,6 +544,10 @@ const tabs = computed(() => [
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
   z-index: 1000;
   padding: 4px 0;
+}
+.font-dropdown-menu.drop-up {
+  top: auto;
+  bottom: calc(100% + 4px);
 }
 .font-dropdown-item {
   display: flex;
@@ -611,7 +633,10 @@ const tabs = computed(() => [
   color: var(--fg-muted);
   cursor: pointer;
   opacity: 0.7;
-  transition: color 0.15s ease, opacity 0.15s ease, background 0.15s ease;
+  transition:
+    color 0.15s ease,
+    opacity 0.15s ease,
+    background 0.15s ease;
 }
 .setting-reset:hover {
   color: var(--fg);
@@ -703,14 +728,28 @@ const tabs = computed(() => [
   flex-direction: column;
   gap: 4px;
   padding: 8px 6px 10px;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 6px;
 }
 
-.ak-wysiwyg :deep(.mkb-btn) {
-  touch-action: none;
+.ak-zone-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ak-zone-title {
+  font-size: 11px;
+  line-height: 1;
+  color: var(--fg-muted);
+  letter-spacing: 0.04em;
+}
+
+.ak-zone-sep {
+  border-top: 1px dashed var(--border);
+  margin: 6px 0 2px;
 }
 
 .ak-wyg-row-outer {
@@ -736,11 +775,25 @@ const tabs = computed(() => [
   display: flex;
 }
 
+.ak-wyg-target-row {
+  display: contents;
+}
+
+.ak-wyg-target-row:empty {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 32px;
+  min-height: 36px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+}
+
 .ak-wyg-key {
   position: relative;
   flex: 1;
   min-width: 0;
   width: 100%;
+  padding-left: 18px;
   padding-right: 20px;
   box-sizing: border-box;
   cursor: default;
@@ -759,6 +812,26 @@ const tabs = computed(() => [
 
 .ak-wyg-label:hover {
   text-decoration: underline;
+}
+
+.ak-key-grip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px 0 0 6px;
+  background: var(--bg-hover);
+  color: var(--fg-muted);
+  cursor: grab;
+  touch-action: none;
+  z-index: 2;
+}
+
+.ak-key-grip:active {
+  cursor: grabbing;
 }
 
 .ak-key-del {
@@ -826,19 +899,53 @@ const tabs = computed(() => [
   border-color: rgba(255, 100, 100, 0.4);
 }
 
-.ak-wyg-fixed-cluster {
-  pointer-events: none;
+.ak-wyg-bottom-cluster {
   opacity: 0.92;
   margin-top: 2px;
 }
 
-.ak-wyg-fixed-cluster .mkb-btn {
-  cursor: default;
+.ak-wyg-bottom-cluster .ak-wyg-row-outer {
+  gap: 4px;
+}
+
+.ak-wyg-bottom-cluster .mkb-action-grid-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.ak-wyg-enter {
+  position: relative;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.ak-enter-resize {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 12px;
+  border-radius: 6px 0 0 6px;
+  background: var(--bg-hover);
+  cursor: ew-resize;
+  touch-action: none;
+  z-index: 2;
+}
+
+.ak-enter-resize:hover {
+  background: rgba(77, 127, 255, 0.4);
 }
 
 .ak-actions {
   display: flex;
   gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* Preset buttons sit closer to the keyboard box above (8px) than to the
+   toolbar-shortcuts heading below (16px) — a deliberate 1:2 ratio. */
+.ak-actions + h4 {
+  margin-top: 16px;
 }
 
 .ak-reset {

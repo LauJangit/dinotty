@@ -144,6 +144,7 @@ describe('tree run code action', function treeRunCodeActionSuite() {
       onSelectDir,
       triggerUpload,
       downloadFile,
+      paneId: () => 'test-pane',
       t: translate,
     })
 

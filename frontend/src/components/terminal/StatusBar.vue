@@ -1,21 +1,31 @@
 <template>
   <div v-if="monitorSettings.enabled || warning.message.value" class="status-bar">
-    <div v-if="monitorSettings.enabled" class="status-bar-metrics">
-      <button
-        v-for="m in visibleMetrics"
-        :key="m.key"
-        class="metric-btn"
-        @click.stop="togglePopover(m.key, $event)"
-      >
-        <component :is="m.icon" :size="14" />
-        <span class="metric-value">{{ m.label }}</span>
-      </button>
+    <div v-if="leftItems.length" class="status-bar-left">
+      <StatusBarItemRenderer
+        v-for="item in leftItems"
+        :key="item.id"
+        :item="item"
+      />
+    </div>
+    <div
+      ref="rightEl"
+      class="status-bar-right"
+      :class="{ 'has-overflow-left': overflowLeft, 'has-overflow-right': overflowRight }"
+      @wheel="onWheel"
+      @scroll="updateOverflow"
+    >
+      <StatusBarItemRenderer
+        v-for="item in allRightItems"
+        :key="item.id"
+        :item="item"
+      />
     </div>
     <span v-if="warning.message.value" class="pane-warning">{{ warning.message.value }}</span>
 
     <MonitorPopover
-      :visible="!!activePopover"
-      :metric="activePopover || 'cpu'"
+      v-if="activePopover?.kind === 'system'"
+      :visible="true"
+      :metric="activePopover.metric"
       :data="data"
       :anchor-rect="anchorRect"
       :cpu-history="cpuHistory"
@@ -26,12 +36,18 @@
       :gpu-mem-history="gpuMemHistory"
       @close="activePopover = null"
     />
+    <PluginSeriesPopover
+      v-else-if="activePopover?.kind === 'plugin' && activeSeries"
+      :visible="true"
+      :series="activeSeries"
+      :anchor-rect="anchorRect"
+      @close="activePopover = null"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, defineAsyncComponent } from 'vue'
-import { Cpu, MemoryStick, HardDrive, Wifi, Gpu } from 'lucide-vue-next'
+import { computed, ref, defineAsyncComponent, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { monitorData } from '../../composables/useMonitor'
 import {
   cpuHistory,
@@ -43,91 +59,123 @@ import {
 } from '../../composables/useMonitor'
 import { useSettings } from '../../composables/useSettings'
 import { usePaneWarning } from '../../composables/usePaneWarning'
+import { useStatusBarItemsStore } from '../../stores/statusBarItems'
+import { usePluginMonitorStore } from '../../stores/pluginMonitor'
+import {
+  createSystemStatusBarItems,
+  type MetricKey,
+} from '../../composables/useSystemStatusBarItems'
+import { pluginSeriesToStatusBarItem } from '../../composables/usePluginStatusBarAdapter'
+import StatusBarItemRenderer from './StatusBarItemRenderer.vue'
+
 const MonitorPopover = defineAsyncComponent(() => import('./MonitorPopover.vue'))
+const PluginSeriesPopover = defineAsyncComponent(() => import('./PluginSeriesPopover.vue'))
 
 const data = monitorData
 const { settings } = useSettings()
 const warning = usePaneWarning()
+const store = useStatusBarItemsStore()
+const pluginMonitor = usePluginMonitorStore()
 
 const monitorSettings = computed(
-  () => settings.monitor ?? { enabled: true, cpu: true, memory: true, disk: false, network: true }
+  () =>
+    settings.monitor ?? {
+      enabled: true,
+      cpu: true,
+      memory: true,
+      disk: false,
+      network: true,
+    },
 )
 
-type MetricKey = 'cpu' | 'memory' | 'disk' | 'network' | 'gpu'
+const leftItems = computed(() => store.leftItems)
+const rightItems = computed(() => store.rightItems)
 
-const activePopover = ref<MetricKey | null>(null)
+type ActivePopover =
+  | { kind: 'system'; metric: MetricKey }
+  | { kind: 'plugin'; seriesId: string }
+  | null
+
+const activePopover = ref<ActivePopover>(null)
 const anchorRect = ref<DOMRect | null>(null)
 
-function fmtBytes(b: number): string {
-  if (b < 1024 * 1024 * 1024) return `${(b / 1024 / 1024).toFixed(1)}M`
-  return `${(b / 1024 / 1024 / 1024).toFixed(1)}G`
-}
-
-function fmtRate(bytesPerSec: number): string {
-  if (bytesPerSec < 1024) return `${bytesPerSec}B`
-  if (bytesPerSec < 1024 * 1024) return `${(bytesPerSec / 1024).toFixed(1)}K`
-  return `${(bytesPerSec / 1024 / 1024).toFixed(1)}M`
-}
-
-const allMetrics = computed(() => {
-  const d = data.value
-  if (!d) {
-    return [
-      { key: 'cpu' as MetricKey, icon: Cpu, label: '—' },
-      { key: 'memory' as MetricKey, icon: MemoryStick, label: '—' },
-      { key: 'disk' as MetricKey, icon: HardDrive, label: '—' },
-      { key: 'network' as MetricKey, icon: Wifi, label: '—' },
-    ]
-  }
-
-  const mainDisk = d.disk[0]
-  const totalRx = d.network.reduce((s, n) => s + n.rx_rate, 0)
-  const totalTx = d.network.reduce((s, n) => s + n.tx_rate, 0)
-
-  const metrics = [
-    { key: 'cpu' as MetricKey, icon: Cpu, label: `${d.cpu.usage.toFixed(0)}%` },
-    {
-      key: 'memory' as MetricKey,
-      icon: MemoryStick,
-      label: `${fmtBytes(d.memory.used)}/${fmtBytes(d.memory.total)}`,
-    },
-    {
-      key: 'disk' as MetricKey,
-      icon: HardDrive,
-      label: mainDisk ? `${fmtBytes(mainDisk.used)}/${fmtBytes(mainDisk.total)}` : '—',
-    },
-    {
-      key: 'network' as MetricKey,
-      icon: Wifi,
-      label: `↑${fmtRate(totalTx)} ↓${fmtRate(totalRx)}`,
-    },
-  ]
-
-  if (d.gpu?.length > 0) {
-    const totalUsed = d.gpu.reduce((s, g) => s + g.memory_used, 0)
-    const totalMem = d.gpu.reduce((s, g) => s + g.memory_total, 0)
-    const pct = totalMem > 0 ? (totalUsed / totalMem) * 100 : 0
-    metrics.push({
-      key: 'gpu' as MetricKey,
-      icon: Gpu,
-      label: `${fmtBytes(totalUsed * 1024 * 1024)}/${fmtBytes(totalMem * 1024 * 1024)} ${pct.toFixed(0)}%`,
-    })
-  }
-
-  return metrics
-})
-
-const visibleMetrics = computed(() => allMetrics.value.filter((m) => monitorSettings.value[m.key]))
-
-function togglePopover(key: MetricKey, event: MouseEvent) {
-  if (activePopover.value === key) {
+function toggleSystemPopover(key: MetricKey, event: MouseEvent) {
+  if (activePopover.value?.kind === 'system' && activePopover.value.metric === key) {
     activePopover.value = null
     return
   }
   const el = event.currentTarget as HTMLElement
   anchorRect.value = el.getBoundingClientRect()
-  activePopover.value = key
+  activePopover.value = { kind: 'system', metric: key }
 }
+
+function togglePluginPopover(seriesId: string, event: MouseEvent) {
+  if (activePopover.value?.kind === 'plugin' && activePopover.value.seriesId === seriesId) {
+    activePopover.value = null
+    return
+  }
+  const el = event.currentTarget as HTMLElement
+  anchorRect.value = el.getBoundingClientRect()
+  activePopover.value = { kind: 'plugin', seriesId }
+}
+
+const activeSeries = computed(() => {
+  const pop = activePopover.value
+  if (pop?.kind !== 'plugin') return null
+  return pluginMonitor.series.find((s) => s.id === pop.seriesId) ?? null
+})
+
+// Plugin series with statusText get adapted into status bar items (right side).
+const pluginStatusBarItems = computed(() =>
+  pluginMonitor.series
+    .filter((s) => s.statusText && pluginMonitor.isVisible(s, settings.monitor.plugin_series))
+    .map((s) => pluginSeriesToStatusBarItem(s, (e) => togglePluginPopover(s.id, e))),
+)
+
+// Merge system items with plugin-adapted items; system items keep their priorities,
+// plugin items use priority 200 (rendered after system metrics).
+const allRightItems = computed(() => {
+  const sys = [...rightItems.value]
+  const plugins = [...pluginStatusBarItems.value]
+  return [...sys, ...plugins].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0))
+})
+
+const rightEl = ref<HTMLElement | null>(null)
+const overflowLeft = ref(false)
+const overflowRight = ref(false)
+
+function updateOverflow() {
+  const el = rightEl.value
+  if (!el) return
+  overflowLeft.value = el.scrollLeft > 1
+  overflowRight.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+}
+
+function onWheel(e: WheelEvent) {
+  const el = rightEl.value
+  if (!el) return
+  if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return
+  if (e.shiftKey || el.scrollWidth > el.clientWidth) {
+    el.scrollLeft += e.deltaY
+    e.preventDefault()
+  }
+}
+
+onMounted(() => {
+  store.register('system', createSystemStatusBarItems(monitorSettings, toggleSystemPopover))
+  updateOverflow()
+  window.addEventListener('resize', updateOverflow)
+})
+
+onBeforeUnmount(() => {
+  store.unregister('system')
+  window.removeEventListener('resize', updateOverflow)
+})
+
+watch(
+  () => allRightItems.value.length,
+  () => nextTick(updateOverflow),
+)
 </script>
 
 <style scoped>
@@ -138,49 +186,95 @@ function togglePopover(key: MetricKey, event: MouseEvent) {
   border-top: 1px solid var(--border);
   display: flex;
   align-items: center;
-  justify-content: flex-start;
   flex-shrink: 0;
   padding: 0 12px;
   position: relative;
   z-index: 2;
-}
-.status-bar-metrics {
-  display: flex;
   gap: 16px;
-  align-items: center;
 }
-.metric-btn {
+.status-bar-left {
   display: flex;
+  gap: 8px;
   align-items: center;
-  gap: 4px;
-  background: none;
-  border: none;
-  color: var(--fg-muted);
-  cursor: pointer;
-  padding: 2px 4px;
-  border-radius: 3px;
-  font-size: 12px;
-  font-family: inherit;
-  line-height: 1;
-  transition: color 0.15s;
+  flex-shrink: 0;
 }
-.metric-btn:hover {
-  color: var(--fg-bright);
+.status-bar-right {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 12px,
+    #000 calc(100% - 12px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 12px,
+    #000 calc(100% - 12px),
+    transparent 100%
+  );
+  -webkit-overflow-scrolling: touch;
 }
-.metric-value {
-  font-variant-numeric: tabular-nums;
+.status-bar-right::-webkit-scrollbar {
+  display: none;
+}
+.status-bar-right.has-overflow-left:not(.has-overflow-right) {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 12px,
+    #000 100%
+  );
+  mask-image: linear-gradient(to right, transparent 0, #000 12px, #000 100%);
+}
+.status-bar-right.has-overflow-right:not(.has-overflow-left) {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    #000 0,
+    #000 calc(100% - 12px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    #000 0,
+    #000 calc(100% - 12px),
+    transparent 100%
+  );
+}
+.status-bar-right:not(.has-overflow-left):not(.has-overflow-right) {
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 .pane-warning {
-  margin-left: auto;
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
   font-size: 11px;
   color: var(--fg-muted);
   white-space: nowrap;
+  max-width: 40%;
   overflow: hidden;
   text-overflow: ellipsis;
+  pointer-events: none;
   animation: warning-fade 4s ease-in forwards;
+  z-index: 3;
 }
 @keyframes warning-fade {
-  0%, 70% { opacity: 1; }
-  100% { opacity: 0; }
+  0%,
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
 }
 </style>

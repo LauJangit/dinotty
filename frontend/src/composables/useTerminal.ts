@@ -14,185 +14,41 @@ import {
   resetOverride,
   setOverride,
 } from './useDeviceTextSettings'
-import {
-  computeWheelPlan,
-  type TrackingWheelState,
-  type WheelPlanInput,
-} from './computeWheelPlan'
 import { wsUrlWithToken } from './apiBase'
-import { terminalKeyBindingDefs, useKeybindings, type KeyBinding } from './useKeybindings'
+import { useKeybindings } from './useKeybindings'
 import { isWindowsClient } from '../utils/clientPlatform'
-import { trailingPathDeleteLen } from '../utils/shell'
 import { setupTouchScroll } from '../utils/touchScroll'
+import {
+  DEDUP_WINDOW_MS,
+  IME_SYM_PAIR_MS,
+  handleTerminalShortcutKeydown,
+  isDuplicateOnData,
+  isShiftSymbolChar,
+  isTouchDevice,
+  stripImeConfirmSpace,
+} from '../utils/terminalInput'
+import { createTerminalWheel, type TerminalWheel } from './useTerminalWheel'
+import { setupTerminalDrop } from './useTerminalDrop'
+import { createTerminalOverlay } from './useTerminalOverlay'
 
-export function isTouchDevice(): boolean {
-  return 'ontouchstart' in window || navigator.maxTouchPoints > 0
-}
-
-let tauriDragDropRegistered = false
-let lastFocusedInstance: TerminalInstance | null = null
+// Re-export pure helpers so existing callers (App.vue, useTabLifecycle,
+// useSplitPane, tests) don't need to update their import paths.
+export {
+  DEDUP_WINDOW_MS,
+  handleTerminalShortcutKeydown,
+  isDuplicateOnData,
+  isShiftSymbolChar,
+  isSinglePrintableAscii,
+  isSinglePrintableGrapheme,
+  isTouchDevice,
+  stripImeConfirmSpace,
+  terminalKeybindingMatches,
+} from '../utils/terminalInput'
 
 // Guard for Tauri WKWebView multi-focus: only the active pane should send input.
 let _activePaneId: string | null = null
 export function setActivePaneId(paneId: string | null) {
   _activePaneId = paneId
-}
-
-// Dedup window (ms) for WKWebView onData double-fire.
-// xterm.js + WKWebView on macOS can produce 2 onData events for one key
-// (modifier-prefixed sequence + actual char). The inter-event gap in
-// WKWebView multi-focus replay is sub-millisecond, while the gap between
-// the modifier-prefixed event and the real char in a Shift+key press is
-// typically > 2ms. A 2ms window rejects the multi-focus duplicate but
-// keeps the modifier sequence intact. (was 5ms — caused Shift+punct to
-// require a double press.)
-export const DEDUP_WINDOW_MS = 2
-
-const IME_SYM_PAIR_MS = 400
-
-/**
- * Determine whether an incoming onData payload should be dropped because
- * it is a WKWebView multi-focus replay of the previous event. Exported
- * for unit testing.
- */
-export function isDuplicateOnData(
-  data: string,
-  prev: string,
-  prevAt: number,
-  now: number
-): boolean {
-  if (prev === '') return false
-  if (data !== prev) return false
-  return now - prevAt < DEDUP_WINDOW_MS
-}
-
-// Contiguous codepoint ranges of Shift+key punctuation that macOS Chinese IME can emit.
-// Covers the WHOLE finite alphabet by block, not a per-key whitelist:
-//   ASCII punct · General Punctuation (— – ' ' " " …) · CJK Symbols & Punctuation (、。《》「」『』【】〈〉)
-//   · Fullwidth Forms punct subranges. Excludes fullwidth letters/digits and U+3000 ideographic space.
-const SHIFT_SYMBOL_RANGES: ReadonlyArray<readonly [number, number]> = [
-  [0x21, 0x2f],
-  [0x3a, 0x40],
-  [0x5b, 0x60],
-  [0x7b, 0x7e],
-  [0x2010, 0x2027],
-  [0x3001, 0x301f],
-  [0xff01, 0xff0f],
-  [0xff1a, 0xff20],
-  [0xff3b, 0xff40],
-  [0xff5b, 0xff5e],
-]
-// Standalone Shift+key punctuation outside any range: ¥(U+00A5 macOS pinyin shift+4) ·(U+00B7) ￥(U+FFE5).
-const SHIFT_SYMBOL_SINGLETONS = new Set([0x00a5, 0x00b7, 0xffe5])
-
-// Single char produced by Shift+key that is a symbol/punctuation (NOT a letter/digit/space).
-// Excludes pinyin preedit letters (n,i,h,...) and digits, so the rescue can never touch CJK composition.
-function isShiftSymbolChar(data: string): boolean {
-  // Doubled CJK punctuation emitted by one keypress: —— (U+2014×2) / …… (U+2026×2)
-  if (data.length === 2) {
-    const d = data.charCodeAt(0)
-    return d === data.charCodeAt(1) && (d === 0x2014 || d === 0x2026)
-  }
-  if (data.length !== 1) return false
-  const cp = data.charCodeAt(0)
-  return (
-    SHIFT_SYMBOL_RANGES.some(([lo, hi]) => cp >= lo && cp <= hi) || SHIFT_SYMBOL_SINGLETONS.has(cp)
-  )
-}
-function stripImeConfirmSpace(data: string): string {
-  // Candidate-confirm space leaks as <sym><space> (incl. ——/…… + space); strip the trailing ws.
-  if (
-    data.length >= 2 &&
-    /\s/.test(data[data.length - 1]) &&
-    isShiftSymbolChar(data.slice(0, -1))
-  ) {
-    return data.slice(0, -1)
-  }
-  return data
-}
-
-export { isShiftSymbolChar, stripImeConfirmSpace }
-
-export function isSinglePrintableAscii(data: string): boolean {
-  return data.length === 1 && data.charCodeAt(0) >= 0x20 && data.charCodeAt(0) <= 0x7e
-}
-
-export function isSinglePrintableGrapheme(data: string, allowSpace = false): boolean {
-  if (data.length !== 1) return false
-  const cp = data.charCodeAt(0)
-  if (cp === 0x20) return allowSpace
-  if (cp < 0x20 || cp === 0x7f) return false
-  return cp <= 0x7e || (cp >= 0xff01 && cp <= 0xff5e)
-}
-
-export function terminalKeybindingMatches(
-  e: KeyboardEvent,
-  binding: KeyBinding,
-  virtualMeta = false
-): boolean {
-  const effMeta = e.metaKey || virtualMeta
-  const effAlt = virtualMeta ? false : e.altKey
-  return (
-    e.key.toLowerCase() === binding.key.toLowerCase() &&
-    e.shiftKey === !!binding.shift &&
-    effMeta === !!binding.meta &&
-    e.ctrlKey === !!binding.ctrl &&
-    effAlt === !!binding.alt
-  )
-}
-
-export function handleTerminalShortcutKeydown(
-  e: KeyboardEvent,
-  sendData: (data: string) => void,
-  virtualMeta = false,
-  getLineBeforeCursor?: () => string | null
-): boolean {
-  const key = e.key.toLowerCase()
-  if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && (key === 'c' || key === 'v'))
-    return false
-
-  const { getBinding } = useKeybindings()
-  for (const def of terminalKeyBindingDefs) {
-    const sequence = def.sequence
-    if (!sequence) continue
-    if (terminalKeybindingMatches(e, getBinding(def.id), virtualMeta)) {
-      e.preventDefault()
-      e.stopPropagation()
-      if (def.id === 'term.deleteToLineStart' && getLineBeforeCursor) {
-        const line = getLineBeforeCursor()
-        if (line !== null) {
-          const len = trailingPathDeleteLen(line)
-          if (len > 0) {
-            sendData('\x7f'.repeat(len))
-            return true
-          }
-        }
-      }
-      sendData(sequence)
-      return true
-    }
-  }
-  return false
-}
-
-function setupGlobalTauriDragDrop() {
-  if (tauriDragDropRegistered) return
-  tauriDragDropRegistered = true
-
-  const w = window as any
-  const listen = w.__TAURI__?.event?.listen
-  if (!listen) return
-
-  listen('file-drop-paths', (event: any) => {
-    const payload = event.payload || []
-    const paths: string[] = Array.isArray(payload) ? payload : (payload.paths || [])
-    if (paths.length > 0 && lastFocusedInstance) {
-      const escaped = paths.map((p: string) =>
-        /[\s'"\\()&;|<>$!`{}[\]#?*~]/.test(p) ? `'${p.replace(/'/g, "'\\''")}'` : p
-      )
-      lastFocusedInstance.sendData(escaped.join(' '))
-    }
-  })
 }
 
 export class TerminalInstance {
@@ -208,13 +64,11 @@ export class TerminalInstance {
   private _reconnectAttempts = 0
   private _reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private _onDataRegistered = false
-  private _overlay: HTMLElement | null = null
   private _sessionExited = false
   private _shellType: string | null = null
   sshHost: string | null = null // "user@host:port" for SSH tabs
   private _suppressTitleChange = false
   private _touchCleanup: (() => void) | null = null
-  private _focusinCleanup: (() => void) | null = null
   private _compositionCleanup: (() => void) | null = null
   private _resizeObserver: ResizeObserver | null = null
   private _themeUnsub: (() => void) | null = null
@@ -224,10 +78,6 @@ export class TerminalInstance {
   private _lastRows = 0
   private _lastInputData = ''
   private _lastInputTime = 0
-  private _wheelBypass = false
-  private _lastWheelTime = 0
-  private _trackingWheelState: TrackingWheelState | null = null
-  private _wheelRowHeightWarned = false
   private _symCredits: Array<{ data: string; src: 0 | 1; at: number }> = []
   // IME composition state. Tracked via compositionstart/compositionend on the
   // xterm textarea so focusActive() can avoid .focus()/.blur()/.fit() during
@@ -277,14 +127,11 @@ export class TerminalInstance {
   // drop the viewport above ybase mid-stream. Only a deliberate upward scroll
   // (accumulated |deltaY| past NOISE_THRESHOLD within ACCUM_RESET_MS) un-pins.
   private _writePinnedToBottom = true
-  private _wheelUpAccumulated = 0
-  private _wheelUpResetTimer: ReturnType<typeof setTimeout> | null = null
   touchMoved = false
   inTouchSelection = false
   selStartRow = 0
   selStartCol = 0
   private _visibilityHandler: (() => void) | null = null
-  private _dragDropCleanup: (() => void) | null = null
   private _settleTimeouts: ReturnType<typeof setTimeout>[] = []
   private _settleRaf: number = 0
   private _settleGeneration: number = 0
@@ -311,6 +158,9 @@ export class TerminalInstance {
   private _pendingLocalRefit = false
   private _authWrapperW = 0
   private _authWrapperH = 0
+  private _wheel: TerminalWheel | null = null
+  private _dropCleanup: (() => void) | null = null
+  private _overlayCtl: ReturnType<typeof createTerminalOverlay> | null = null
   onFileUpload?: (files: File[]) => void
 
   onTitleChange: ((title: string) => void) | null = null
@@ -394,7 +244,7 @@ export class TerminalInstance {
         if (e.isComposing || (e as any).keyCode === 229 || e.key === 'Process') return true
 
         // Web only: let the OS-native Ctrl+V fire so the capture-phase paste listener
-        // (_setupPasteUpload) receives clipboardData files/images for upload; plain text
+        // (setupTerminalDrop) receives clipboardData files/images for upload; plain text
         // still pastes via xterm's own paste handler. Returning false makes xterm skip
         // sending the control char and skip preventDefault, so the browser dispatches the native paste
         // event. The native (Tauri) build has its own clipboard path and is excluded.
@@ -425,6 +275,23 @@ export class TerminalInstance {
             e.preventDefault()
             return false
           }
+        }
+
+        // Windows: Ctrl+C with an active selection copies (cmd.exe behavior);
+        // without a selection it falls through and xterm sends SIGINT (\x03).
+        // Matches the Ctrl+C hint shown in the terminal context menu.
+        if (
+          isWindowsClient &&
+          e.ctrlKey &&
+          !e.shiftKey &&
+          !e.altKey &&
+          !e.metaKey &&
+          e.code === 'KeyC' &&
+          xt.hasSelection()
+        ) {
+          navigator.clipboard.writeText(xt.getSelection()).catch(() => {})
+          e.preventDefault()
+          return false
         }
 
         const virtualMeta = settings.windowsAltAsCmd && isWindowsClient && e.altKey && !e.ctrlKey
@@ -530,6 +397,33 @@ export class TerminalInstance {
         prevCleanup?.()
       }
     }
+    // FIX: intercept macOS input method text replacement (e.g. Raycast snippets).
+    // xterm.js accumulates typed chars in the textarea. When a snippet expands,
+    // the OS replaces the trigger text via insertText:replacementRange:. We track
+    // the textarea value via `input` events, then on `beforeinput` send backspaces
+    // for the old value before xterm.js forwards the new text to the PTY.
+    if (textarea) {
+      let _trackedTextareaValue = ''
+      textarea.addEventListener('input', ((e: Event) => {
+        const ie = e as InputEvent
+        if (ie.isComposing) return
+        _trackedTextareaValue = textarea.value
+      }) as EventListener)
+      textarea.addEventListener('beforeinput', ((e: Event) => {
+        const ie = e as InputEvent
+        if (this._composing) return
+        // Only intercept insertReplacementText (macOS text replacement);
+        // insertText is normal typing and must not send backspaces.
+        if (ie.inputType !== 'insertReplacementText') return
+        const ranges = typeof ie.getTargetRanges === 'function' ? ie.getTargetRanges() : []
+        const rangeLen = ranges.length > 0 ? ((ranges[0] as StaticRange).endOffset - (ranges[0] as StaticRange).startOffset) : 0
+        const deleteLen = Math.max(rangeLen, _trackedTextareaValue.length)
+        if (deleteLen > 0) {
+          this.sendData('\x7f'.repeat(deleteLen))
+          _trackedTextareaValue = ''
+        }
+      }) as EventListener)
+    }
     if (textarea && isTauri()) {
       const onImeInput = (e: InputEvent) => {
         if (e.inputType !== 'insertText') return
@@ -625,8 +519,24 @@ export class TerminalInstance {
     } else {
       this._connectWS()
     }
-    this._setupDragDrop(wrapper)
-    this._setupPasteUpload((wrapper.querySelector('.xterm') as HTMLElement | null) || wrapper)
+    this._dropCleanup = setupTerminalDrop(wrapper, {
+      sendData: (d) => this.sendData(d),
+      onFileUpload: (files) => this.onFileUpload?.(files),
+    })
+    this._wheel = createTerminalWheel({
+      getXterm: () => this.xterm,
+      isMouseModeEnabled: () => this.isMouseModeEnabled(),
+      getWritePinnedToBottom: () => this._writePinnedToBottom,
+      setWritePinnedToBottom: (v) => {
+        this._writePinnedToBottom = v
+      },
+    })
+    this._overlayCtl = createTerminalOverlay({
+      getWrapper: () => this._wrapper,
+      isSsh: () => this._shellType === 'ssh',
+      getSshHost: () => this.sshHost,
+      getOnReconnect: () => this.onReconnect,
+    })
     this._touchCleanup = setupTouchScroll(wrapper, {
       getXterm: () => this.xterm,
       isInTouchSelection: () => this.inTouchSelection,
@@ -634,9 +544,9 @@ export class TerminalInstance {
         this.touchMoved = v
       },
       sendWheelEvent: (deltaY, clientX, clientY) =>
-        this._sendWheelEvent(deltaY, clientX, clientY),
+        this._wheel?.sendWheelEvent(deltaY, clientX, clientY),
     })
-    this._setupAdaptiveWheel()
+    this._wheel.setup()
 
     this._resizeObserver = new ResizeObserver(() => this._refit())
     this._resizeObserver.observe(wrapper)
@@ -750,9 +660,9 @@ export class TerminalInstance {
 
   private _handleXtermData(rawData: string) {
     // Mouse reports produced synchronously by our synthetic wheel dispatches
-    // (_sendWheelEvent) are legitimate identical repeats; the WKWebView
+    // (wheel.sendWheelEvent) are legitimate identical repeats; the WKWebView
     // key-replay dedup below must not eat them.
-    if (this._wheelBypass) {
+    if (this._wheel?.isBypassActive()) {
       this._emitInput(rawData)
       return
     }
@@ -814,18 +724,18 @@ export class TerminalInstance {
     this._peerFollowGen++
     this._followingPeer = false
     if (this._refitRaf) cancelAnimationFrame(this._refitRaf)
-    if (this._wheelUpResetTimer) {
-      clearTimeout(this._wheelUpResetTimer)
-      this._wheelUpResetTimer = null
-    }
     this._resizeObserver?.disconnect()
     if (this._visibilityHandler) {
       document.removeEventListener('visibilitychange', this._visibilityHandler)
     }
+    this._wheel?.cleanup()
+    this._wheel = null
     this._touchCleanup?.()
-    this._focusinCleanup?.()
     this._compositionCleanup?.()
-    this._dragDropCleanup?.()
+    this._dropCleanup?.()
+    this._dropCleanup = null
+    this._overlayCtl?.cleanup()
+    this._overlayCtl = null
     this._themeUnsub?.()
     this._textUnsub?.()
     this._writeQueue = []
@@ -949,7 +859,7 @@ export class TerminalInstance {
 
     this.ws.onopen = () => {
       this._reconnectAttempts = 0
-      this._hideOverlay()
+      this._overlayCtl?.hide()
       this.onConnect?.()
       this._doFitAndResize(true)
       this._scheduleSettleResize()
@@ -969,7 +879,7 @@ export class TerminalInstance {
         this.xterm.reset()
         this._suppressTitleChange = false
         this._reconnectAttempts = 0
-        this._hideOverlay()
+        this._overlayCtl?.hide()
         // Reset the write pump: a prior stall may have stranded _writing=true,
         // and xterm.reset() invalidated the old buffer. Without this, output
         // after reconnect queues forever and the terminal stays dead until a
@@ -1302,89 +1212,19 @@ export class TerminalInstance {
     processNext()
   }
 
-  private _isAtBottom(): boolean {
-    if (!this.xterm) return true
-    const buf = this.xterm.buffer.active
-    return buf.viewportY >= buf.baseY
-  }
-
   private _scheduleReconnect() {
     if (this._destroyed) return
     const delay = Math.min(1000 * Math.pow(2, this._reconnectAttempts), 30000)
     this._reconnectAttempts++
-    this._showOverlay()
+    this._overlayCtl?.showReconnect()
     this._reconnectTimer = setTimeout(() => this._connectWS(), delay)
-  }
-
-  private _showOverlay() {
-    if (!this._wrapper || this._overlay) return
-    this._overlay = document.createElement('div')
-    this._overlay.className = 'reconnect-overlay'
-
-    const text = document.createElement('span')
-    text.textContent = 'Connection lost. Reconnecting...'
-
-    const btn = document.createElement('button')
-    btn.className = 'reconnect-retry-btn'
-    btn.textContent = 'Retry Now'
-    btn.addEventListener('click', () => {
-      window.location.reload()
-    })
-
-    this._overlay.appendChild(text)
-    this._overlay.appendChild(btn)
-    this._wrapper.style.position = 'relative'
-    this._wrapper.appendChild(this._overlay)
-  }
-
-  private _hideOverlay() {
-    if (this._overlay) {
-      this._overlay.remove()
-      this._overlay = null
-    }
   }
 
   private _handleSessionExit() {
     if (this._sessionExited) return
     this._sessionExited = true
-    this._showExitOverlay()
+    this._overlayCtl?.showExit()
     this.onSessionExit?.()
-  }
-
-  private _showExitOverlay() {
-    if (!this._wrapper || this._overlay) return
-    this._overlay = document.createElement('div')
-    this._overlay.className = 'reconnect-overlay'
-
-    const isSsh = this._shellType === 'ssh'
-
-    const text = document.createElement('span')
-    text.textContent = isSsh ? 'Connection Lost' : 'Process exited'
-
-    if (isSsh && this.sshHost) {
-      const hostInfo = document.createElement('span')
-      hostInfo.className = 'reconnect-host-info'
-      hostInfo.textContent = this.sshHost
-      this._overlay.appendChild(text)
-      this._overlay.appendChild(hostInfo)
-    } else {
-      this._overlay.appendChild(text)
-    }
-
-    const btn = document.createElement('button')
-    btn.className = 'reconnect-retry-btn'
-    btn.textContent = isSsh ? 'Reconnect' : 'New Tab'
-    btn.addEventListener('click', () => {
-      if (isSsh && this.onReconnect) {
-        this.onReconnect()
-      } else {
-        window.location.reload()
-      }
-    })
-
-    this._overlay.appendChild(btn)
-    this._wrapper.style.position = 'relative'
-    this._wrapper.appendChild(this._overlay)
   }
 
   _refit() {
@@ -1623,288 +1463,6 @@ export class TerminalInstance {
     if (this._snapshotPending) {
       this._maybeSendSnapshotRequest()
     }
-  }
-
-  private _setupDragDrop(wrapper: HTMLElement) {
-    if (isTauri()) {
-      lastFocusedInstance = this
-      const handler = () => {
-        lastFocusedInstance = this
-      }
-      wrapper.addEventListener('focusin', handler)
-      this._focusinCleanup = () => wrapper.removeEventListener('focusin', handler)
-      setupGlobalTauriDragDrop()
-    }
-
-    // Listen for custom 'terminal-drop-path' events dispatched by the file tree
-    // when Tauri's native layer intercepts HTML5 drop events.
-    const dropPathHandler = ((e: CustomEvent) => {
-      const path = e.detail?.path as string
-      if (!path) return
-      const escaped = /[\s'"\\()&;|<>$!`{}[\]#?*~]/.test(path)
-        ? `'${path.replace(/'/g, "'\\''")}'`
-        : path
-      this.sendData(escaped)
-    }) as EventListener
-    wrapper.addEventListener('terminal-drop-path', dropPathHandler)
-
-    const xtermEl = wrapper.querySelector('.xterm') as HTMLElement
-    const target = xtermEl || wrapper
-
-    const dragoverHandler = (e: Event) => {
-      e.preventDefault()
-      e.stopPropagation()
-      ;(e as DragEvent).dataTransfer!.dropEffect = 'copy'
-    }
-    target.addEventListener('dragover', dragoverHandler, true)
-
-    const dropHandler = (e: Event) => {
-      const de = e as DragEvent
-      const dt = de.dataTransfer!
-      if (!isTauri() && (dt.files?.length ?? 0) > 0) {
-        e.preventDefault()
-        e.stopPropagation()
-        this.onFileUpload?.([...dt.files])
-        return
-      }
-
-      de.preventDefault()
-      de.stopPropagation()
-      const types = Array.from(dt.types)
-      const paths: string[] = []
-
-      if (types.includes('text/uri-list')) {
-        const uriList = dt.getData('text/uri-list')
-        uriList.split('\n').forEach((u) => {
-          u = u.trim()
-          if (!u || u.startsWith('#')) return
-          try {
-            paths.push(decodeURIComponent(new URL(u).pathname))
-          } catch {}
-        })
-      }
-
-      if (paths.length === 0 && types.includes('text/plain')) {
-        const text = dt.getData('text/plain').trim()
-        const absPlain =
-          text && (text.startsWith('/') || /^[A-Za-z]:[\\/]/.test(text) || text.startsWith('\\\\'))
-        if (absPlain) {
-          text.split('\n').forEach((l) => {
-            if (l.trim()) paths.push(l.trim())
-          })
-        }
-      }
-
-      if (paths.length === 0 && dt.files.length > 0) {
-        Array.from(dt.files).forEach((f: any) => {
-          if (f.path) paths.push(f.path)
-          else if (f.name) paths.push(f.name)
-        })
-      }
-
-      if (paths.length > 0) {
-        const escaped = paths.map((p) =>
-          /[\s'"\\()&;|<>$!`{}[\]#?*~]/.test(p) ? `'${p.replace(/'/g, "'\\''")}'` : p
-        )
-        this.sendData(escaped.join(' '))
-      }
-    }
-    target.addEventListener('drop', dropHandler, true)
-
-    this._dragDropCleanup = () => {
-      wrapper.removeEventListener('terminal-drop-path', dropPathHandler)
-      target.removeEventListener('dragover', dragoverHandler, true)
-      target.removeEventListener('drop', dropHandler, true)
-    }
-  }
-
-  private _setupPasteUpload(target: HTMLElement) {
-    let suppressPasteUpload = false
-    let torn = false
-
-    const pasteHandler = (e: ClipboardEvent) => {
-      if (suppressPasteUpload) return
-      if (isTauri()) return
-      const files = [...(e.clipboardData?.items ?? [])]
-        .filter((it) => it.kind === 'file')
-        .map((it) => it.getAsFile())
-        .filter((f): f is File => f != null)
-      if (!files.length) return
-      e.preventDefault()
-      e.stopPropagation()
-      this.onFileUpload?.(files)
-    }
-    target.addEventListener('paste', pasteHandler, true)
-
-    const keydownHandler = (e: KeyboardEvent) => {
-      if (isTauri()) return
-      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'v') return
-      const readClipboard = navigator.clipboard?.read
-      if (!readClipboard) return
-      suppressPasteUpload = true
-      setTimeout(() => {
-        suppressPasteUpload = false
-      }, 0)
-
-      void readClipboard
-        .call(navigator.clipboard)
-        .then(async (items) => {
-          const files = await Promise.all(
-            items.flatMap((item) => {
-              const type = item.types.find((itemType) => itemType.startsWith('image/'))
-              if (!type) return []
-              return [
-                item.getType(type).then((blob) => {
-                  const ext = type.split('/')[1]?.split('+')[0] || 'png'
-                  return new File([blob], `pasted-image-${Date.now()}.${ext}`, { type })
-                }),
-              ]
-            })
-          )
-          if (!torn && files.length) this.onFileUpload?.(files)
-        })
-        .catch(() => {
-          // Clipboard image reads may be denied; keep normal text paste behavior intact.
-        })
-    }
-    target.addEventListener('keydown', keydownHandler, true)
-
-    const prevCleanup = this._dragDropCleanup
-    let removed = false
-    this._dragDropCleanup = () => {
-      if (removed) return
-      removed = true
-      torn = true
-      prevCleanup?.()
-      target.removeEventListener('paste', pasteHandler, true)
-      target.removeEventListener('keydown', keydownHandler, true)
-    }
-  }
-
-  private _sendWheelEvent(
-    deltaY: number,
-    clientX: number,
-    clientY: number,
-    deltaMode = 0
-  ) {
-    if (!this.xterm || deltaY === 0) return
-
-    const xtermEl = this.xterm.element
-    if (!xtermEl) return
-
-    // Synthetic dispatches must never re-enter the adaptive-wheel planner.
-    this._wheelBypass = true
-    try {
-      xtermEl.dispatchEvent(
-        new WheelEvent('wheel', {
-          deltaY,
-          deltaX: 0,
-          deltaZ: 0,
-          deltaMode,
-          bubbles: true,
-          cancelable: true,
-          clientX,
-          clientY,
-        })
-      )
-    } finally {
-      this._wheelBypass = false
-    }
-  }
-
-  private _setupAdaptiveWheel() {
-    this.xterm?.attachCustomWheelEventHandler((e: WheelEvent): boolean => {
-      if (this._wheelBypass) return true
-      if (!this.xterm) return true
-
-      // Track user scroll intent to maintain the cross-batch viewport pin.
-      // macOS trackpad inertia produces sub-pixel deltaY<0 events that set
-      // xterm's isUserScrolling=true; without this filter, a single inertia
-      // event between rAF-yielded write batches would un-pin and drop the
-      // viewport above ybase mid-stream.
-      if (e.deltaY < 0) {
-        if (this._wheelUpResetTimer) clearTimeout(this._wheelUpResetTimer)
-        this._wheelUpAccumulated += Math.abs(e.deltaY)
-        if (this._wheelUpAccumulated > 8) {
-          this._writePinnedToBottom = false
-        }
-        this._wheelUpResetTimer = setTimeout(() => {
-          this._wheelUpAccumulated = 0
-          this._wheelUpResetTimer = null
-        }, 500)
-      } else if (e.deltaY > 0) {
-        this._wheelUpAccumulated = 0
-        if (this._isAtBottom()) {
-          this._writePinnedToBottom = true
-        }
-      }
-
-      const now = Date.now()
-      const elapsed = now - this._lastWheelTime
-      if (elapsed > 500) this._trackingWheelState = null
-      const dt = elapsed || 1
-      const rowHeight = this._getWheelRowHeight()
-      const lines =
-        e.deltaMode === 1
-          ? Math.abs(e.deltaY)
-          : e.deltaMode === 0 && rowHeight > 0
-            ? Math.abs(e.deltaY) / rowHeight
-            : 0
-      const velocity = lines / dt
-      this._lastWheelTime = now
-
-      const sensitivity = settings.text.scroll_sensitivity ?? 1
-      const acceleration = settings.text.scroll_acceleration ?? 0
-      const isMouseTracking = this.isMouseModeEnabled()
-      if (!isMouseTracking) this._trackingWheelState = null
-      const input: WheelPlanInput = {
-        deltaY: e.deltaY,
-        deltaX: e.deltaX,
-        deltaMode: e.deltaMode,
-        shiftKey: e.shiftKey,
-        ctrlKey: e.ctrlKey,
-        altKey: e.altKey,
-        metaKey: e.metaKey,
-        velocity,
-        isMouseTracking,
-      }
-      const plan = computeWheelPlan(
-        input,
-        sensitivity,
-        acceleration,
-        this._trackingWheelState
-      )
-      if (plan.action === 'native') {
-        this._trackingWheelState = null
-        return true
-      }
-      this._trackingWheelState = plan.nextTrackingState ?? null
-
-      e.preventDefault()
-      e.stopPropagation()
-      for (let i = 0; i < plan.count; i++) {
-        this._sendWheelEvent(plan.deltaY, e.clientX, e.clientY, plan.deltaMode)
-      }
-      return false
-    })
-  }
-
-  private _getWheelRowHeight(): number {
-    try {
-      const h = Number(
-        (this.xterm as any)?._core?._renderService?.dimensions?.css?.cell?.height
-      )
-      if (Number.isFinite(h) && h > 0) return h
-    } catch {
-      // fall through to the one-time warning below
-    }
-    if (!this._wheelRowHeightWarned) {
-      this._wheelRowHeightWarned = true
-      console.warn(
-        '[useTerminal] xterm private cell-height API (_core._renderService.dimensions.css.cell.height) unavailable or invalid; wheel-scroll acceleration (velocity term) is disabled, sensitivity still applies. xterm.js internals may have changed.'
-      )
-    }
-    return 0
   }
 
   isMouseModeEnabled(): boolean {

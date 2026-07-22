@@ -52,7 +52,7 @@ describe('wheel bypass skips dedup (regression)', () => {
 
   it('emits byte-identical SGR reports sent back-to-back during bypass', () => {
     const instance = Object.create(TerminalInstance.prototype) as any
-    instance._wheelBypass = true
+    instance._wheel = { isBypassActive: () => true }
     instance._lastInputData = mouseReport
     instance._lastInputTime = performance.now()
     instance._emitInput = vi.fn()
@@ -67,7 +67,7 @@ describe('wheel bypass skips dedup (regression)', () => {
 
   it('leaves the dedup state untouched during bypass', () => {
     const instance = Object.create(TerminalInstance.prototype) as any
-    instance._wheelBypass = true
+    instance._wheel = { isBypassActive: () => true }
     instance._lastInputData = 'existing input'
     instance._lastInputTime = 1234
     instance._emitInput = vi.fn()
@@ -81,7 +81,7 @@ describe('wheel bypass skips dedup (regression)', () => {
   it('drops the second identical input when bypass is disabled (Tauri)', () => {
     transportMocks.tauri = true
     const instance = Object.create(TerminalInstance.prototype) as any
-    instance._wheelBypass = false
+    instance._wheel = { isBypassActive: () => false }
     instance._lastInputData = ''
     instance._lastInputTime = 0
     instance._emitInput = vi.fn()
@@ -101,7 +101,7 @@ describe('wheel bypass skips dedup (regression)', () => {
   it('keeps both identical inputs on web (dedup gated to Tauri only)', () => {
     transportMocks.tauri = false
     const instance = Object.create(TerminalInstance.prototype) as any
-    instance._wheelBypass = false
+    instance._wheel = { isBypassActive: () => false }
     instance._lastInputData = ''
     instance._lastInputTime = 0
     instance._emitInput = vi.fn()

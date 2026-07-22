@@ -138,6 +138,7 @@
           :k="key"
           :state="modState"
           @key-press="onKeyPress"
+          @app-action="onAppAction"
           @special="onSpecial"
         />
       </div>
@@ -156,14 +157,15 @@
         <!-- Main keyboard panel -->
         <div id="mkb-main-panel">
           <!-- Row 1: ` 1-0 - = ⌫ -->
-          <MkbRow :keys="row1" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
+          <MkbRow :keys="row1" :state="modState" @key-press="onKeyPress" @app-action="onAppAction" @special="onSpecial" />
           <!-- Row 2: tab q-p [ ] \ -->
-          <MkbRow :keys="row2" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
+          <MkbRow :keys="row2" :state="modState" @key-press="onKeyPress" @app-action="onAppAction" @special="onSpecial" />
           <!-- Row 3: ⌨ a-l ; ' ↵ (stagger) -->
           <MkbRow
             :keys="row3"
             :state="modState"
             @key-press="onKeyPress"
+            @app-action="onAppAction"
             @special="onSpecial"
             stagger="asdf"
           />
@@ -174,34 +176,39 @@
                 :keys="row4zxcv"
                 :state="modState"
                 @key-press="onKeyPress"
+                @app-action="onAppAction"
                 @special="onSpecial"
               />
               <MkbRow
                 :keys="row5bottom"
                 :state="modState"
                 @key-press="onKeyPress"
+                @app-action="onAppAction"
                 @special="onSpecial"
               />
             </div>
             <div class="mkb-arrow-cluster">
-              <MkbKey :k="arrowUp" :state="modState" @key-press="onKeyPress" @special="onSpecial" />
+              <MkbKey :k="arrowUp" :state="modState" @key-press="onKeyPress" @app-action="onAppAction" @special="onSpecial" />
               <div class="mkb-arrow-cluster-bot">
                 <MkbKey
                   :k="arrowLeft"
                   :state="modState"
                   @key-press="onKeyPress"
+                  @app-action="onAppAction"
                   @special="onSpecial"
                 />
                 <MkbKey
                   :k="arrowDown"
                   :state="modState"
                   @key-press="onKeyPress"
+                  @app-action="onAppAction"
                   @special="onSpecial"
                 />
                 <MkbKey
                   :k="arrowRight"
                   :state="modState"
                   @key-press="onKeyPress"
+                  @app-action="onAppAction"
                   @special="onSpecial"
                 />
               </div>
@@ -215,6 +222,7 @@
             :keys="actionFirstRow"
             :state="modState"
             @key-press="onKeyPress"
+            @app-action="onAppAction"
             @special="onSpecial"
           />
           <MkbRow
@@ -223,45 +231,31 @@
             :keys="r"
             :state="modState"
             @key-press="onKeyPress"
+            @app-action="onAppAction"
             @special="onSpecial"
           />
-          <div class="mkb-action-bottom">
+          <div
+            class="mkb-action-bottom"
+            :style="{ '--ak-enter-width': (actionBottom.enter_width ?? 0.28) * 100 + '%' }"
+          >
             <div class="mkb-action-grid">
-              <MkbKey
-                :k="actionYes"
-                :state="modState"
-                @key-press="onKeyPress"
-                @special="onSpecial"
-              />
-              <MkbKey
-                :k="actionNo"
-                :state="modState"
-                @key-press="onKeyPress"
-                @special="onSpecial"
-              />
-              <MkbKey
-                :k="actionArrowUp"
-                :state="modState"
-                @key-press="onKeyPress"
-                @special="onSpecial"
-              />
-              <MkbKey
-                :k="actionContinue"
-                :state="modState"
-                @key-press="onKeyPress"
-                @special="onSpecial"
-              />
-              <MkbKey
-                :k="actionArrowBot[0]"
-                :state="modState"
-                @key-press="onKeyPress"
-                @special="onSpecial"
-              />
+              <div v-for="(row, ri) in actionBottomRows" :key="ri" class="mkb-action-grid-row">
+                <MkbKey
+                  v-for="(key, ki) in row"
+                  :key="ki"
+                  :k="key"
+                  :state="modState"
+                  @key-press="onKeyPress"
+                  @app-action="onAppAction"
+                  @special="onSpecial"
+                />
+              </div>
             </div>
             <MkbKey
               :k="actionEnter"
               :state="modState"
               @key-press="onKeyPress"
+              @app-action="onAppAction"
               @special="onSpecial"
             />
           </div>
@@ -315,19 +309,15 @@ import MkbKey from './MkbKey.vue'
 import SuggestionBar from './SuggestionBar.vue'
 import HistoryPanel from './HistoryPanel.vue'
 import FilePickerModal from '../preview/FilePickerModal.vue'
-import type { KeyDef, ModState } from './mkbTypes'
+import type { ModState } from './mkbTypes'
 import {
   useSettings,
-  DEFAULT_ACTION_KEYBOARD,
   onThemeChange,
   onTextChange,
 } from '../../composables/useSettings'
 import { useI18n } from '../../composables/useI18n'
 import { useHistory } from '../../composables/useHistory'
-import { actionKeyToKeyDef, mapActionKeys } from '../../utils/actionKeyDef'
 import {
-  Keyboard,
-  SquareTerminal,
   FolderOpen,
   FileText,
   Upload,
@@ -342,6 +332,9 @@ import { isTauri } from '../../composables/useTransport'
 import { formatMB, useUpload, type UploadProgress } from '../../composables/useUpload'
 import type { UploadResponse } from '../../types/uploads'
 import { POSITION, useToast } from 'vue-toastification'
+import { useTextareaMetrics } from '../../composables/useTextareaMetrics'
+import { useSwipePanel } from '../../composables/useSwipePanel'
+import { useKeyboardLayout } from '../../composables/useKeyboardLayout'
 
 const props = defineProps<{
   visible: boolean
@@ -352,6 +345,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:visible': [val: boolean]
   bookmarks: []
+  'app-action': [id: string]
 }>()
 
 const { settings } = useSettings()
@@ -379,172 +373,38 @@ const kbMode = ref<'default' | 'action'>('action')
 const inputBuffer = ref('')
 let blurTimer: ReturnType<typeof setTimeout> | null = null
 
-interface TextareaMetrics {
-  padTop: number
-  padBottom: number
-  borderTop: number
-  borderBottom: number
-  chromeFloor: number
-  one: number
-  max: number
-}
-
-let textareaMetrics: TextareaMetrics | null = null
-
-function resetTextareaMetrics() {
-  textareaMetrics = null
-}
+const {
+  resetTextareaMetrics,
+  getTextareaMetrics,
+  restoreTextInputPadding,
+  resetTextInputHeight,
+  resizeTextInput,
+} = useTextareaMetrics({
+  textInputRef,
+  barRef,
+  updateHeight,
+})
 
 const unsubThemeMetrics = onThemeChange(resetTextareaMetrics)
 const unsubTextMetrics = onTextChange(resetTextareaMetrics)
 
-function px(value: string) {
-  const n = Number.parseFloat(value)
-  return Number.isFinite(n) ? n : 0
-}
-
-function getTextareaMetrics() {
-  if (textareaMetrics) return textareaMetrics
-  const el = textInputRef.value
-  if (!el) return null
-
-  const style = getComputedStyle(el)
-  const fontSize = px(style.fontSize)
-  let lineHeight = px(style.lineHeight)
-  if (!lineHeight) lineHeight = fontSize * 1.4
-
-  const padTop = px(style.paddingTop)
-  const padBottom = px(style.paddingBottom)
-  const borderTop = px(style.borderTopWidth)
-  const borderBottom = px(style.borderBottomWidth)
-  const chromeFloor = padTop + padBottom + borderTop + borderBottom
-  textareaMetrics = {
-    padTop,
-    padBottom,
-    borderTop,
-    borderBottom,
-    chromeFloor,
-    one: Math.ceil(lineHeight + chromeFloor),
-    max: Math.ceil(lineHeight * 3 + chromeFloor),
-  }
-  return textareaMetrics
-}
-
-function restoreTextInputPadding(el: HTMLTextAreaElement, metrics: TextareaMetrics) {
-  el.style.paddingTop = `${metrics.padTop}px`
-  el.style.paddingBottom = `${metrics.padBottom}px`
-}
-
-function resetTextInputHeight() {
-  const el = textInputRef.value
-  const metrics = getTextareaMetrics()
-  if (!el || !metrics) return
-  restoreTextInputPadding(el, metrics)
-  el.style.height = `${metrics.one}px`
-  el.style.overflowY = 'hidden'
-}
-
-function resizeTextInput() {
-  const el = textInputRef.value
-  const metrics = getTextareaMetrics()
-  if (!el || !metrics) return
-
-  const previousHeight = el.getBoundingClientRect().height
-  restoreTextInputPadding(el, metrics)
-  el.style.height = `${metrics.one}px`
-
-  const needed = el.scrollHeight + metrics.borderTop + metrics.borderBottom
-  const barHeight =
-    barRef.value?.getBoundingClientRect().height ?? el.getBoundingClientRect().height
-  const reserved = Math.max(0, barHeight - el.offsetHeight)
-  const viewportHeight = window.visualViewport?.height ?? window.innerHeight
-  const availPx = viewportHeight - reserved
-  const cap = Math.min(metrics.max, Math.max(0, availPx))
-  const next = Math.min(cap, Math.max(0, needed))
-
-  el.style.height = `${next}px`
-  if (next < metrics.chromeFloor) {
-    el.style.paddingTop = '0'
-    el.style.paddingBottom = '0'
-  } else {
-    restoreTextInputPadding(el, metrics)
-  }
-  el.style.overflowY = needed > next + 1 ? 'auto' : 'hidden'
-
-  if (Math.abs(el.getBoundingClientRect().height - previousHeight) > 0.5) {
-    updateHeight()
-  }
-}
-
-// Swipe gesture state
-const swipeStartX = ref(0)
-const swipeStartY = ref(0)
-const swipeDeltaX = ref(0)
-const swiping = ref(false)
-const swipeTransition = ref(false)
-
-const swipeTrackStyle = computed(() => {
-  const baseOffset = kbMode.value === 'default' ? 0 : -50
-  const dragPct = swiping.value ? (swipeDeltaX.value / (barRef.value?.offsetWidth || 375)) * 50 : 0
-  return {
-    transform: `translateX(${baseOffset + dragPct}%)`,
-    transition: swipeTransition.value ? 'transform 0.25s ease-out' : 'none',
-  }
+const {
+  swipeStartX,
+  swipeStartY,
+  swipeDeltaX,
+  swiping,
+  swipeTransition,
+  swipeTrackStyle,
+  onSwipeStart,
+  onSwipeMove,
+  onSwipeEnd,
+  switchMode,
+} = useSwipePanel({
+  kbMode,
+  barRef,
+  applyHeight,
+  fetchSuggestions,
 })
-
-function onSwipeStart(e: TouchEvent) {
-  swipeTransition.value = false
-  swipeStartX.value = e.touches[0].clientX
-  swipeStartY.value = e.touches[0].clientY
-  swipeDeltaX.value = 0
-  swiping.value = false
-}
-
-function onSwipeMove(e: TouchEvent) {
-  const dx = e.touches[0].clientX - swipeStartX.value
-  const dy = e.touches[0].clientY - swipeStartY.value
-  if (!swiping.value) {
-    // Lock direction once finger moves enough — vertical locks out swipe entirely
-    if (Math.abs(dy) > 10 && Math.abs(dy) >= Math.abs(dx)) {
-      // Mark as locked-out by setting delta to NaN sentinel
-      swipeDeltaX.value = NaN
-      return
-    }
-    if (Math.abs(dx) > 15 && Math.abs(dx) > Math.abs(dy) * 1.5) {
-      swiping.value = true
-    } else {
-      return
-    }
-  }
-  swipeDeltaX.value = dx
-}
-
-function onSwipeEnd() {
-  if (!swiping.value) {
-    swipeDeltaX.value = 0
-    swiping.value = false
-    return
-  }
-  const threshold = (barRef.value?.offsetWidth || 375) * 0.15
-  swipeTransition.value = true
-  if (swipeDeltaX.value < -threshold && kbMode.value === 'default') {
-    kbMode.value = 'action'
-  } else if (swipeDeltaX.value > threshold && kbMode.value === 'action') {
-    kbMode.value = 'default'
-    fetchSuggestions()
-  }
-  swipeDeltaX.value = 0
-  swiping.value = false
-  nextTick(applyHeight)
-}
-
-function switchMode(mode: 'default' | 'action') {
-  if (kbMode.value === mode) return
-  swipeTransition.value = true
-  kbMode.value = mode
-  if (mode === 'default') fetchSuggestions()
-  nextTick(applyHeight)
-}
 
 const modState = reactive<ModState>({
   shift: false,
@@ -552,138 +412,27 @@ const modState = reactive<ModState>({
   alt: false,
 })
 
-// Key definitions
-const row1: KeyDef[] = [
-  { l: '`', sl: '~', s: '`' },
-  { l: '1', sl: '!', s: '1' },
-  { l: '2', sl: '@', s: '2' },
-  { l: '3', sl: '#', s: '3' },
-  { l: '4', sl: '$', s: '4' },
-  { l: '5', sl: '%', s: '5' },
-  { l: '6', sl: '^', s: '6' },
-  { l: '7', sl: '&', s: '7' },
-  { l: '8', sl: '*', s: '8' },
-  { l: '9', sl: '(', s: '9' },
-  { l: '0', sl: ')', s: '0' },
-  { l: '-', sl: '_', s: '-' },
-  { l: '=', sl: '+', s: '=' },
-  { l: '⌫', s: '\x7f', g: 1.5, cls: 'mkb-mod', repeat: true },
-]
-
-const row2: KeyDef[] = [
-  { l: 'tab', s: '\x09', g: 1.5, cls: 'mkb-mod' },
-  { l: 'q', s: 'q' },
-  { l: 'w', s: 'w' },
-  { l: 'e', s: 'e' },
-  { l: 'r', s: 'r' },
-  { l: 't', s: 't' },
-  { l: 'y', s: 'y' },
-  { l: 'u', s: 'u' },
-  { l: 'i', s: 'i' },
-  { l: 'o', s: 'o' },
-  { l: 'p', s: 'p' },
-  { l: '[', sl: '{', s: '[' },
-  { l: ']', sl: '}', s: ']' },
-  { l: '\\', sl: '|', s: '\\', g: 1.5, cls: 'mkb-mod' },
-]
-
-const row3 = computed<KeyDef[]>(() => [
-  {
-    l: '',
-    icon: kbMode.value === 'default' ? SquareTerminal : Keyboard,
-    sp: 'kbswitch',
-    g: 1.7,
-    cls: 'mkb-mod',
-    id: 'mkb-kbswitch',
-  },
-  { l: 'a', s: 'a' },
-  { l: 's', s: 's' },
-  { l: 'd', s: 'd' },
-  { l: 'f', s: 'f' },
-  { l: 'g', s: 'g' },
-  { l: 'h', s: 'h' },
-  { l: 'j', s: 'j' },
-  { l: 'k', s: 'k' },
-  { l: 'l', s: 'l' },
-  { l: ';', sl: ':', s: ';' },
-  { l: "'", sl: '"', s: "'" },
-  { l: '↵', s: '\r', g: 1.5, cls: 'mkb-mod mkb-return' },
-])
-
-const row4zxcv: KeyDef[] = [
-  { l: '⇧', sp: 'shift', g: 2.2, cls: 'mkb-mod', id: 'mkb-shift' },
-  { l: 'z', s: 'z' },
-  { l: 'x', s: 'x' },
-  { l: 'c', s: 'c' },
-  { l: 'v', s: 'v' },
-  { l: 'b', s: 'b' },
-  { l: 'n', s: 'n' },
-  { l: 'm', s: 'm' },
-  { l: ',', sl: '<', s: ',', cls: 'mkb-alpha' },
-  { l: '.', sl: '>', s: '.', cls: 'mkb-alpha' },
-  { l: '/', sl: '?', s: '/', cls: 'mkb-alpha' },
-]
-
-const arrowUp: KeyDef = { l: '↑', s: '\x1b[A', repeat: true, cls: 'mkb-arrow' }
-const arrowDown: KeyDef = { l: '↓', s: '\x1b[B', repeat: true, cls: 'mkb-arrow' }
-const arrowLeft: KeyDef = { l: '←', s: '\x1b[D', repeat: true, cls: 'mkb-arrow' }
-const arrowRight: KeyDef = { l: '→', s: '\x1b[C', repeat: true, cls: 'mkb-arrow' }
-
-const row5bottom: KeyDef[] = [
-  { l: 'fn', sp: 'fn', g: 1.05, cls: 'mkb-mod' },
-  { l: 'ctrl', sp: 'ctrl', g: 1.05, cls: 'mkb-mod', id: 'mkb-ctrl' },
-  { l: 'opt', sp: 'alt', g: 1.05, cls: 'mkb-mod', id: 'mkb-alt' },
-  { l: '⌘', sp: 'cmd', g: 1.05, cls: 'mkb-mod' },
-  { l: '', s: ' ', g: 8, id: 'mkb-space' },
-]
-
-const kbswitchAction = computed<KeyDef>(() => ({
-  l: '',
-  icon: Keyboard,
-  sp: 'kbswitch',
-  g: 1.2,
-  cls: 'mkb-mod mkb-action-back',
-  id: 'mkb-kbswitch2',
-}))
-
-const actionFirstRow = computed(() => {
-  const cfg = settings.action_keyboard ?? DEFAULT_ACTION_KEYBOARD
-  const rows = cfg.rows?.length ? cfg.rows : DEFAULT_ACTION_KEYBOARD.rows
-  const first = rows[0] ?? []
-  return [kbswitchAction.value, ...mapActionKeys(first, false)]
-})
-
-const actionFollowingRows = computed(() => {
-  const cfg = settings.action_keyboard ?? DEFAULT_ACTION_KEYBOARD
-  const rows = cfg.rows?.length ? cfg.rows : DEFAULT_ACTION_KEYBOARD.rows
-  if (rows.length < 2) return []
-  const tail = rows.slice(1)
-  return tail.map((r, i) => mapActionKeys(r ?? [], i === tail.length - 1))
-})
-
-const pasteSupported = computed(
-  () => window.isSecureContext && typeof navigator.clipboard?.readText === 'function'
-)
-
-const toolbarQuickKeyDefs = computed(() =>
-  (settings.toolbar_quick_keys ?? []).slice(0, 5).map((key) => actionKeyToKeyDef(key))
-)
-
-const actionArrowUp: KeyDef = { l: '↑', s: '\x1b[A', cls: 'mkb-mod mkb-action-arrow', repeat: true }
-
-const actionArrowBot: KeyDef[] = [
-  { l: '↓', s: '\x1b[B', cls: 'mkb-mod mkb-action-arrow', repeat: true },
-]
-
-const actionEnter: KeyDef = { l: '↵', s: '\r', cls: 'mkb-mod mkb-action-enter mkb-return' }
-
-const actionYes: KeyDef = { l: 'yes', s: 'yes\r', cls: 'mkb-mod mkb-action-btn' }
-const actionNo: KeyDef = { l: 'no', s: 'no\r', cls: 'mkb-mod mkb-action-btn' }
-const actionContinue: KeyDef = {
-  l: 'continue',
-  s: 'continue\r',
-  cls: 'mkb-mod mkb-action-btn mkb-action-continue',
-}
+const {
+  row1,
+  row2,
+  row3,
+  row4zxcv,
+  arrowUp,
+  arrowDown,
+  arrowLeft,
+  arrowRight,
+  row5bottom,
+  kbswitchAction,
+  actionFirstRow,
+  actionFollowingRows,
+  actionBottom,
+  actionBottomRows,
+  actionEnter,
+  pasteSupported,
+  toolbarQuickKeyDefs,
+  withActionFooterClass,
+  mapActionFooterRow,
+} = useKeyboardLayout({ kbMode, settings })
 
 function onTextInputFocus() {
   if (blurTimer) {
@@ -756,6 +505,10 @@ function onKeyPress(ch: string) {
 
   props.getSendFn()?.(data)
   if (kbMode.value === 'default') fetchDebounced(inputBuffer.value || undefined)
+}
+
+function onAppAction(id: string) {
+  emit('app-action', id)
 }
 
 function onSpecial(sp: string) {

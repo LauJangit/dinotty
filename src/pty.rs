@@ -1,7 +1,7 @@
 #![allow(clippy::too_many_lines)]
 use crate::event_bus::BusEvent;
 use crate::platform::shell;
-use crate::session::{Session, SessionBackend, SessionManager, SessionStatus, SyncMsg};
+use crate::session::{Session, SessionBackend, SessionManager, SessionStatus, SyncMsg, SyncState};
 use crate::vt_screen::VirtualScreen;
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use std::io::{Read, Write};
@@ -27,7 +27,7 @@ pub async fn broadcast_task(session: Arc<Session>, pane_id: String, manager: Arc
     // Watchdog timer: force-flush the sync buffer if the PTY goes silent
     // mid-sync-mode. Without this, the timeout check below only fires when
     // output_rx.recv() returns a new message — a silent PTY (e.g. Claude
-    // Code waiting on an API response mid-redraw) leaves sync_active=true
+    // Code waiting on an API response mid-redraw) leaves sync mode active
     // forever, buffering all subsequent output and freezing the client
     // until a manual refresh. Polling every 100ms is cheap and well below
     // the 500ms timeout threshold.
@@ -50,7 +50,7 @@ pub async fn broadcast_task(session: Arc<Session>, pane_id: String, manager: Arc
                     batch.extend_from_slice(&data);
                 }
 
-                if session.sync_active.load(std::sync::atomic::Ordering::Relaxed) {
+                if session.is_sync_active() {
                     if let Some(started) = sync_started_at {
                         if started.elapsed() > sync_timeout {
                             tracing::warn!(
@@ -120,7 +120,7 @@ pub async fn broadcast_task(session: Arc<Session>, pane_id: String, manager: Arc
                 // PTY-silent watchdog: if sync mode is still active past the
                 // timeout with no new output, force-flush so the client
                 // unblocks. This is the path that was missing before.
-                if session.sync_active.load(std::sync::atomic::Ordering::Relaxed) {
+                if session.is_sync_active() {
                     if let Some(started) = sync_started_at {
                         if started.elapsed() > sync_timeout {
                             tracing::warn!(
@@ -266,7 +266,13 @@ pub fn create_session(
     let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let writer: Box<dyn Write + Send> = pair.master.take_writer().map_err(|e| e.to_string())?;
 
-    let initial_cwd = home_for_cwd.canonicalize().unwrap_or_else(|_| home_for_cwd.clone());
+    // Strip the \\?\ verbatim prefix that std::canonicalize adds on Windows.
+    // PowerShell renders verbatim paths as `Microsoft.PowerShell.Core\FileSystem::\\?\D:\...`
+    // which breaks tools that parse $PWD (e.g. pi agent). dunce::simplified is a
+    // no-op on non-Windows.
+    let initial_cwd =
+        dunce::simplified(&home_for_cwd.canonicalize().unwrap_or_else(|_| home_for_cwd.clone()))
+            .to_path_buf();
     let (resize_tx, resize_rx) = tokio::sync::watch::channel(None);
     let (output_tx, output_rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -291,9 +297,9 @@ pub fn create_session(
             cwd: initial_cwd,
             sniff_buf: Vec::new(),
         }),
-        sync_active: std::sync::atomic::AtomicBool::new(false),
-        sync_buffer: std::sync::Mutex::new(Vec::new()),
-        sync_buffer_bytes: std::sync::atomic::AtomicUsize::new(0),
+        sync: std::sync::Mutex::new(SyncState::default()),
+        #[cfg(test)]
+        sync_disable_hook: std::sync::Mutex::new(None),
         resize_tx,
         ssh_cmd_tx: std::sync::Mutex::new(None),
         ssh_handle: tokio::sync::Mutex::new(None),
@@ -372,58 +378,58 @@ pub fn create_session(
                     // CWD sniffing (before lock, uses its own cwd_state lock)
                     reader_session.on_pty_output(data);
 
-                    // Feed to virtual screen + extract command results + handle sync events
-                    {
+                    // Feed to virtual screen + extract command results + collect sync events
+                    let feed_result = {
                         let mut screen = reader_session
                             .screen
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             screen.feed(data);
                             let results = screen.drain_command_results();
                             let outputs: Vec<String> =
                                 (0..results.len()).map(|_| screen.take_command_output()).collect();
                             let sync = screen.drain_sync_events();
                             (results.into_iter().zip(outputs).collect::<Vec<_>>(), sync)
-                        }));
-                        match result {
-                            Ok((command_results, sync_events)) => {
-                                // Handle sync events immediately (while still holding lock
-                                // prevents race between sync start and broadcast task wakeup)
-                                for event in sync_events {
-                                    match event {
-                                        crate::vt_screen::SyncEvent::Start => {
-                                            reader_session.set_sync_mode(true);
-                                        }
-                                        crate::vt_screen::SyncEvent::Stop => {
-                                            reader_session.set_sync_mode(false);
-                                        }
+                        }))
+                    };
+                    match feed_result {
+                        Ok((command_results, sync_events)) => {
+                            // Apply sync transitions before publishing this read to output_tx.
+                            // The broadcast task cannot observe these bytes until send() below.
+                            for event in sync_events {
+                                match event {
+                                    crate::vt_screen::SyncEvent::Start => {
+                                        reader_session.set_sync_mode(true);
                                     }
-                                }
-                                // Queue command results for broadcast task
-                                if !command_results.is_empty() {
-                                    let mut pending = reader_session
-                                        .pending_results
-                                        .lock()
-                                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                                    for (result, stdout) in command_results {
-                                        pending.push(crate::session::PendingCommandResult {
-                                            exit_code: result.exit_code,
-                                            duration_ms: result.duration_ms,
-                                            stdout,
-                                            method: result.method,
-                                        });
+                                    crate::vt_screen::SyncEvent::Stop => {
+                                        reader_session.set_sync_mode(false);
                                     }
                                 }
                             }
-                            Err(e) => {
-                                let msg = e
-                                    .downcast_ref::<String>()
-                                    .map(String::as_str)
-                                    .or_else(|| e.downcast_ref::<&str>().copied())
-                                    .unwrap_or("unknown");
-                                error!("feed() PANICKED: {}, {}B, pane={}", msg, n, reader_pane);
+                            // Queue command results for broadcast task
+                            if !command_results.is_empty() {
+                                let mut pending = reader_session
+                                    .pending_results
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                                for (result, stdout) in command_results {
+                                    pending.push(crate::session::PendingCommandResult {
+                                        exit_code: result.exit_code,
+                                        duration_ms: result.duration_ms,
+                                        stdout,
+                                        method: result.method,
+                                    });
+                                }
                             }
+                        }
+                        Err(e) => {
+                            let msg = e
+                                .downcast_ref::<String>()
+                                .map(String::as_str)
+                                .or_else(|| e.downcast_ref::<&str>().copied())
+                                .unwrap_or("unknown");
+                            error!("feed() PANICKED: {}, {}B, pane={}", msg, n, reader_pane);
                         }
                     }
 

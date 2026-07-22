@@ -241,6 +241,12 @@ pub async fn auth_middleware(
         return next.run(request).await;
     }
 
+    tracing::warn!(
+        "auth: reject {} {} from {} (no valid session/token)",
+        request.method(),
+        path,
+        real_ip
+    );
     Response::builder()
         .status(StatusCode::UNAUTHORIZED)
         .header(header::CONTENT_TYPE, "application/json")

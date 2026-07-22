@@ -24,10 +24,7 @@
             aria-label="reset to default"
             @click="resetOverride('font_size')"
           >
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-              <path d="M3 3v5h5" />
-            </svg>
+            <RotateCcw :size="14" />
           </button>
         </div>
       </div>
@@ -36,6 +33,7 @@
         <label>{{ t('settings.text.fontFamily') }}</label>
         <div class="font-dropdown">
           <div
+            ref="fontTriggerEl"
             class="font-dropdown-trigger shortcut-input"
             :style="{ fontFamily: fontFamily || 'inherit' }"
             @click="toggleFontDropdown"
@@ -43,8 +41,14 @@
             <span>{{ currentFontLabel }}</span>
             <span class="font-dropdown-arrow">▾</span>
           </div>
-          <div v-if="fontDropdownOpen" class="font-dropdown-backdrop" @click="closeFontDropdown"></div>
-          <div v-if="fontDropdownOpen" class="font-dropdown-menu" @wheel="onFontMenuWheel">
+          <div v-if="fontDropdownOpen" class="font-dropdown-backdrop" @click="closeFontDropdown" @wheel.prevent></div>
+          <div
+            v-if="fontDropdownOpen"
+            class="font-dropdown-menu"
+            :class="{ 'drop-up': fontMenuDropUp }"
+            :style="{ maxHeight: fontMenuMaxHeight + 'px' }"
+            @wheel="onFontMenuWheel"
+          >
             <div
               v-for="item in fontList"
               :key="item.kind + ':' + item.family"
@@ -94,10 +98,7 @@
           aria-label="reset to default"
           @click="resetOverride('font_family')"
         >
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-            <path d="M3 3v5h5" />
-          </svg>
+          <RotateCcw :size="14" />
         </button>
       </div>
 
@@ -120,10 +121,7 @@
             aria-label="reset to default"
             @click="resetOverride('line_height')"
           >
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-              <path d="M3 3v5h5" />
-            </svg>
+            <RotateCcw :size="14" />
           </button>
         </div>
       </div>
@@ -147,10 +145,7 @@
             aria-label="reset to default"
             @click="resetOverride('letter_spacing')"
           >
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-              <path d="M3 3v5h5" />
-            </svg>
+            <RotateCcw :size="14" />
           </button>
         </div>
       </div>
@@ -254,6 +249,7 @@ import { ref, computed, onBeforeUnmount, reactive } from 'vue'
 import { useSettings, notifyTextChange } from '../../composables/useSettings'
 import CollapsibleSection from './CollapsibleSection.vue'
 import ThemeManager from './ThemeManager.vue'
+import { RotateCcw } from 'lucide-vue-next'
 import { useI18n } from '../../composables/useI18n'
 import { primaryFamily, toFontFamilyStack, fontIdentity } from '../../utils/fontFamily'
 import {
@@ -264,6 +260,7 @@ import {
   type AddFontError,
 } from '../../utils/fontList'
 import { isFontAvailable, clearNegativeFontCache } from '../../utils/fontAvailability'
+import { computeDropdownPlacement } from '../../utils/dropdownPlacement'
 import {
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
@@ -283,7 +280,11 @@ const { t } = useI18n()
 
 // ── Text / Font ──
 
+const PREFERRED_FONT_MENU_HEIGHT = 260
+const fontTriggerEl = ref<HTMLElement | null>(null)
 const fontDropdownOpen = ref(false)
+const fontMenuDropUp = ref(false)
+const fontMenuMaxHeight = ref(PREFERRED_FONT_MENU_HEIGHT)
 
 // ── Font picker (DT17) ──
 const availability = reactive<Record<string, boolean>>({})
@@ -341,6 +342,16 @@ function onFontMenuWheel(e: WheelEvent) {
 
 function toggleFontDropdown() {
   if (fontDropdownOpen.value) { closeFontDropdown(); return }
+  const el = fontTriggerEl.value
+  const placement = el
+    ? computeDropdownPlacement(
+        el.getBoundingClientRect(),
+        el.closest('.settings-body')?.getBoundingClientRect() ?? { top: 0, bottom: window.innerHeight },
+        PREFERRED_FONT_MENU_HEIGHT,
+      )
+    : { dropUp: false, maxHeight: PREFERRED_FONT_MENU_HEIGHT }
+  fontMenuDropUp.value = placement.dropUp
+  fontMenuMaxHeight.value = placement.maxHeight
   fontDropdownOpen.value = true
   addFontError.value = ''
   void runProbes()

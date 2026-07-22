@@ -1,30 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 
-class FakeWebSocket {
-  static OPEN = 1
-  static instances: FakeWebSocket[] = []
-
-  readyState = FakeWebSocket.OPEN
-  sent: string[] = []
-  onopen: ((event: Event) => void) | null = null
-  onmessage: ((event: MessageEvent) => void) | null = null
-  onclose: ((event: CloseEvent) => void) | null = null
-  onerror: ((event: Event) => void) | null = null
-
-  constructor(public url: string) {
-    FakeWebSocket.instances.push(this)
-  }
-
-  send(data: string) {
-    this.sent.push(data)
-  }
-
-  close() {
-    this.readyState = 3
-  }
-}
-
 function memoryStorage(): Storage {
   const values = new Map<string, string>()
   return {
@@ -39,19 +15,24 @@ function memoryStorage(): Storage {
   }
 }
 
-vi.stubGlobal('WebSocket', FakeWebSocket)
 vi.stubGlobal('localStorage', memoryStorage())
 vi.stubGlobal('sessionStorage', memoryStorage())
-vi.stubGlobal('location', { protocol: 'http:', host: 'localhost', reload: vi.fn() })
+vi.stubGlobal('location', { protocol: 'http:', host: 'localhost' })
 
 vi.mock('vue-toastification', () => ({
   TYPE: { INFO: 'info', SUCCESS: 'success', WARNING: 'warning', ERROR: 'error' },
 }))
 vi.mock('../useI18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 vi.mock('../useTransport', () => ({ isTauri: () => false }))
-vi.mock('../apiBase', () => ({
-  getApiBase: async () => '',
-  wsUrlWithToken: (url: string) => url,
+
+const syncMock = vi.hoisted(() => ({
+  sentPayloads: [] as any[],
+  clientId: 'client-test',
+}))
+vi.mock('../useSyncWebSocket', () => ({
+  onNotification: () => () => {},
+  getClientId: () => syncMock.clientId,
+  sendMarkRead: (payload: any) => { syncMock.sentPayloads.push(payload) },
 }))
 
 import { settings } from '../useSettings'
@@ -134,7 +115,8 @@ function createToastSpy() {
 beforeEach(() => {
   vi.useFakeTimers()
   __resetForTest()
-  FakeWebSocket.instances = []
+  syncMock.sentPayloads = []
+  syncMock.clientId = 'client-test'
   localStorage.clear()
   ;(settings as any).notification = {
     enabled: true,
@@ -179,8 +161,8 @@ describe('active-read state triggers', () => {
     expect(notif.unreadByPane['pane-a']).toBeUndefined()
     expect(notif.unreadAttentionCount.value).toBe(0)
     expect(__pendingRequestCountForTest()).toBe(1)
-    const sent = FakeWebSocket.instances[0].sent
-    expect(JSON.parse(sent[sent.length - 1])).toMatchObject({
+    const sent = syncMock.sentPayloads
+    expect(sent[sent.length - 1]).toMatchObject({
       reason: 'active_observed',
       panes: [{ paneId: 'pane-a', throughEventSeq: '7' }],
     })
@@ -217,7 +199,7 @@ describe('active-read state triggers', () => {
     __dispatchServerMessageForTest(delta('2', [pane('pane-a', '5')]))
 
     expect(__pendingRequestCountForTest()).toBe(1)
-    expect(FakeWebSocket.instances[0].sent).toHaveLength(1)
+    expect(syncMock.sentPayloads).toHaveLength(1)
   })
 
   it('does not active-read an interim delta discarded while awaiting a snapshot', () => {
@@ -233,7 +215,7 @@ describe('active-read state triggers', () => {
     __dispatchServerMessageForTest(delta('2', [pane('pane-a', '5')]))
 
     expect(__pendingRequestCountForTest()).toBe(0)
-    expect(FakeWebSocket.instances[0].sent).toHaveLength(0)
+    expect(syncMock.sentPayloads).toHaveLength(0)
   })
 
   it('active-reads a genuinely newer event above an existing overlay watermark', () => {
@@ -248,7 +230,7 @@ describe('active-read state triggers', () => {
     __dispatchServerMessageForTest(delta('2', [pane('pane-a', '6')]))
 
     expect(__pendingRequestCountForTest()).toBe(2)
-    const sent = FakeWebSocket.instances[0].sent.map((payload) => JSON.parse(payload))
+    const sent = syncMock.sentPayloads
     expect(sent).toHaveLength(2)
     expect(sent[0]).toMatchObject({
       reason: 'active_observed',
@@ -272,7 +254,7 @@ describe('active-read state triggers', () => {
     __dispatchServerMessageForTest(delta('2', [pane('pane-a', '5', '5')]))
 
     expect(__pendingRequestCountForTest()).toBe(0)
-    expect(FakeWebSocket.instances[0].sent).toHaveLength(1)
+    expect(syncMock.sentPayloads).toHaveLength(1)
   })
 
   it('can re-evaluate authoritative unread state independently on foreground gain', () => {
@@ -290,7 +272,7 @@ describe('active-read state triggers', () => {
     evaluateActiveRead()
 
     expect(__pendingRequestCountForTest()).toBe(1)
-    expect(JSON.parse(FakeWebSocket.instances[0].sent[0])).toMatchObject({
+    expect(syncMock.sentPayloads[0]).toMatchObject({
       reason: 'active_observed',
       panes: [{ paneId: 'pane-a', throughEventSeq: '8' }],
     })
@@ -306,7 +288,7 @@ describe('active-read state triggers', () => {
     markPaneReadIfUnread('pane-a', 'terminal_input')
     markPaneReadIfUnread('pane-a', 'terminal_input')
     expect(__pendingRequestCountForTest()).toBe(1)
-    expect(JSON.parse(FakeWebSocket.instances[0].sent[0])).toMatchObject({
+    expect(syncMock.sentPayloads[0]).toMatchObject({
       reason: 'terminal_input',
       panes: [{ paneId: 'pane-a', throughEventSeq: '4' }],
     })
@@ -561,7 +543,7 @@ describe('unhandled history pruning', () => {
     options.onClose()
 
     expect(notif.historyCount.value).toBe(1)
-    expect(FakeWebSocket.instances[0].sent).toEqual([])
+    expect(syncMock.sentPayloads).toEqual([])
   })
 
   it('preserves a stale-epoch card during authoritative pruning and allows manual dismissal', () => {
@@ -575,7 +557,7 @@ describe('unhandled history pruning', () => {
     expect(notif.notifications.value).toEqual([staleCard])
     notif.dismissOne(staleCard.id)
     expect(notif.historyCount.value).toBe(0)
-    expect(FakeWebSocket.instances[0].sent).toEqual([])
+    expect(syncMock.sentPayloads).toEqual([])
   })
 })
 
@@ -809,7 +791,7 @@ describe('raised presentation pipeline', () => {
     useNotification()
     __dispatchServerMessageForTest(snapshot('1', [], [{ notifId: 'notif-a', read: false }]))
     markNotifsRead(['notif-a'], 'dismiss')
-    const request = JSON.parse(FakeWebSocket.instances[0].sent[0])
+    const request = syncMock.sentPayloads[0]
     __dispatchServerMessageForTest(raised({ pane_id: '', notifId: 'notif-a' }))
     expect(__pendingPresentationCountForTest()).toBe(1)
 

@@ -163,7 +163,7 @@ fn spawn_tauri_write_task(session: Arc<dinotty_server::session::Session>, pane_i
                 write_session.write_input_async(batch.as_bytes()).await
             } else {
                 let ws = Arc::clone(&write_session);
-                tokio::task::spawn_blocking(move || ws.write_input_sync(batch.as_bytes()))
+                tokio::task::spawn_blocking(move || ws.write_input_blocking(batch.as_bytes()))
                     .await
                     .unwrap_or_else(|e| Err(e.to_string()))
             };
@@ -470,7 +470,7 @@ async fn pick_workspace_dir(base: Option<String>) -> Option<String> {
                 Some(std::path::PathBuf::from(base))
             }
         })
-        .and_then(|path| path.canonicalize().ok())
+        .and_then(|path| path.canonicalize().ok().map(|c| dunce::simplified(&c).to_path_buf()))
         .filter(|path| path.is_dir())
         .or_else(|| {
             std::env::var_os("HOME").map(std::path::PathBuf::from).filter(|path| path.is_dir())
@@ -597,11 +597,14 @@ fn close_window(app: AppHandle, state: State<'_, Arc<SessionManager>>) {
 /// login-shell PATH once at startup, before any PTY spawn or thread exists.
 #[cfg(target_os = "macos")]
 fn import_login_shell_path() {
+    use dinotty_server::platform::process::CommandNoWindowExt;
+
     const START_MARKER: &[u8] = b"__DINOTTY_PATH_START__";
     const END_MARKER: &[u8] = b"__DINOTTY_PATH_END__";
 
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
     let Ok(out) = std::process::Command::new(&shell)
+        .no_window()
         .args(["-lc", "printf '__DINOTTY_PATH_START__%s__DINOTTY_PATH_END__' \"$PATH\""])
         .output()
     else {

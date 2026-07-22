@@ -14,6 +14,7 @@
 - [命令面板集成](#命令面板集成)
 - [持久化存储](#持久化存储)
 - [调用 CLI 工具](#调用-cli-工具)
+- [事件订阅](#事件订阅)
 - [TypeScript 支持](#typescript-支持)
 - [开发工作流](#开发工作流)
 - [打包与分发](#打包与分发)
@@ -258,6 +259,19 @@ ctx.ui.notify('操作成功', 'info')   // 'info' | 'warn' | 'error'
 const ok = await ctx.ui.confirm('确定删除？')  // 返回 boolean
 ```
 
+### 语言
+
+`ctx.i18n` 只暴露 Dinotty 当前界面语言，不会向插件泄露完整应用设置。插件应自行维护翻译文案，并在卸载时释放监听器。
+
+```js
+const locale = ctx.i18n.getLocale() // 'zh' | 'en'
+
+const d = ctx.i18n.onDidChangeLocale((nextLocale) => {
+  console.log('界面语言已切换为', nextLocale)
+})
+d.dispose()
+```
+
 ### 设置
 
 ```js
@@ -267,6 +281,58 @@ const d = ctx.settings.onDidChange((s) => {
   console.log('主题变更为', s.theme)
 })
 d.dispose()
+```
+
+### 事件订阅
+
+`ctx.events` 提供跨 pane / 跨插件 / 跨客户端的事件订阅能力。事件通过 `/ws/sync` 下行，emit 走 HTTP POST 到 `/api/events/emit`。
+
+```js
+// 订阅事件，返回 Disposable
+const d = ctx.events.subscribe('terminal:cwd-changed', (data, e) => {
+  console.log('cwd 变更:', data.path)
+  console.log('来源 plugin_id:', e.plugin_id)
+})
+d.dispose()  // 取消订阅
+
+// 发射事件（自动带本插件的 plugin_id）
+ctx.events.emit('my-plugin:action', { type: 'refresh' })
+
+// 定向发给某个插件（其他插件不收到）
+ctx.events.emit('my-plugin:query', { q: 'hello' }, { target_plugin_id: 'target-plugin' })
+```
+
+**事件信封字段**（handler 第二个参数 `e`）：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `event_name` | string | 事件名 |
+| `data` | unknown | 事件数据 |
+| `plugin_id` | string? | 发送方插件 id（ctx.events.emit 自动填充） |
+| `source_pane_id` | string? | 发送方 pane id（Step 0 暂不自动填充，可放进 `data`） |
+| `target_plugin_id` | string? | 目标插件 id。存在时，只有 `target_plugin_id` 匹配的插件的 handler 会被触发 |
+
+**语义要点**：
+
+- **回声抑制**：emit 方不会收到自己发出的事件（后端按 client_id 排除发送方）。
+- **跨客户端广播**：事件会广播给所有浏览器窗口的 sync client，非仅"同 tab 内"。需要限制同 tab 内时，由 plugin 自行在 `data` 中携带 tab 标识并在 handler 中过滤。
+- **target_plugin_id 过滤在前端**：后端将事件（含 `target_plugin_id`）广播给所有客户端，前端 EventBridge 只触发 `target_plugin_id` 匹配的插件的 handler。未带 `target_plugin_id` 的事件触发所有订阅者。
+- **命名约定**：插件事件用 `plugin:{id}:{name}` 前缀（如 `plugin:cc-switch:provider-changed`），终端事件用 `terminal:{name}` 前缀，避免命名冲突。
+
+**示例：两个插件通信**
+
+```js
+// provider-plugin/main.js
+export function activate(ctx) {
+  ctx.events.emit('plugin:provider:changed', { provider: 'anthropic' })
+}
+
+// consumer-plugin/main.js
+export function activate(ctx) {
+  ctx.events.subscribe('plugin:provider:changed', (data) => {
+    ctx.ui.notify(`切换到 ${data.provider}`, 'info')
+  })
+}
 ```
 
 ---
@@ -445,6 +511,52 @@ await ctx.storage.delete('providers')
 
 如果插件需要跨平台分发，建议按目标平台打包不同的 CLI 入口，或在 JS 中检测运行结果并给出清晰错误提示。
 
+Native 插件可以让宿主按服务端平台精确选择入口：
+
+```json
+{
+  "permissions": ["native.execute", "process.long-running"],
+  "bin": {
+    "mode": "cli",
+    "entry": "./bin/legacy-tool",
+    "entries": {
+      "windows-x86_64": "bin/windows-x86_64/tool.exe",
+      "linux-x86_64": "bin/linux-x86_64/tool",
+      "linux-aarch64": "bin/linux-aarch64/tool",
+      "macos-x86_64": "bin/macos-x86_64/tool",
+      "macos-aarch64": "bin/macos-aarch64/tool"
+    },
+    "lifecycle": {
+      "scope": "host",
+      "stdinLease": true,
+      "shutdownDeadlineMs": 10000,
+      "forceKillAfterMs": 15000
+    }
+  }
+}
+```
+
+当前目标存在 `entries[target]` 时优先使用它，否则才回退到 legacy `entry`。入口必须是插件目录内的普通文件；绝对路径、`..`、目录外 symlink 和未知平台会 fail closed。`minAppVersion` 会在扫描、安装和运行前实际校验。
+
+`lifecycle.scope` 控制 managed process 与插件 UI 的关系：默认 `ui` 保持兼容行为，UI 热重载时只请求后端停止真实的 UI-scoped 进程；`host` 让进程跨 UI 热重载和浏览器断开继续运行，只在显式停止、插件更新/卸载或 Dinotty 退出时停止。scope 由后端进程记录并执行，不依赖浏览器缓存的 manifest。`stdinLease` 只定义停止协议，不隐含进程作用域。`shutdownDeadlineMs` 不能超过 30000，`forceKillAfterMs` 不能超过 60000，且前者不能大于后者。
+
+宿主运行 Native 命令时默认把工作目录设为插件目录，并注入以下不可由插件请求覆盖的环境变量：
+
+```text
+DINOTTY_PLUGIN_ID
+DINOTTY_PLUGIN_DIR
+DINOTTY_PLUGIN_DATA_DIR
+DINOTTY_HOST_TARGET
+DINOTTY_ORIGIN
+DINOTTY_HOST_VERSION
+DINOTTY_HOST_MODE
+DINOTTY_PARENT_PID
+```
+
+`DINOTTY_ORIGIN` 使用 Dinotty 当前实际监听端口和 IPv4 loopback URL。长运行进程若启用 `stdinLease`，正常停止时会收到一行 `{"type":"shutdown","deadlineMs":...}`；宿主异常退出时 stdin EOF 也必须视为停止信号。stdout/stderr 会被宿主持续消费并只保留有界诊断缓冲，避免 pipe 写满卡死。
+
+使用按平台 `entries` 或 `lifecycle` 的插件必须分别声明 `native.execute` 和 `process.long-running`；缺失或未知的 Native 权限会被拒绝。安装和更新时，管理界面会明确展示并要求确认这些能力。权限确认不是操作系统级 sandbox：Native 二进制仍可能以当前用户权限访问其他网络或文件，插件 UI 不得声称宿主已经在 OS 层阻止这些访问。仅使用 legacy `bin.entry` 且未启用新生命周期字段的旧插件继续按兼容模式运行。
+
 ### exec.run — 同步调用
 
 ```js
@@ -472,7 +584,10 @@ const data = JSON.parse(res.stdout)
 适合长时间运行的命令（如 `watch`、持续日志）：
 
 ```js
-const handle = ctx.exec.spawn(['watch', '--interval', '1'])
+const handle = ctx.exec.spawn(['watch', '--interval', '1'], {
+  cwd: '/path/to/workspace',
+  env: { MODE: 'watch' }
+})
 
 const reader = handle.stdout.getReader()
 while (true) {

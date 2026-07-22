@@ -168,7 +168,9 @@ export async function authFetch(url: string, init?: RequestInit): Promise<Respon
       headers,
       body: typeof init?.body === 'string' ? init.body : null,
     })) as { status: number; headers: [string, string][]; body: string }
-    return new Response(resp.body, {
+    const bodyless =
+      resp.status === 204 || resp.status === 304 || (resp.status >= 100 && resp.status < 200)
+    return new Response(bodyless || !resp.body ? null : resp.body, {
       status: resp.status,
       headers: resp.headers,
     })

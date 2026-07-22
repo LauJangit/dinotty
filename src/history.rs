@@ -1,21 +1,14 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
-use axum::{
-    extract::{
-        ws::{Message, WebSocket},
-        ConnectInfo, State, WebSocketUpgrade,
-    },
-    http::StatusCode,
-    response::IntoResponse,
-    Json,
-};
-use futures_util::StreamExt;
+use axum::{extract::State, http::StatusCode, Json};
 use notify::{PollWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
+use std::sync::{Arc, Mutex};
+use tokio::sync::RwLock;
 use tracing::{info, warn};
+
+use crate::session::{SyncClient, SyncMsg};
 
 #[derive(Clone)]
 pub struct HistoryState {
@@ -28,7 +21,7 @@ struct HistoryInner {
     shell_type: String,
     history_path: PathBuf,
     watcher: std::sync::Mutex<Option<PollWatcher>>,
-    broadcast_tx: broadcast::Sender<String>,
+    sync_clients: Arc<Mutex<Vec<SyncClient>>>,
 }
 
 #[derive(Serialize, Clone)]
@@ -48,24 +41,11 @@ pub struct DeleteBody {
     pub command: String,
 }
 
-#[derive(Serialize)]
-struct WsSuggestionMsg {
-    r#type: String,
-    items: Vec<SuggestionItem>,
-}
-
-impl Default for HistoryState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl HistoryState {
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(sync_clients: Arc<Mutex<Vec<SyncClient>>>) -> Self {
         let shell_type = crate::platform::shell::default_shell().shell_type;
         let history_path = get_history_path(&shell_type);
-        let (broadcast_tx, _) = broadcast::channel(16);
 
         let state = Self {
             inner: Arc::new(HistoryInner {
@@ -74,7 +54,7 @@ impl HistoryState {
                 shell_type,
                 history_path,
                 watcher: std::sync::Mutex::new(None),
-                broadcast_tx,
+                sync_clients,
             }),
         };
 
@@ -85,11 +65,6 @@ impl HistoryState {
         });
 
         state
-    }
-
-    #[must_use]
-    pub fn subscribe(&self) -> broadcast::Receiver<String> {
-        self.inner.broadcast_tx.subscribe()
     }
 
     async fn load_initial(&self) {
@@ -171,10 +146,11 @@ impl HistoryState {
 
     async fn broadcast_top(&self) {
         let items = self.query(None, 20).await;
-        let msg = WsSuggestionMsg { r#type: "suggestions".to_string(), items };
-        if let Ok(json) = serde_json::to_string(&msg) {
-            let _ = self.inner.broadcast_tx.send(json);
-        }
+        let msg = SyncMsg::Suggestions { items };
+        let json = serde_json::to_string(&msg).expect("serialization is infallible");
+        let mut clients =
+            self.inner.sync_clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        clients.retain(|c| c.tx.send(json.clone()).is_ok());
     }
 
     pub async fn query(&self, prefix: Option<&str>, limit: usize) -> Vec<SuggestionItem> {
@@ -329,60 +305,6 @@ pub async fn delete_history(
 ) -> StatusCode {
     state.delete(&body.command).await;
     StatusCode::NO_CONTENT
-}
-
-#[allow(clippy::unused_async)]
-pub async fn ws_history_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<HistoryState>,
-    State(settings): State<crate::settings::SettingsState>,
-    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
-    headers: axum::http::HeaderMap,
-) -> impl IntoResponse {
-    let s = settings.read().await;
-    let allowed_origins = s.auth.allowed_origins.clone();
-    let trusted_proxies = s.auth.trusted_proxies.clone();
-    drop(s);
-    let real_ip = crate::auth::real_client_ip(&headers, addr.ip(), &trusted_proxies);
-    if !crate::auth::check_ws_origin(&headers, &allowed_origins, real_ip, &trusted_proxies) {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-    ws.on_upgrade(move |socket| handle_history_ws(socket, state)).into_response()
-}
-
-async fn handle_history_ws(mut socket: WebSocket, state: HistoryState) {
-    let mut rx = state.inner.broadcast_tx.subscribe();
-
-    // Send current top suggestions immediately
-    let items = state.query(None, 20).await;
-    let msg = WsSuggestionMsg { r#type: "suggestions".to_string(), items };
-    if let Ok(json) = serde_json::to_string(&msg) {
-        if socket.send(Message::Text(json)).await.is_err() {
-            return;
-        }
-    }
-
-    loop {
-        tokio::select! {
-            result = rx.recv() => {
-                match result {
-                    Ok(json) => {
-                        if socket.send(Message::Text(json)).await.is_err() {
-                            break;
-                        }
-                    }
-                    Err(broadcast::error::RecvError::Lagged(_)) => {},
-                    Err(_) => break,
-                }
-            }
-            msg = socket.next() => {
-                match msg {
-                    Some(Ok(Message::Close(_))) | None => break,
-                    _ => {}
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]

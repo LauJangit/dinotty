@@ -1,4 +1,124 @@
 use super::*;
+use portable_pty::{Child, ChildKiller, ExitStatus, NativePtySystem, PtySize, PtySystem};
+use std::io;
+
+#[derive(Debug)]
+struct TestChild;
+
+impl ChildKiller for TestChild {
+    fn kill(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
+        Box::new(Self)
+    }
+}
+
+impl Child for TestChild {
+    fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        Ok(None)
+    }
+
+    fn wait(&mut self) -> io::Result<ExitStatus> {
+        Ok(ExitStatus::with_exit_code(0))
+    }
+
+    fn process_id(&self) -> Option<u32> {
+        None
+    }
+
+    #[cfg(windows)]
+    fn as_raw_handle(&self) -> Option<std::os::windows::io::RawHandle> {
+        None
+    }
+}
+
+fn local_session_for_write_input() -> Arc<Session> {
+    let pair = NativePtySystem::default()
+        .openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 })
+        .unwrap();
+    drop(pair.slave);
+
+    let (resize_tx, _resize_rx) = watch::channel(None);
+    let (output_tx, output_rx) = mpsc::unbounded_channel();
+    Arc::new(Session {
+        backend: tokio::sync::Mutex::new(SessionBackend::Local {
+            writer: Box::new(io::sink()),
+            master: pair.master,
+            child: Box::new(TestChild),
+        }),
+        ssh_params: None,
+        screen: Mutex::new(VirtualScreen::new(80, 24)),
+        clients: Mutex::new(Vec::new()),
+        next_client_id: AtomicU64::new(1),
+        tauri_client_id: Mutex::new(None),
+        input_tx: Mutex::new(None),
+        status: Mutex::new(SessionStatus::Connected),
+        size: Mutex::new((80, 24)),
+        exited: Mutex::new(false),
+        shell_type: "test".to_string(),
+        tauri_on_exit: Mutex::new(None),
+        cwd_state: Mutex::new(CwdState { cwd: PathBuf::from("/"), sniff_buf: Vec::new() }),
+        sync: Mutex::new(SyncState::default()),
+        sync_disable_hook: Mutex::new(None),
+        resize_tx,
+        ssh_cmd_tx: Mutex::new(None),
+        ssh_handle: tokio::sync::Mutex::new(None),
+        sftp_session: Mutex::new(None),
+        remote_home: Mutex::new(None),
+        remote_user: Mutex::new(None),
+        output_tx,
+        output_rx: Mutex::new(Some(output_rx)),
+        pending_results: Mutex::new(Vec::new()),
+    })
+}
+
+/// Reproduction for PR #196: `write_input_sync` uses `try_lock` and reports
+/// routine contention as a fatal error. The four long-lived writer tasks
+/// treat any `Err` as fatal and `break`, so one unlucky moment kills the
+/// keyboard for that pane permanently. This test pins the root cause:
+/// when the backend lock is held (as happens every 200ms per pane during
+/// child polling, and during resize), `write_input_sync` returns
+/// `Err("backend lock held")`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn write_input_sync_errors_on_backend_contention() {
+    let session = local_session_for_write_input();
+    let _backend = session.backend.lock().await;
+
+    let write_session = Arc::clone(&session);
+    let result = tokio::task::spawn_blocking(move || write_session.write_input_sync(b"x"))
+        .await
+        .expect("spawn_blocking panicked");
+
+    assert_eq!(result, Err("backend lock held".to_string()));
+}
+
+/// PR #196 fix: `write_input_blocking` uses `blocking_lock` so that routine
+/// contention becomes a short wait instead of a fatal error. While the
+/// backend lock is held, the call must NOT return within 50ms; once the
+/// lock is released, it must complete with `Ok(())`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn write_input_blocking_waits_for_backend_lock() {
+    let session = local_session_for_write_input();
+    let backend = session.backend.lock().await;
+
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let write_session = Arc::clone(&session);
+    let mut writer = tokio::task::spawn_blocking(move || {
+        let _ = started_tx.send(());
+        write_session.write_input_blocking(b"blocking")
+    });
+    started_rx.await.unwrap();
+
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(50), &mut writer).await.is_err(),
+        "write_input_blocking returned while backend lock was held"
+    );
+
+    drop(backend);
+    assert_eq!(writer.await.expect("spawn_blocking panicked"), Ok(()));
+}
 
 // ── helpers ──────────────────────────────────────────────────────
 
@@ -7,6 +127,17 @@ fn leaf(id: &str) -> serde_json::Value {
         "type": "leaf",
         "paneId": id,
         "title": "Terminal",
+        "ratio": 1,
+        "zoomed": false,
+    })
+}
+
+fn leaf_with_kind(id: &str, kind: &str) -> serde_json::Value {
+    serde_json::json!({
+        "type": "leaf",
+        "kind": kind,
+        "paneId": id,
+        "title": "X",
         "ratio": 1,
         "zoomed": false,
     })
@@ -346,6 +477,39 @@ fn remove_pane_nested_split() {
     assert_eq!(ids, vec!["p1", "p2"]);
 }
 
+// ── extract_leaf_from_layout ─────────────────────────────────────
+
+#[test]
+fn extract_leaf_finds_matching_leaf() {
+    let layout = split("horizontal", vec![leaf("p1"), leaf("p2")]);
+    let extracted = extract_leaf_from_layout(&layout, "p2").unwrap();
+    assert_eq!(extracted.get("paneId").unwrap(), "p2");
+    assert_eq!(extracted.get("type").unwrap(), "leaf");
+}
+
+#[test]
+fn extract_leaf_returns_none_for_missing_pane() {
+    let layout = leaf("p1");
+    assert!(extract_leaf_from_layout(&layout, "p_missing").is_none());
+}
+
+#[test]
+fn extract_leaf_preserves_kind_field() {
+    let plugin_leaf = leaf_with_kind("p1", "plugin");
+    let layout = split("horizontal", vec![plugin_leaf, leaf("p2")]);
+    let extracted = extract_leaf_from_layout(&layout, "p1").unwrap();
+    assert_eq!(extracted.get("kind").unwrap(), "plugin");
+    assert_eq!(extracted.get("paneId").unwrap(), "p1");
+}
+
+#[test]
+fn extract_leaf_finds_in_nested_split() {
+    let inner = split("vertical", vec![leaf("p2"), leaf("p3")]);
+    let layout = split("horizontal", vec![leaf("p1"), inner]);
+    let extracted = extract_leaf_from_layout(&layout, "p3").unwrap();
+    assert_eq!(extracted.get("paneId").unwrap(), "p3");
+}
+
 // ── insert_pane_into_layout ─────────────────────────────────────
 
 #[test]
@@ -416,6 +580,179 @@ fn insert_pane_nested_different_direction() {
     assert_eq!(inner.get("direction").unwrap(), "vertical");
     let inner_ids = collect_leaf_pane_ids(inner);
     assert_eq!(inner_ids, vec!["p2", "p_new"]);
+}
+
+// ── collect_terminal_leaf_pane_ids ───────────────────────────
+
+#[test]
+fn collect_terminal_leaf_pane_ids_pure_terminal() {
+    let layout = split("horizontal", vec![leaf("p1"), leaf("p2")]);
+    let ids = collect_terminal_leaf_pane_ids(&layout);
+    assert_eq!(ids, vec!["p1", "p2"]);
+}
+
+#[test]
+fn collect_terminal_leaf_pane_ids_mixed_kinds() {
+    let layout = split(
+        "horizontal",
+        vec![
+            leaf_with_kind("p1", "terminal"),
+            leaf_with_kind("p2", "plugin"),
+            leaf_with_kind("p3", "files"),
+            leaf_with_kind("p4", "web"),
+        ],
+    );
+    let ids = collect_terminal_leaf_pane_ids(&layout);
+    assert_eq!(ids, vec!["p1"]);
+}
+
+#[test]
+fn collect_terminal_leaf_pane_ids_no_terminal() {
+    let layout =
+        split("horizontal", vec![leaf_with_kind("p1", "plugin"), leaf_with_kind("p2", "files")]);
+    let ids = collect_terminal_leaf_pane_ids(&layout);
+    assert!(ids.is_empty());
+}
+
+#[test]
+fn collect_terminal_leaf_pane_ids_legacy_no_kind_defaults_terminal() {
+    // leaf() helper omits kind - should default to terminal.
+    let layout = split("horizontal", vec![leaf("p1"), leaf("p2")]);
+    let ids = collect_terminal_leaf_pane_ids(&layout);
+    assert_eq!(ids, vec!["p1", "p2"]);
+}
+
+// ── ensure_leaf_kind ──────────────────────────────────────────
+
+#[test]
+fn ensure_leaf_kind_adds_terminal_when_absent() {
+    let layout = leaf("p1");
+    let result = ensure_leaf_kind(layout);
+    assert_eq!(result.get("kind").unwrap(), "terminal");
+}
+
+#[test]
+fn ensure_leaf_kind_preserves_existing_kind() {
+    let layout = leaf_with_kind("p1", "plugin");
+    let result = ensure_leaf_kind(layout);
+    assert_eq!(result.get("kind").unwrap(), "plugin");
+}
+
+#[test]
+fn ensure_leaf_kind_recurses_split_children() {
+    let layout = split("horizontal", vec![leaf("p1"), leaf_with_kind("p2", "plugin")]);
+    let result = ensure_leaf_kind(layout);
+    let children = result.get("children").unwrap().as_array().unwrap();
+    assert_eq!(children[0].get("kind").unwrap(), "terminal");
+    assert_eq!(children[1].get("kind").unwrap(), "plugin");
+}
+
+// ── insert_subtree_into_layout ────────────────────────────────
+
+#[test]
+fn insert_subtree_right_target_in_leaf() {
+    let layout = leaf("target");
+    let subtree = leaf("new");
+    let result = insert_subtree_into_layout(&layout, "target", "right", subtree).unwrap();
+    assert_eq!(result.get("type").unwrap(), "split");
+    // "right" is a position hint; the stored `direction` field is the axis.
+    assert_eq!(result.get("direction").unwrap(), "horizontal");
+    let children = result.get("children").unwrap().as_array().unwrap();
+    assert_eq!(children.len(), 2);
+    assert_eq!(children[0].get("paneId").unwrap(), "target");
+    assert_eq!(children[1].get("paneId").unwrap(), "new");
+}
+
+#[test]
+fn insert_subtree_top_normalizes_to_vertical() {
+    let layout = leaf("target");
+    let subtree = leaf("new");
+    let result = insert_subtree_into_layout(&layout, "target", "top", subtree).unwrap();
+    assert_eq!(result.get("type").unwrap(), "split");
+    assert_eq!(result.get("direction").unwrap(), "vertical");
+}
+
+#[test]
+fn insert_subtree_left_puts_subtree_first() {
+    let layout = leaf("target");
+    let subtree = leaf("new");
+    let result = insert_subtree_into_layout(&layout, "target", "left", subtree).unwrap();
+    let children = result.get("children").unwrap().as_array().unwrap();
+    assert_eq!(children[0].get("paneId").unwrap(), "new", "left => subtree first");
+    assert_eq!(children[1].get("paneId").unwrap(), "target");
+}
+
+#[test]
+fn insert_subtree_top_puts_subtree_first() {
+    let layout = leaf("target");
+    let subtree = leaf("new");
+    let result = insert_subtree_into_layout(&layout, "target", "top", subtree).unwrap();
+    let children = result.get("children").unwrap().as_array().unwrap();
+    assert_eq!(children[0].get("paneId").unwrap(), "new");
+    assert_eq!(children[1].get("paneId").unwrap(), "target");
+}
+
+#[test]
+fn insert_subtree_flattens_when_direction_matches_parent() {
+    // Parent is horizontal [p1, p2]. Insert horizontal-split subtree at p2 with direction=horizontal.
+    // Outer split (wrapping [p2, subtree]) flattens with parent.
+    // Subtree's internal split is preserved (mode A: subtree internals preserved).
+    // Result: horizontal [p1, p2, horizontal-split [a, b]]
+    let layout = split("horizontal", vec![leaf("p1"), leaf("p2")]);
+    let subtree = split("horizontal", vec![leaf("a"), leaf("b")]);
+    let result = insert_subtree_into_layout(&layout, "p2", "horizontal", subtree).unwrap();
+    let ids = collect_leaf_pane_ids(&result);
+    assert_eq!(ids, vec!["p1", "p2", "a", "b"]);
+
+    // Verify structure: outer split has 3 children, last one is nested split.
+    let children = result.get("children").unwrap().as_array().unwrap();
+    assert_eq!(children.len(), 3, "outer split flattens, subtree preserved as nested");
+    assert_eq!(children[0].get("paneId").unwrap(), "p1");
+    assert_eq!(children[1].get("paneId").unwrap(), "p2");
+    assert_eq!(children[2].get("type").unwrap(), "split");
+    assert_eq!(children[2].get("direction").unwrap(), "horizontal");
+    let nested = children[2].get("children").unwrap().as_array().unwrap();
+    assert_eq!(nested.len(), 2);
+}
+
+#[test]
+fn insert_subtree_preserves_subtree_internal_direction_when_different() {
+    // Parent is horizontal. Insert vertical-split subtree at p2.
+    // Should NOT flatten - nested vertical split preserved.
+    let layout = split("horizontal", vec![leaf("p1"), leaf("p2")]);
+    let subtree = split("vertical", vec![leaf("a"), leaf("b")]);
+    let result = insert_subtree_into_layout(&layout, "p2", "horizontal", subtree).unwrap();
+    let children = result.get("children").unwrap().as_array().unwrap();
+    let nested = children
+        .iter()
+        .find(|c| c.get("direction").and_then(|v| v.as_str()) == Some("vertical"))
+        .expect("should preserve nested vertical split");
+    let nested_children = nested.get("children").unwrap().as_array().unwrap();
+    assert_eq!(nested_children.len(), 2);
+}
+
+#[test]
+fn insert_subtree_returns_unchanged_when_target_not_found() {
+    let layout = leaf("p1");
+    let subtree = leaf("new");
+    let result = insert_subtree_into_layout(&layout, "nonexistent", "right", subtree).unwrap();
+    assert_eq!(result.get("paneId").unwrap(), "p1");
+    assert_eq!(result.get("type").unwrap(), "leaf");
+}
+
+#[test]
+fn insert_subtree_into_nested_layout_finds_deep_target() {
+    // Layout: [p1, [p2, p3]] (horizontal outer, vertical inner)
+    let layout =
+        split("horizontal", vec![leaf("p1"), split("vertical", vec![leaf("p2"), leaf("p3")])]);
+    let subtree = leaf("new");
+    let result = insert_subtree_into_layout(&layout, "p3", "right", subtree).unwrap();
+    let ids = collect_leaf_pane_ids(&result);
+    assert!(ids.contains(&"p1".to_string()));
+    assert!(ids.contains(&"p2".to_string()));
+    assert!(ids.contains(&"p3".to_string()));
+    assert!(ids.contains(&"new".to_string()));
+    assert_eq!(ids.len(), 4);
 }
 
 // ── SessionManager tab operations ───────────────────────────────

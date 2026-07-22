@@ -1,6 +1,8 @@
 import type { ActionKey } from '../composables/useSettings'
 import type { KeyDef } from '../components/keyboard/mkbTypes'
 import { Bookmark } from 'lucide-vue-next'
+import { t } from '../composables/useI18n'
+import { getAppAction } from './appActionCatalog'
 
 export function normalizeCaretSend(send: string): string {
   if (send.length !== 2 || send[0] !== '^') return send
@@ -21,6 +23,21 @@ export function actionKeyToKeyDef(ak: ActionKey, opts?: { bottomIdx?: number }):
   const bottom = opts?.bottomIdx !== undefined
   const danger = ak.style === 'danger'
   const cls = danger ? 'mkb-mod mkb-action-danger' : 'mkb-mod'
+
+  if (ak.kind === 'action') {
+    const action = ak.action ? getAppAction(ak.action) : undefined
+    const def: KeyDef = action
+      ? ak.display === 'text'
+        ? { l: ak.label || '', act: action.id, cls }
+        : { l: '', act: action.id, cls, icon: action.icon, aria: t(action.labelKey) }
+      : {
+          l: ak.action ? `${t('actionKb.unsupported')}: ${ak.action}` : t('actionKb.unsupported'),
+          cls: `${cls} mkb-disabled`,
+          disabled: true,
+        }
+    if (ak.grow != null && ak.grow > 0) def.g = ak.grow
+    return def
+  }
 
   if (ak.special === 'space') {
     const def: KeyDef = {

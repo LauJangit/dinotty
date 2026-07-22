@@ -21,8 +21,7 @@
 .mc-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  grid-template-rows: repeat(var(--mc-rows, 1), auto);
-  grid-auto-flow: column;
+  grid-auto-rows: minmax(min-content, max-content);
   gap: 12px;
   width: 100%;
   max-width: 600px;
@@ -192,7 +191,6 @@
 @media (min-width: 480px) {
   .mc-grid {
     grid-template-columns: repeat(3, 1fr);
-    grid-template-rows: repeat(var(--mc-rows-md, 1), auto);
     max-width: 800px;
   }
 }
@@ -201,7 +199,6 @@
 @media (min-width: 900px) {
   .mc-grid {
     grid-template-columns: repeat(4, 1fr);
-    grid-template-rows: repeat(var(--mc-rows-lg, 1), auto);
     max-width: 1000px;
   }
 }
@@ -210,7 +207,6 @@
 @media (min-width: 1200px) {
   .mc-grid {
     grid-template-columns: repeat(5, 1fr);
-    grid-template-rows: repeat(var(--mc-rows-xl, 1), auto);
     max-width: none;
   }
 }
@@ -378,6 +374,7 @@
 /* Tab panel fills remaining space */
 .mc-ws-dual .mc-grid {
   flex: 1;
+  min-height: 0;
   max-width: none;
   max-height: none;
   border-radius: 0;
@@ -627,6 +624,14 @@
   .mc-ws-list-scroll {
     display: flex;
     flex-direction: column;
+  }
+  .mc-ws-list-item:first-child {
+    padding-right: 60px;
+    min-height: 46px;
+  }
+  .mc-close-btn {
+    width: 44px;
+    height: 44px;
   }
   .mc-right-panel {
     flex: 1;

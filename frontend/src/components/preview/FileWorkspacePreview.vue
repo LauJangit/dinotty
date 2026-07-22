@@ -291,6 +291,15 @@
           <span class="tree-ctx-label">{{ t('filePreview.ctxCopyPath') }}</span>
         </button>
         <button
+          type="button"
+          class="tree-ctx-item"
+          role="menuitem"
+          :disabled="!ctxMenu.contextMenu.value?.rel && !selectedRel"
+          @click="ctxMenu.ctxReveal"
+        >
+          <span class="tree-ctx-label">{{ t('filePreview.ctxReveal') }}</span>
+        </button>
+        <button
           v-if="ctxMenu.canRunCode.value"
           type="button"
           class="tree-ctx-item"
@@ -370,7 +379,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, toRef } from 'vue'
 import { useI18n } from '../../composables/useI18n'
 import { getApiBase, apiUrl, authFetch } from '../../composables/apiBase'
 import { isTauri } from '../../composables/useTransport'
@@ -380,9 +389,17 @@ import { useFileNavigation, useSelectedPath } from '../../composables/useFileNav
 import { useFileWorkspaceLayout } from '../../composables/useFileWorkspaceLayout'
 import { useFileWatch } from '../../composables/useFileWatch'
 import { useEditorSplit } from '../../composables/useEditorSplit'
+import { setActiveLeaf } from '../../composables/useEditorRegistry'
+import {
+  saveFileWorkspaceState,
+  type PersistedFileWorkspaceState,
+} from '../../composables/useFileWorkspaceState'
+import { setEditorSplitForCursorGroup } from '../../composables/useCursorGroup'
 import { useFileOperations } from '../../composables/useFileOperations'
 import type { DropPosition } from '../../types/pane'
 import { useTreeContextMenu } from '../../composables/useTreeContextMenu'
+import { useInlineCreateRename } from '../../composables/useInlineCreateRename'
+import { useFileWorkspaceBoot } from '../../composables/useFileWorkspaceBoot'
 import { TreeRows } from '../workspace/TreeRows'
 import type { DirEntry } from '../workspace/TreeRows'
 import EditorSplitContainer from '../workspace/EditorSplitContainer.vue'
@@ -413,8 +430,6 @@ const childCache = ref<Record<string, DirEntry[]>>({})
 const expanded = ref<Set<string>>(new Set())
 const lastTreePointerTs = ref(0)
 const gitStatusMap = ref<Record<string, string>>({})
-const inlineCreate = ref<{ parentRel: string; kind: 'file' | 'dir' } | null>(null)
-const inlineRename = ref<{ rel: string; isDir: boolean } | null>(null)
 const recentDropdownOpen = ref(false)
 const fileWorkspaceBodyRef = ref<HTMLElement | null>(null)
 
@@ -440,6 +455,40 @@ watch(
   () => editorSplit.activeLeaf.value?.isDir,
   (isDir) => { selectedIsDir.value = isDir ?? false }
 )
+watch(
+  () => editorSplit.activeEditorLeafId.value,
+  (id) => { setActiveLeaf(id ?? null) },
+  { immediate: true }
+)
+
+// Forward declaration: ops is declared below, but parentRelPath wraps it.
+// Function declarations are hoisted; ops will be defined by the time this is called.
+function parentRelPath(rel: string): string {
+  return ops.parentRelPath(rel)
+}
+
+const {
+  inlineCreate,
+  inlineRename,
+  startNewFile,
+  startNewFolder,
+  onInlineCreateCommit,
+  onInlineCreateCancel,
+  onInlineRenameCommit,
+  onInlineRenameCancel,
+} = useInlineCreateRename({
+  paneId: toRef(props, 'paneId'),
+  cwdLabel,
+  selectedRel,
+  selectedIsDir,
+  childCache,
+  expanded,
+  previewErr,
+  parentRelPath,
+  ensureChildren,
+  onSelectFile,
+  onSelectDir,
+})
 
 const ops = useFileOperations({
   paneId: () => props.paneId,
@@ -474,6 +523,7 @@ const ctxMenu = useTreeContextMenu({
   onSelectDir,
   triggerUpload: ops.triggerUpload,
   downloadFile: ops.downloadFile,
+  paneId: () => props.paneId,
   t,
 })
 
@@ -506,6 +556,35 @@ const fileWatch = useFileWatch({
     ops.cacheBustTs.value = Date.now()
   },
   fetchList,
+})
+
+const {
+  reloadAll,
+  expandFirstLevelDirs,
+  captureState,
+  applyState,
+  boot,
+  openFromTerminal,
+} = useFileWorkspaceBoot({
+  paneId: toRef(props, 'paneId'),
+  visible: toRef(props, 'visible'),
+  childCache,
+  expanded,
+  previewErr,
+  meta,
+  selectedRel,
+  selectedIsDir,
+  inlineCreate,
+  contextMenu: ctxMenu.contextMenu,
+  editorLayout: editorSplit.editorLayout,
+  activeEditorLeafId: editorSplit.activeEditorLeafId,
+  activeLeaf: editorSplit.activeLeaf,
+  ensureChildren,
+  onSelectFile,
+  onSelectDir,
+  connectTreeWatchSocket: fileWatch.connectTreeWatchSocket,
+  disconnectTreeWatchSocket: fileWatch.disconnectTreeWatchSocket,
+  fetchGitStatus,
 })
 
 // --- Computed ---
@@ -720,114 +799,7 @@ function onToggle(rel: string) {
 }
 
 // --- Inline create/rename ---
-function newItemParentRel(): string {
-  if (selectedIsDir.value && selectedRel.value) return selectedRel.value
-  if (!selectedIsDir.value && selectedRel.value) return ops.parentRelPath(selectedRel.value)
-  return ''
-}
-
-function startNewFile() {
-  if (shouldBlockNavigate()) return
-  const parentRel = newItemParentRel()
-  inlineCreate.value = { parentRel, kind: 'file' }
-  expanded.value = new Set([...expanded.value, parentRel])
-  void ensureChildren(parentRel)
-}
-
-function startNewFolder() {
-  if (shouldBlockNavigate()) return
-  const parentRel = newItemParentRel()
-  inlineCreate.value = { parentRel, kind: 'dir' }
-  expanded.value = new Set([...expanded.value, parentRel])
-  void ensureChildren(parentRel)
-}
-
-async function onInlineCreateCommit(name: string) {
-  if (!inlineCreate.value) return
-  if (!name) {
-    inlineCreate.value = null
-    return
-  }
-  const { parentRel, kind } = inlineCreate.value
-  inlineCreate.value = null
-  await getApiBase()
-  const q = new URLSearchParams({ pane_id: props.paneId, parent: parentRel })
-  if (cwdLabel.value) q.set('cwd', cwdLabel.value)
-  const res = await authFetch(apiUrl(`/api/workspace/create?${q}`), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ kind, name }),
-  })
-  if (!res.ok) {
-    previewErr.value = res.status === 409 ? 'exists' : 'create failed'
-    return
-  }
-  previewErr.value = ''
-  const data = await res.json()
-  const rel = data.rel as string
-  const next = { ...childCache.value }
-  delete next[parentRel]
-  childCache.value = next
-  try {
-    await ensureChildren(parentRel)
-  } catch {}
-  if (kind === 'file') await onSelectFile(rel)
-  else {
-    expanded.value = new Set([...expanded.value, rel])
-    onSelectDir(rel)
-    void ensureChildren(rel)
-  }
-}
-
-function onInlineCreateCancel() {
-  inlineCreate.value = null
-}
-
-async function onInlineRenameCommit(newName: string) {
-  if (!inlineRename.value) return
-  if (!newName) {
-    inlineRename.value = null
-    return
-  }
-  const { rel, isDir } = inlineRename.value
-  inlineRename.value = null
-  await getApiBase()
-  const q = new URLSearchParams({ pane_id: props.paneId, path: rel })
-  if (cwdLabel.value) q.set('cwd', cwdLabel.value)
-  const res = await authFetch(apiUrl(`/api/workspace/rename?${q}`), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ new_name: newName }),
-  })
-  if (!res.ok) {
-    const j = await res.json().catch(() => ({}))
-    previewErr.value = j.error || 'rename failed'
-    return
-  }
-  previewErr.value = ''
-  const data = await res.json()
-  const newRel = data.rel as string
-  const parentRel = ops.parentRelPath(rel)
-  const next = { ...childCache.value }
-  delete next[parentRel]
-  if (isDir) {
-    for (const k of Object.keys(next)) {
-      if (k === rel || k.startsWith(`${rel}/`)) delete next[k]
-    }
-  }
-  childCache.value = next
-  try {
-    await ensureChildren(parentRel)
-  } catch {}
-  if (selectedRel.value === rel) {
-    if (isDir) onSelectDir(newRel)
-    else await onSelectFile(newRel)
-  }
-}
-
-function onInlineRenameCancel() {
-  inlineRename.value = null
-}
+// (Extracted to useInlineCreateRename composable)
 
 async function onUploadToDir(dir: string, ev: DragEvent) {
   if (isTauri()) return // handled by file-drop-paths listener
@@ -866,47 +838,7 @@ function onSwipeAction(payload: { rel: string; action: string }) {
 }
 
 // --- Reload/Boot ---
-async function reloadAll() {
-  inlineCreate.value = null
-  ctxMenu.contextMenu.value = null
-  childCache.value = {}
-  expanded.value = new Set()
-  previewErr.value = ''
-  meta.value = null
-  try {
-    await ensureChildren('')
-  } catch {
-    previewErr.value = 'list failed'
-  }
-}
-
-async function expandFirstLevelDirs() {
-  const entries = childCache.value['']
-  if (!entries) return
-  const dirs = entries.filter((e) => e.is_dir)
-  if (!dirs.length) return
-  const dirPaths = dirs.map((d) => d.name)
-  expanded.value = new Set(dirPaths)
-  await Promise.all(dirPaths.map((p) => ensureChildren(p)))
-}
-
-async function boot() {
-  selectedRel.value = null
-  selectedIsDir.value = false
-  meta.value = null
-  previewErr.value = ''
-  inlineCreate.value = null
-  ctxMenu.contextMenu.value = null
-  childCache.value = {}
-  expanded.value = new Set()
-  try {
-    await ensureChildren('')
-    fileWatch.connectTreeWatchSocket()
-    fetchGitStatus()
-  } catch {
-    previewErr.value = 'list failed'
-  }
-}
+// (Extracted to useFileWorkspaceBoot composable)
 
 function close() {
   emit('close')
@@ -915,49 +847,6 @@ function close() {
 function onRecentSelect(path: string) {
   recentDropdownOpen.value = false
   openFromTerminal(path)
-}
-
-// --- Open from terminal ---
-async function openFromTerminal(path: string) {
-  await getApiBase()
-  const q = new URLSearchParams({ pane_id: props.paneId, path })
-  const res = await authFetch(apiUrl(`/api/workspace/resolve?${q}`))
-  if (!res.ok) return
-  const { rel } = await res.json()
-  previewErr.value = ''
-  inlineCreate.value = null
-  ctxMenu.contextMenu.value = null
-  childCache.value = {}
-  expanded.value = new Set()
-  try {
-    await ensureChildren('')
-  } catch {
-    previewErr.value = 'list failed'
-    return
-  }
-  const parts = rel.split('/').filter(Boolean)
-  if (parts.length === 0) {
-    selectedRel.value = null
-    selectedIsDir.value = false
-    meta.value = null
-    return
-  }
-  let acc = ''
-  const nextExpanded = new Set(expanded.value)
-  for (let i = 0; i < parts.length - 1; i++) {
-    acc = acc ? `${acc}/${parts[i]}` : parts[i]
-    nextExpanded.add(acc)
-    await ensureChildren(acc)
-  }
-  expanded.value = nextExpanded
-  const base = parts[parts.length - 1]
-  const parentRel = parts.slice(0, -1).join('/')
-  await ensureChildren(parentRel)
-  const full = rel
-  const parentEntries = childCache.value[parentRel]
-  const entry = parentEntries?.find((e) => e.name === base)
-  if (entry?.is_dir) onSelectDir(full)
-  else await onSelectFile(full)
 }
 
 // --- Keyboard ---
@@ -979,6 +868,14 @@ watch(layout.narrow, (isNarrow) => {
 })
 
 watch(
+  () => props.paneId,
+  (_newId, oldId) => {
+    if (oldId) saveFileWorkspaceState(oldId, captureState())
+  },
+  { flush: 'sync' }
+)
+
+watch(
   () => [props.visible, props.paneId, props.embedded],
   () => {
     if (props.visible && props.paneId) void boot()
@@ -995,15 +892,19 @@ onMounted(() => {
   window.addEventListener('scroll', onCloseContextScroll, true)
   ops.setActiveWorkspace()
   void getApiBase()
+  setEditorSplitForCursorGroup(editorSplit)
 })
 
 onBeforeUnmount(() => {
+  if (props.paneId) saveFileWorkspaceState(props.paneId, captureState())
   window.removeEventListener('resize', layout.onResize)
   window.removeEventListener('keydown', onEditorSaveKeydown, true)
   window.removeEventListener('scroll', onCloseContextScroll, true)
   ops.teardownWorkspaceDragDrop()
   ops.clearActiveWorkspace()
   fileWatch.disconnectTreeWatchSocket()
+  setEditorSplitForCursorGroup(null)
+  setActiveLeaf(null)
 })
 
 defineExpose({
