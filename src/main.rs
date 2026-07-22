@@ -663,7 +663,7 @@ async fn main() {
     let monitor_state = MonitorState::new();
     monitor_state.clone().start_collector();
 
-    let notifier = Arc::new(NotificationBroadcast::new());
+    let notifier = Arc::new(NotificationBroadcast::new(Arc::clone(&manager.sync_clients)));
     let settings_state = settings::create_settings_state();
     notifier.set_settings(settings_state.clone());
     manager.register_notifier(Arc::clone(&notifier));
@@ -769,7 +769,6 @@ async fn main() {
             .route("/ws/sync", get(ws::sync_handler))
             .route("/ws/watch", get(file_watcher::watch_handler))
             .route("/ws/monitor", get(monitor::ws_monitor_handler))
-            .route("/ws/notify", get(ws::notification_ws_handler))
             .route("/api/notify", post(notification::post_notify))
             .route("/api/events/emit", post(events::emit_event))
             .route("/api/input", post(ws::post_input))

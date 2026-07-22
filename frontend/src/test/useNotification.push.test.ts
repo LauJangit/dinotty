@@ -1,19 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// Stub WebSocket - useNotification() triggers connectWs() on first call.
-vi.stubGlobal(
-  'WebSocket',
-  class {
-    onopen: any = null
-    onmessage: any = null
-    onclose: any = null
-    onerror: any = null
-    close() {}
-    send() {}
-  }
-)
-
-// Mock dependencies before importing useNotification.
 vi.mock('vue-toastification', () => ({
   TYPE: { INFO: 'info', SUCCESS: 'success', WARNING: 'warning', ERROR: 'error' },
 }))
@@ -24,9 +10,10 @@ vi.mock('../composables/useI18n', () => ({
 
 vi.mock('../composables/useTransport', () => ({ isTauri: () => false }))
 
-vi.mock('../composables/apiBase', () => ({
-  getApiBase: async () => 'http://127.0.0.1:28999',
-  wsUrlWithToken: (url: string) => url,
+vi.mock('../composables/useSyncWebSocket', () => ({
+  onNotification: () => () => {},
+  getClientId: () => 'client-test',
+  sendMarkRead: () => {},
 }))
 
 import { settings } from '../composables/useSettings'

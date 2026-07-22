@@ -7,11 +7,6 @@ pub struct WsQuery {
     pub argv: Option<String>,
 }
 
-#[derive(Deserialize)]
-pub struct NotificationWsQuery {
-    pub v: Option<String>,
-}
-
 #[derive(Deserialize, Serialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMsg {
@@ -63,6 +58,11 @@ pub enum SyncClientMsg {
     SshAuthResponse {
         pane_id: String,
         responses: Vec<String>,
+    },
+    /// 前端标记通知已读（原 /ws/notify 的 notification.mark_read 上行，迁入 sync WS）
+    MarkRead {
+        #[serde(flatten)]
+        request: crate::notification::MarkReadRequest,
     },
 }
 

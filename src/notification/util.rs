@@ -5,12 +5,7 @@ use serde::Serialize;
 
 use crate::attention::{AttentionTarget, MarkReadResult, Severity, TargetResult, TargetStatus};
 
-use super::protocol::ServerEnvelope;
 use super::types::MarkReadRequest;
-
-pub(crate) fn serialized_len(envelope: &ServerEnvelope) -> usize {
-    serde_json::to_vec(envelope).map_or(super::DATA_QUEUE_BYTES + 1, |json| json.len())
-}
 
 pub(crate) fn conflict_mark_read(request: &MarkReadRequest, epoch: &str) -> MarkReadResult {
     let results = request

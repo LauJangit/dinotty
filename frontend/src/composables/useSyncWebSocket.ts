@@ -1,6 +1,6 @@
 import { nextTick } from 'vue'
 import { storeToRefs } from 'pinia'
-import type { SyncServerMsg, SyncClientMsg, SyncEvent } from '../types/protocol'
+import type { SyncServerMsg, SyncClientMsg, SyncEvent, SyncMarkRead } from '../types/protocol'
 import type { Tab, TerminalTab } from '../types/pane'
 import { getAllLeaves, findLeaf, migrateTab, migratePreviewToLeaf, ensureSplitRoot } from '../types/pane'
 import {
@@ -27,7 +27,10 @@ import type TerminalPane from '../components/terminal/TerminalPane.vue'
 
 type SyncEventHandler = (e: SyncEvent) => void
 const eventHandlers = new Set<SyncEventHandler>()
+type NotificationHandler = (msg: SyncServerMsg) => void
+const notifyHandlers = new Set<NotificationHandler>()
 let currentClientId: string | null = null
+let sendMarkReadFn: ((payload: SyncMarkRead) => void) | null = null
 
 export function onEvent(handler: SyncEventHandler): () => void {
   eventHandlers.add(handler)
@@ -36,8 +39,19 @@ export function onEvent(handler: SyncEventHandler): () => void {
   }
 }
 
+export function onNotification(handler: NotificationHandler): () => void {
+  notifyHandlers.add(handler)
+  return () => {
+    notifyHandlers.delete(handler)
+  }
+}
+
 export function getClientId(): string | null {
   return currentClientId
+}
+
+export function sendMarkRead(payload: SyncMarkRead): void {
+  sendMarkReadFn?.(payload)
 }
 
 export function useSyncWebSocket(opts: {
@@ -90,6 +104,8 @@ export function useSyncWebSocket(opts: {
       syncWs.send(JSON.stringify(msg))
     }
   }
+
+  sendMarkReadFn = (payload: SyncMarkRead) => sendSync(payload)
 
   function sendLayoutSync(tabPaneId: string, layout: any, activePaneIdVal: string) {
     sendSync({ type: 'update_layout', pane_id: tabPaneId, layout, active_pane_id: activePaneIdVal })
@@ -520,6 +536,15 @@ export function useSyncWebSocket(opts: {
         currentClientId = msg.client_id
       } else if (msg.type === 'event') {
         eventHandlers.forEach((h) => h(msg))
+      } else if (
+        msg.type === 'bell' ||
+        msg.type === 'notify' ||
+        msg.type === 'state_delta' ||
+        msg.type === 'snapshot' ||
+        msg.type === 'mark_read_result' ||
+        msg.type === 'resync_required'
+      ) {
+        notifyHandlers.forEach((h) => h(msg))
       }
     }
 

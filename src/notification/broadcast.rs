@@ -1,57 +1,36 @@
 use std::collections::HashMap;
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Mutex,
-};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 
-#[cfg(test)]
-use crate::attention::StateDelta;
 use crate::attention::{
     evaluate_ingest_gate, AttentionLedger, DedupOutcome, IngestGateResult, IngestSource,
     MarkReadResult, ProducerOutcome, ReserveResult, Severity,
 };
 use crate::platform::{process::CommandNoWindowExt, shell};
+use crate::session::{SyncClient, SyncMsg};
 use crate::settings::{NotificationConfig, SettingsState};
 
-use super::client::{ClientHandle, ClientRegistration, LedgerHub};
-use super::protocol::ServerEnvelope;
-use super::queue::{
-    broadcast_data, enqueue_control, enqueue_data_direct, schedule_recovery_snapshot,
-};
 use super::types::{NotifyRequest, ProducerProcessResult};
 use super::util::{conflict_mark_read, now_ms, payload_hash, severity_from_type};
-use super::{ConnId, CONTROL_QUEUE_MSGS, MIN_PROTOCOL_VERSION};
+use super::MIN_PROTOCOL_VERSION;
 
 pub struct NotificationBroadcast {
-    pub(crate) hub: Mutex<LedgerHub>,
-    next_conn_id: AtomicU64,
+    ledger: Mutex<AttentionLedger>,
+    sync_clients: std::sync::Arc<Mutex<Vec<SyncClient>>>,
     bell_debounce: Mutex<HashMap<String, Instant>>,
     settings: Mutex<Option<SettingsState>>,
-    /// Counts `run_hooks` invocations (not actual hook commands run - that additionally
-    /// requires configured+enabled hooks). Lets tests assert the once-on-accept-only contract
-    /// without spawning real OS processes.
-    hook_invocations: AtomicU64,
-}
-
-impl Default for NotificationBroadcast {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl NotificationBroadcast {
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(sync_clients: std::sync::Arc<Mutex<Vec<SyncClient>>>) -> Self {
         Self {
-            hub: Mutex::new(LedgerHub { ledger: AttentionLedger::new(), clients: HashMap::new() }),
-            next_conn_id: AtomicU64::new(1),
+            ledger: Mutex::new(AttentionLedger::new()),
+            sync_clients,
             bell_debounce: Mutex::new(HashMap::new()),
             settings: Mutex::new(None),
-            hook_invocations: AtomicU64::new(0),
         }
     }
 
@@ -59,43 +38,20 @@ impl NotificationBroadcast {
         *self.settings.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(state);
     }
 
-    pub fn register_client(&self) -> ClientRegistration {
-        let conn_id = self.next_conn_id.fetch_add(1, Ordering::Relaxed);
-        // Capacity 1: the wake channel only needs to signal "there is data", never to carry one
-        // token per queued message. A `Full` try_send is therefore a successful coalesce, not
-        // backpressure - see `enqueue_data_direct`.
-        let (data_wake_tx, data_wake) = mpsc::channel(1);
-        let (control_tx, control) = mpsc::channel(CONTROL_QUEUE_MSGS);
-        let (disconnect_tx, disconnect) = watch::channel(false);
-        let mut hub = self.hub.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let snapshot = hub.ledger.snapshot();
-        let mut client = ClientHandle {
-            data: std::collections::VecDeque::new(),
-            data_bytes: 0,
-            data_wake: data_wake_tx,
-            control: control_tx,
-            disconnect: disconnect_tx,
-            needs_snapshot: false,
-            resync_enqueued: false,
-            disconnect_requested: false,
-        };
-        enqueue_data_direct(&mut client, ServerEnvelope::Snapshot { snapshot });
-        hub.clients.insert(conn_id, client);
-        ClientRegistration { conn_id, data_wake, control, disconnect }
+    /// Register a new sync client: pushes the current ledger snapshot so the client can
+    /// initialize its local attention state. The `sync_client_id` must match the id assigned
+    /// by `SessionManager::add_sync_client` - messages are routed to that client via its
+    /// `sync_clients` entry.
+    pub fn register_client(&self, sync_client_id: &str) {
+        let snapshot =
+            self.ledger.lock().unwrap_or_else(std::sync::PoisonError::into_inner).snapshot();
+        self.send_to_client(sync_client_id, &SyncMsg::Snapshot { snapshot });
     }
 
-    pub fn unregister_client(&self, conn_id: ConnId) {
-        self.hub.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clients.remove(&conn_id);
-    }
-
-    pub fn take_data(&self, conn_id: ConnId) -> Option<ServerEnvelope> {
-        let mut hub = self.hub.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let queued = hub.clients.get_mut(&conn_id)?.data.pop_front()?;
-        let client = hub.clients.get_mut(&conn_id)?;
-        client.data_bytes = client.data_bytes.saturating_sub(queued.bytes);
-        schedule_recovery_snapshot(&mut hub, conn_id);
-        Some(queued.envelope)
-    }
+    /// No per-client state to clean up - the sync client is already removed from
+    /// `sync_clients` by the WS handler on disconnect. Kept for API symmetry with
+    /// `register_client` and future per-client bookkeeping.
+    pub fn unregister_client(&self, _sync_client_id: &str) {}
 
     pub fn send_bell(&self, pane_id: &str) {
         let cfg = self.notification_config();
@@ -120,26 +76,23 @@ impl NotificationBroadcast {
         }
 
         let occurred_at = now_ms();
-        {
-            let mut hub = self.hub.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            let (event_seq, delta) =
-                hub.ledger.record_pane_event(pane_id, occurred_at, Severity::Info, occurred_at);
-            broadcast_data(
-                &mut hub,
-                ServerEnvelope::StateDelta { delta },
-                Some(ServerEnvelope::Bell {
-                    v: MIN_PROTOCOL_VERSION,
-                    pane_id: pane_id.to_string(),
-                    title: None,
-                    body: "Bell".into(),
-                    notification_type: "bell".into(),
-                    event_seq: event_seq.to_string(),
-                    occurred_at,
-                    severity: Severity::Info,
-                    notif_id: None,
-                }),
-            );
-        }
+        let (event_seq, delta) = self
+            .ledger
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .record_pane_event(pane_id, occurred_at, Severity::Info, occurred_at);
+        self.broadcast(&SyncMsg::StateDelta { delta });
+        self.broadcast(&SyncMsg::Bell {
+            v: MIN_PROTOCOL_VERSION,
+            pane_id: pane_id.to_string(),
+            title: None,
+            body: "Bell".into(),
+            notification_type: "bell".into(),
+            event_seq: event_seq.to_string(),
+            occurred_at,
+            severity: Severity::Info,
+            notif_id: None,
+        });
         self.run_hooks("bell", pane_id, None, "Bell");
     }
 
@@ -159,95 +112,95 @@ impl NotificationBroadcast {
         }
         let severity = severity_from_type(notification_type).unwrap_or(Severity::Info);
         let occurred_at = now_ms();
-        {
-            let mut hub = self.hub.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            let (event_seq, delta) =
-                hub.ledger.record_pane_event(pane_id, occurred_at, severity, occurred_at);
-            broadcast_data(
-                &mut hub,
-                ServerEnvelope::StateDelta { delta },
-                Some(ServerEnvelope::Notify {
-                    v: MIN_PROTOCOL_VERSION,
-                    pane_id: pane_id.to_string(),
-                    title: title.map(String::from),
-                    body: body.to_string(),
-                    notification_type: notification_type.to_string(),
-                    event_seq: event_seq.to_string(),
-                    occurred_at,
-                    severity,
-                    notif_id: None,
-                }),
-            );
-        }
+        let (event_seq, delta) = self
+            .ledger
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .record_pane_event(pane_id, occurred_at, severity, occurred_at);
+        self.broadcast(&SyncMsg::StateDelta { delta });
+        self.broadcast(&SyncMsg::Notify {
+            v: MIN_PROTOCOL_VERSION,
+            pane_id: pane_id.to_string(),
+            title: title.map(String::from),
+            body: body.to_string(),
+            notification_type: notification_type.to_string(),
+            event_seq: event_seq.to_string(),
+            occurred_at,
+            severity,
+            notif_id: None,
+        });
         self.run_hooks(notification_type, pane_id, title, body);
     }
 
-    pub fn apply_mark_read(&self, conn_id: ConnId, request: &super::types::MarkReadRequest) {
+    pub fn apply_mark_read(&self, sync_client_id: &str, request: &super::types::MarkReadRequest) {
         let now = now_ms();
         let payload_hash = payload_hash(&("notification.mark_read", request));
         let key = (request.client_id.clone(), request.request_id.clone());
-        let mut hub = self.hub.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let outcome = match hub.ledger.reserve(&key.0, &key.1, payload_hash, now) {
-            ReserveResult::Replay(DedupOutcome::MarkRead(result)) => {
-                enqueue_control(&mut hub, conn_id, ServerEnvelope::MarkReadResult { result });
-                return;
-            }
-            ReserveResult::InFlight => {
-                // Only reachable during a zombie RESERVATION_TIMEOUT window under the
-                // synchronous critical section. Per design C3-03, an in-flight duplicate must
-                // NOT get a conflict verdict (that would make the client drop its overlay) - send
-                // no reply at all; the client's own ack-timeout resend will later hit either
-                // Done(replay) or a reclaimed key (fresh apply).
-                tracing::debug!(
-                    "mark_read reservation in-flight for {:?}; suppressing reply, awaiting resend",
-                    key
-                );
-                return;
-            }
-            ReserveResult::Replay(_) | ReserveResult::Conflict => {
-                conflict_mark_read(request, hub.ledger.epoch())
-            }
-            ReserveResult::Reserved { generation } => {
-                let panes: Vec<_> = request
-                    .panes
-                    .iter()
-                    .filter_map(|pane| {
-                        pane.through_event_seq
-                            .parse::<u64>()
-                            .ok()
-                            .map(|seq| (pane.pane_id.clone(), seq))
-                    })
-                    .collect();
-                let notifs: Vec<_> =
-                    request.notifs.iter().map(|notif| notif.notif_id.clone()).collect();
-                let (delta, results, applied_at_revision) =
-                    hub.ledger.mark_read(&request.epoch, &panes, &notifs, now);
-                let result = MarkReadResult {
-                    request_id: request.request_id.clone(),
-                    epoch: hub.ledger.epoch().to_string(),
-                    applied_at_revision,
-                    results,
-                };
-                let installed = hub.ledger.complete(
-                    &key,
-                    generation,
-                    DedupOutcome::MarkRead(result.clone()),
-                    now,
-                );
-                debug_assert!(installed);
-                if let Some(delta) = delta {
-                    broadcast_data(&mut hub, ServerEnvelope::StateDelta { delta }, None);
+        let outcome = {
+            let mut ledger = self.ledger.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            match ledger.reserve(&key.0, &key.1, payload_hash, now) {
+                ReserveResult::Replay(DedupOutcome::MarkRead(result)) => {
+                    self.send_to_client(sync_client_id, &SyncMsg::MarkReadResult { result });
+                    return;
                 }
-                result
+                ReserveResult::InFlight => {
+                    // Only reachable during a zombie RESERVATION_TIMEOUT window under the
+                    // synchronous critical section. Per design C3-03, an in-flight duplicate must
+                    // NOT get a conflict verdict (that would make the client drop its overlay) - send
+                    // no reply at all; the client's own ack-timeout resend will later hit either
+                    // Done(replay) or a reclaimed key (fresh apply).
+                    tracing::debug!(
+                        "mark_read reservation in-flight for {:?}; suppressing reply, awaiting resend",
+                        key
+                    );
+                    return;
+                }
+                ReserveResult::Replay(_) | ReserveResult::Conflict => {
+                    conflict_mark_read(request, ledger.epoch())
+                }
+                ReserveResult::Reserved { generation } => {
+                    let panes: Vec<_> = request
+                        .panes
+                        .iter()
+                        .filter_map(|pane| {
+                            pane.through_event_seq
+                                .parse::<u64>()
+                                .ok()
+                                .map(|seq| (pane.pane_id.clone(), seq))
+                        })
+                        .collect();
+                    let notifs: Vec<_> =
+                        request.notifs.iter().map(|notif| notif.notif_id.clone()).collect();
+                    let (delta, results, applied_at_revision) =
+                        ledger.mark_read(&request.epoch, &panes, &notifs, now);
+                    let result = MarkReadResult {
+                        request_id: request.request_id.clone(),
+                        epoch: ledger.epoch().to_string(),
+                        applied_at_revision,
+                        results,
+                    };
+                    let installed = ledger.complete(
+                        &key,
+                        generation,
+                        DedupOutcome::MarkRead(result.clone()),
+                        now,
+                    );
+                    debug_assert!(installed);
+                    if let Some(delta) = delta {
+                        self.broadcast(&SyncMsg::StateDelta { delta });
+                    }
+                    result
+                }
             }
         };
-        enqueue_control(&mut hub, conn_id, ServerEnvelope::MarkReadResult { result: outcome });
+        self.send_to_client(sync_client_id, &SyncMsg::MarkReadResult { result: outcome });
     }
 
     pub fn sweep(&self, now: u64) {
-        let mut hub = self.hub.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(delta) = hub.ledger.sweep(now) {
-            broadcast_data(&mut hub, ServerEnvelope::StateDelta { delta }, None);
+        let delta =
+            self.ledger.lock().unwrap_or_else(std::sync::PoisonError::into_inner).sweep(now);
+        if let Some(delta) = delta {
+            self.broadcast(&SyncMsg::StateDelta { delta });
         }
     }
 
@@ -256,9 +209,13 @@ impl NotificationBroadcast {
     /// attention state. Safe to call for a pane the ledger never tracked (no-op).
     pub fn pane_closed(&self, pane_id: &str) {
         let now = now_ms();
-        let mut hub = self.hub.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(delta) = hub.ledger.pane_closed(pane_id, now) {
-            broadcast_data(&mut hub, ServerEnvelope::StateDelta { delta }, None);
+        let delta = self
+            .ledger
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .pane_closed(pane_id, now);
+        if let Some(delta) = delta {
+            self.broadcast(&SyncMsg::StateDelta { delta });
         }
     }
 
@@ -311,13 +268,13 @@ impl NotificationBroadcast {
         let now = now_ms();
         let mut pane_is_live = Some(pane_is_live);
         // Hooks (spec §10) must fire exactly once, ONLY on a newly-accepted event - never on
-        // suppressed/not_found/replay/conflict - and must run AFTER the hub lock is released
+        // suppressed/not_found/replay/conflict - and must run AFTER the ledger lock is released
         // (run_hooks takes the settings lock and spawns processes; it must not run under the
-        // hub mutex). Stash what to call here; fire it once the guard below is dropped.
+        // ledger mutex). Stash what to call here; fire it once the guard below is dropped.
         let mut accepted_hook: Option<(String, String, Option<String>, String)> = None;
         let result = {
-            let mut hub = self.hub.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            match hub.ledger.reserve(&client_id, &request_id, payload_hash, now) {
+            let mut ledger = self.ledger.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            match ledger.reserve(&client_id, &request_id, payload_hash, now) {
                 ReserveResult::Replay(DedupOutcome::Producer(outcome)) => {
                     ProducerProcessResult::Outcome(outcome)
                 }
@@ -341,23 +298,20 @@ impl NotificationBroadcast {
                                     ProducerOutcome::NotFound
                                 } else {
                                     let (event_seq, delta) =
-                                        hub.ledger.record_pane_event(pane_id, now, severity, now);
+                                        ledger.record_pane_event(pane_id, now, severity, now);
                                     let revision = delta.revision;
-                                    broadcast_data(
-                                        &mut hub,
-                                        ServerEnvelope::StateDelta { delta },
-                                        Some(ServerEnvelope::Notify {
-                                            v: MIN_PROTOCOL_VERSION,
-                                            pane_id: pane_id.clone(),
-                                            title: req.title.clone(),
-                                            body: req.body.clone(),
-                                            notification_type: req.notification_type.clone(),
-                                            event_seq: event_seq.to_string(),
-                                            occurred_at: now,
-                                            severity,
-                                            notif_id: None,
-                                        }),
-                                    );
+                                    self.broadcast(&SyncMsg::StateDelta { delta });
+                                    self.broadcast(&SyncMsg::Notify {
+                                        v: MIN_PROTOCOL_VERSION,
+                                        pane_id: pane_id.clone(),
+                                        title: req.title.clone(),
+                                        body: req.body.clone(),
+                                        notification_type: req.notification_type.clone(),
+                                        event_seq: event_seq.to_string(),
+                                        occurred_at: now,
+                                        severity,
+                                        notif_id: None,
+                                    });
                                     accepted_hook = Some((
                                         req.notification_type.clone(),
                                         pane_id.clone(),
@@ -373,23 +327,20 @@ impl NotificationBroadcast {
                             } else {
                                 let notif_id = Uuid::new_v4().to_string();
                                 let (event_seq, delta) =
-                                    hub.ledger.record_notif_event(&notif_id, now, severity, now);
+                                    ledger.record_notif_event(&notif_id, now, severity, now);
                                 let revision = delta.revision;
-                                broadcast_data(
-                                    &mut hub,
-                                    ServerEnvelope::StateDelta { delta },
-                                    Some(ServerEnvelope::Notify {
-                                        v: MIN_PROTOCOL_VERSION,
-                                        pane_id: String::new(),
-                                        title: req.title.clone(),
-                                        body: req.body.clone(),
-                                        notification_type: req.notification_type.clone(),
-                                        event_seq: event_seq.to_string(),
-                                        occurred_at: now,
-                                        severity,
-                                        notif_id: Some(notif_id.clone()),
-                                    }),
-                                );
+                                self.broadcast(&SyncMsg::StateDelta { delta });
+                                self.broadcast(&SyncMsg::Notify {
+                                    v: MIN_PROTOCOL_VERSION,
+                                    pane_id: String::new(),
+                                    title: req.title.clone(),
+                                    body: req.body.clone(),
+                                    notification_type: req.notification_type.clone(),
+                                    event_seq: event_seq.to_string(),
+                                    occurred_at: now,
+                                    severity,
+                                    notif_id: Some(notif_id.clone()),
+                                });
                                 accepted_hook = Some((
                                     req.notification_type.clone(),
                                     String::new(),
@@ -400,7 +351,7 @@ impl NotificationBroadcast {
                             }
                         }
                     };
-                    let installed = hub.ledger.complete(
+                    let installed = ledger.complete(
                         &key,
                         generation,
                         DedupOutcome::Producer(outcome.clone()),
@@ -418,7 +369,6 @@ impl NotificationBroadcast {
     }
 
     fn run_hooks(&self, notification_type: &str, pane_id: &str, title: Option<&str>, body: &str) {
-        self.hook_invocations.fetch_add(1, Ordering::Relaxed);
         let hooks = {
             let guard = self.settings.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let Some(state) = guard.as_ref() else { return };
@@ -474,39 +424,30 @@ impl NotificationBroadcast {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn snapshot(&self) -> crate::attention::Snapshot {
-        self.hub.lock().unwrap_or_else(std::sync::PoisonError::into_inner).ledger.snapshot()
+    /// Broadcast a `SyncMsg` to every currently-connected sync client. Dead clients
+    /// (whose `tx` has been dropped) are reaped. This mirrors `SessionManager::broadcast_sync`
+    /// but operates on the shared `sync_clients` Arc the notifier was constructed with.
+    #[allow(clippy::expect_used)]
+    fn broadcast(&self, msg: &SyncMsg) {
+        let json = serde_json::to_string(msg).expect("serialization is infallible");
+        let mut clients =
+            self.sync_clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        clients.retain(|c| c.tx.send(json.clone()).is_ok());
     }
 
-    #[cfg(test)]
-    pub(crate) fn broadcast_test_delta(&self, pane_id: &str, now: u64) -> StateDelta {
-        let mut hub = self.hub.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let (_, delta) = hub.ledger.record_pane_event(pane_id, now, Severity::Info, now);
-        broadcast_data(&mut hub, ServerEnvelope::StateDelta { delta: delta.clone() }, None);
-        delta
-    }
-
-    #[cfg(test)]
-    pub(crate) fn fill_control_for_test(&self, conn_id: ConnId) {
-        let mut hub = self.hub.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        for _ in 0..=CONTROL_QUEUE_MSGS {
-            enqueue_control(&mut hub, conn_id, ServerEnvelope::ResyncRequired { v: 1 });
+    /// Send a `SyncMsg` to a single sync client by id. Used to route `MarkReadResult`
+    /// back to the originator. Silently no-ops if the client has already disconnected
+    /// (the writer task's `rx.recv()` loop will have returned None and the handler will
+    /// unregister it shortly).
+    #[allow(clippy::expect_used)]
+    fn send_to_client(&self, client_id: &str, msg: &SyncMsg) {
+        let json = serde_json::to_string(msg).expect("serialization is infallible");
+        let clients = self.sync_clients.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        for client in clients.iter() {
+            if client.id == client_id {
+                let _ = client.tx.send(json);
+                break;
+            }
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn client_disconnect_requested(&self, conn_id: ConnId) -> bool {
-        self.hub
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clients
-            .get(&conn_id)
-            .is_none_or(|client| client.disconnect_requested)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn hook_invocation_count(&self) -> u64 {
-        self.hook_invocations.load(Ordering::Relaxed)
     }
 }

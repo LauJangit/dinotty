@@ -837,24 +837,36 @@ mod session_stub_tests {
 
     #[tokio::test]
     async fn kill_and_remove_notifies_attention_ledger_with_a_single_removal_delta() {
-        let notifier = Arc::new(NotificationBroadcast::new());
         let manager = Arc::new(SessionManager::new());
+        let notifier = Arc::new(NotificationBroadcast::new(Arc::clone(&manager.sync_clients)));
         manager.register_notifier(Arc::clone(&notifier));
 
         let pane_id = "stub-pane";
         manager.sessions.insert(pane_id.to_string(), stub_session());
-        notifier.broadcast_test_delta(pane_id, crate::notification::now_ms());
-        let registration = notifier.register_client();
-        notifier.take_data(registration.conn_id).unwrap(); // snapshot
+        // Seed the ledger with an event for the pane so pane_closed produces a removal delta.
+        notifier.send_bell(pane_id);
+
+        let (client_id, mut rx) = manager.add_sync_client();
+        notifier.register_client(&client_id);
+        // Drain the initial snapshot so the next message we read is the removal delta.
+        let snapshot_msg = rx.recv().await.expect("snapshot must arrive on register");
+        let snapshot_value: serde_json::Value = serde_json::from_str(&snapshot_msg).unwrap();
+        assert_eq!(snapshot_value["type"], "snapshot");
 
         assert!(manager.kill_and_remove(pane_id));
 
-        let delta = match notifier.take_data(registration.conn_id) {
-            Some(crate::notification::ServerEnvelope::StateDelta { delta }) => delta,
-            other => panic!("expected exactly one removal delta, got {other:?}"),
-        };
-        assert!(delta.panes.iter().any(|p| p.pane_id == pane_id && p.removed == Some(true)));
-        // Single hub notification: nothing further queued.
-        assert!(notifier.take_data(registration.conn_id).is_none());
+        let msg = rx.recv().await.expect("removal delta must be broadcast");
+        let delta_value: serde_json::Value = serde_json::from_str(&msg).unwrap();
+        assert_eq!(
+            delta_value["type"], "state_delta",
+            "expected exactly one removal delta, got {delta_value:?}"
+        );
+        let panes = delta_value["panes"].as_array().expect("panes array");
+        assert!(
+            panes.iter().any(|p| p["paneId"] == pane_id && p["removed"] == true),
+            "expected a removal delta for {pane_id}, got {panes:?}"
+        );
+        // Single broadcast: nothing further queued.
+        assert!(rx.try_recv().is_err(), "no further messages expected after the removal delta");
     }
 }

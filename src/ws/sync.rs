@@ -14,6 +14,7 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 
+use crate::notification::NotificationBroadcast;
 use crate::session::{SessionManager, SyncMsg};
 use crate::settings::SettingsState;
 use crate::workspace_mgmt::WorkspacesState;
@@ -28,6 +29,7 @@ pub async fn sync_handler(
         WorkspacesState,
         SettingsState,
     )>,
+    State(notifier): State<Arc<NotificationBroadcast>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
@@ -39,7 +41,7 @@ pub async fn sync_handler(
     if !crate::auth::check_ws_origin(&headers, &allowed_origins, real_ip, &trusted_proxies) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    ws.on_upgrade(move |socket| handle_sync_socket(socket, manager, workspaces, settings))
+    ws.on_upgrade(move |socket| handle_sync_socket(socket, manager, workspaces, settings, notifier))
         .into_response()
 }
 
@@ -48,6 +50,7 @@ async fn handle_sync_socket(
     manager: Arc<SessionManager>,
     workspaces: WorkspacesState,
     settings: SettingsState,
+    notifier: Arc<NotificationBroadcast>,
 ) {
     let (ws_tx, mut ws_rx) = socket.split();
 
@@ -94,6 +97,11 @@ async fn handle_sync_socket(
     if ws_out_tx.send(Message::Text(hello)).is_err() {
         return;
     }
+
+    // Register with the notification subsystem so the client receives its initial
+    // attention-ledger snapshot and subsequent bell/notify/state_delta/mark_read_result
+    // broadcasts via this sync WS (replaces the former /ws/notify channel).
+    notifier.register_client(&client_id);
 
     // Send current tab list with active tab
     let (tabs, active_pane_id) = manager.tab_list();
@@ -342,6 +350,9 @@ async fn handle_sync_socket(
                                 let _ = auth.responses_tx.send(responses);
                             }
                         }
+                        SyncClientMsg::MarkRead { request } => {
+                            notifier.apply_mark_read(&client_id, &request);
+                        }
                     }
                 }
             }
@@ -358,4 +369,5 @@ async fn handle_sync_socket(
     fwd.abort();
     writer_task.abort();
     ping_task.abort();
+    notifier.unregister_client(&client_id);
 }
