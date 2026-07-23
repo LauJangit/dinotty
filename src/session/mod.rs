@@ -194,9 +194,8 @@ impl Session {
 
         let confirmed = match &mut *backend {
             SessionBackend::Local { child, .. } => {
-                let pid = child.process_id();
                 #[cfg(unix)]
-                if let Some(pid) = pid {
+                if let Some(pid) = child.process_id() {
                     #[allow(clippy::cast_possible_wrap)]
                     let process_group = pid as i32;
                     unsafe {
@@ -257,8 +256,11 @@ impl Session {
             // SSH reader task 会在连接关闭时自行清理
             return;
         };
-        match &mut *backend {
-            SessionBackend::Local { child, .. } => {
+        // Move all backend resources out before waiting for the child. In particular,
+        // dropping the PTY master wakes a ConPTY reader that can remain blocked after exit.
+        let previous = std::mem::replace(&mut *backend, SessionBackend::Exited);
+        match previous {
+            SessionBackend::Local { writer, master, mut child } => {
                 let pid = child.process_id();
                 #[cfg(unix)]
                 if let Some(pid) = pid {
@@ -273,6 +275,8 @@ impl Session {
                     }
                 }
                 let _ = child.kill();
+                drop(writer);
+                drop(master);
                 let _ = child.wait();
                 self.mark_exited();
                 info!("Session child killed: pid={:?}", pid);
