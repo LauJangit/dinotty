@@ -292,7 +292,6 @@ pub async fn delete_template(
 }
 
 /// `POST /api/templates/apply` - implemented in `apply.rs`.
-
 #[cfg(test)]
 mod tests {
     use super::*;

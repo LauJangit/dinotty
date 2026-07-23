@@ -55,6 +55,7 @@ fn local_session_for_write_input() -> Arc<Session> {
         tauri_client_id: Mutex::new(None),
         input_tx: Mutex::new(None),
         status: Mutex::new(SessionStatus::Connected),
+        is_connected: AtomicBool::new(true),
         size: Mutex::new((80, 24)),
         exited: Mutex::new(false),
         shell_type: "test".to_string(),
@@ -152,28 +153,6 @@ fn split(direction: &str, children: Vec<serde_json::Value>) -> serde_json::Value
         "children": children,
         "ratios": (0..n).map(|_| serde_json::Value::from(1.0 / n as f64)).collect::<Vec<_>>(),
     })
-}
-
-// ── parse_reap_secs ─────────────────────────────────────────────
-
-#[test]
-fn parse_reap_secs_defaults_when_missing() {
-    assert_eq!(parse_reap_secs(None), 5_400);
-}
-
-#[test]
-fn parse_reap_secs_parses_valid_value() {
-    assert_eq!(parse_reap_secs(Some("3600".to_string())), 3_600);
-}
-
-#[test]
-fn parse_reap_secs_defaults_for_invalid_value() {
-    assert_eq!(parse_reap_secs(Some("notanumber".to_string())), 5_400);
-}
-
-#[test]
-fn parse_reap_secs_accepts_zero() {
-    assert_eq!(parse_reap_secs(Some("0".to_string())), 0);
 }
 
 // ── find_subslice ────────────────────────────────────────────────
