@@ -97,7 +97,7 @@ pub struct GitInfo {
 
 fn read_git_info() -> GitInfo {
     GitInfo {
-        version: env!("DINOTTY_VERSION").to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
         repo_url: env!("CARGO_PKG_REPOSITORY").to_string(),
     }
 }
