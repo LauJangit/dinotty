@@ -194,9 +194,8 @@ impl Session {
 
         let confirmed = match &mut *backend {
             SessionBackend::Local { child, .. } => {
-                let pid = child.process_id();
                 #[cfg(unix)]
-                if let Some(pid) = pid {
+                if let Some(pid) = child.process_id() {
                     #[allow(clippy::cast_possible_wrap)]
                     let process_group = pid as i32;
                     unsafe {
