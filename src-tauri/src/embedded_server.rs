@@ -27,6 +27,7 @@ use dinotty_server::proxy;
 use dinotty_server::session::SessionManager;
 use dinotty_server::settings;
 use dinotty_server::tabs;
+use dinotty_server::templates;
 use dinotty_server::workspace;
 use dinotty_server::workspace_mgmt;
 use dinotty_server::ws;
@@ -587,6 +588,17 @@ pub fn run_server(
                 post(settings::upload_background).get(settings::get_background),
             )
             .route("/api/log", get(settings::get_log))
+            .route(
+                "/api/templates",
+                get(templates::list_templates).post(templates::create_template),
+            )
+            .route("/api/templates/apply", post(templates::apply_template))
+            .route(
+                "/api/templates/:id",
+                get(templates::get_template)
+                    .put(templates::update_template)
+                    .delete(templates::delete_template),
+            )
             .route("/api/workspace/resolve", get(workspace::workspace_resolve))
             .route("/api/workspace/list", get(workspace::workspace_list))
             .route("/api/workspace/meta", get(workspace::workspace_meta))

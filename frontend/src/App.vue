@@ -27,6 +27,8 @@
       @open-plugin="openPlugin"
       @rename="onRenameTab"
       @open-overview="openOverview"
+      @save-as-template="openSaveTemplateDialog"
+      @apply-template="templatePickerVisible = true"
     >
       <template #left>
         <button
@@ -261,6 +263,21 @@
       @confirm="onCursorPickerConfirm"
       @cancel="cursorPickerVisible = false"
     />
+
+    <SaveTemplateDialog
+      :visible="saveTemplateVisible"
+      :source-tab-id="saveTemplateSourceTabId"
+      :source-layout="saveTemplateSourceLayout"
+      @close="saveTemplateVisible = false"
+      @saved="onTemplateSaved"
+    />
+
+    <TemplatePicker
+      :visible="templatePickerVisible"
+      :workspace-id="activeWorkspaceId"
+      @close="templatePickerVisible = false"
+      @apply="onTemplateApplied"
+    />
   </div>
 </template>
 
@@ -291,6 +308,8 @@ import ConfirmModal from './components/ui/ConfirmModal.vue'
 import { confirmState, uiConfirm, confirmResolve, confirmCancel } from './composables/useConfirm'
 import PromptModal from './components/ui/PromptModal.vue'
 import MultiSelectPicker from './components/ui/MultiSelectPicker.vue'
+import SaveTemplateDialog from './components/ui/SaveTemplateDialog.vue'
+import TemplatePicker from './components/ui/TemplatePicker.vue'
 import { promptState, promptResolve, promptCancel } from './composables/usePrompt'
 import PreviewPanel from './components/preview/PreviewPanel.vue'
 import CommandBookmarks from './components/command/CommandBookmarks.vue'
@@ -527,6 +546,7 @@ const onSshConnectRef = shallowRef<(result: { tab_id: string; pane_id: string; l
 
 const {
   newTab,
+  applyTemplate,
   resolveTab,
   resolveTabWorkspace,
   clearResolvedTabNotifications,
@@ -1048,6 +1068,48 @@ function onNewMenuAction(
   }
 }
 
+// ─── Save as Template dialog ───────────────────────────────────────
+const saveTemplateVisible = ref(false)
+const saveTemplateSourceTabId = ref('')
+const saveTemplateSourceLayout = computed<PaneLayout | null>(() => {
+  const tab = tabs.value.find((t) => t.paneId === saveTemplateSourceTabId.value)
+  if (!tab || tab.type !== 'terminal') return null
+  return tab.layout
+})
+
+function openSaveTemplateDialog(tabId: string) {
+  const tab = tabs.value.find((t) => t.paneId === tabId)
+  if (!tab || tab.type !== 'terminal') return
+  saveTemplateSourceTabId.value = tabId
+  saveTemplateVisible.value = true
+}
+
+function onTemplateSaved(_templateId: string) {
+  toast?.success(t('template.savedToast'))
+}
+
+// ─── Apply Template dialog ───────────────────────────────────────────
+const templatePickerVisible = ref(false)
+
+async function onTemplateApplied(
+  templateId: string,
+  scope: 'workspace' | 'global',
+  workspaceId?: string,
+) {
+  try {
+    const result = await applyTemplate(templateId, workspaceId)
+    if (!result) return
+    if (result.warnings.length > 0) {
+      toast?.warning(t('template.applyWarningsToast').replace('{n}', String(result.warnings.length)))
+    } else {
+      toast?.success(t('template.applyToast'))
+    }
+  } catch (e: any) {
+    toast?.error(e?.message || 'Apply failed')
+  }
+  void scope
+}
+
 async function onClosePane(tabId: string, paneId: string) {
   const tab = tabs.value.find((t) => t.paneId === tabId)
   if (!tab) return
@@ -1225,6 +1287,19 @@ const paletteCommands = computed<Command[]>(() => {
       subtitle: t('palette.newLocalTerminalDesc'),
       action: () => splitPane.splitPane('horizontal', true, activeWorkspacePath.value),
     }] : []),
+    // Only show "Save as Template" when active tab is a terminal tab with a layout
+    ...(activeTab.value?.type === 'terminal' ? [{
+      icon: '⎘',
+      title: t('palette.saveAsTemplate'),
+      subtitle: t('palette.saveAsTemplateDesc'),
+      action: () => openSaveTemplateDialog(activeTab.value!.paneId),
+    }] : []),
+    {
+      icon: '⊷',
+      title: t('palette.applyTemplate'),
+      subtitle: t('palette.applyTemplateDesc'),
+      action: () => { templatePickerVisible.value = true },
+    },
   ]
 
   // Plugin-registered commands

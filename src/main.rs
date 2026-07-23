@@ -2,7 +2,7 @@
 
 use dinotty_server::{
     agent, audit, auth, events, file_watcher, history, mcp, monitor, notification, openapi, plugin,
-    proxy, session, settings, tabs, token, webhook, workspace, workspace_mgmt, ws,
+    proxy, session, settings, tabs, templates, token, webhook, workspace, workspace_mgmt, ws,
 };
 
 use axum::{
@@ -792,6 +792,17 @@ async fn main() {
                 post(settings::upload_background).get(settings::get_background),
             )
             .route("/api/log", get(settings::get_log))
+            .route(
+                "/api/templates",
+                get(templates::list_templates).post(templates::create_template),
+            )
+            .route("/api/templates/apply", post(templates::apply_template))
+            .route(
+                "/api/templates/:id",
+                get(templates::get_template)
+                    .put(templates::update_template)
+                    .delete(templates::delete_template),
+            )
             .route("/api/workspace/resolve", get(workspace::workspace_resolve))
             .route("/api/workspace/list", get(workspace::workspace_list))
             .route("/api/workspace/meta", get(workspace::workspace_meta))
