@@ -75,6 +75,19 @@ fn local_session_for_write_input() -> Arc<Session> {
     })
 }
 
+#[test]
+fn kill_child_releases_local_backend_resources() {
+    let session = local_session_for_write_input();
+
+    session.kill_child();
+
+    assert!(session.is_exited());
+    assert!(matches!(
+        *session.backend.try_lock().expect("backend lock remains available"),
+        SessionBackend::Exited
+    ));
+}
+
 /// Reproduction for PR #196: `write_input_sync` uses `try_lock` and reports
 /// routine contention as a fatal error. The four long-lived writer tasks
 /// treat any `Err` as fatal and `break`, so one unlucky moment kills the
