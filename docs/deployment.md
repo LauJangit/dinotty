@@ -1,5 +1,7 @@
 # 部署指南
 
+本文说明如何安装和部署构建产物。仓库维护者准备版本、创建 tag 和监控正式发布时，请参阅[发布指南](releasing.md)。
+
 ## 推荐发布流程（CI/CD）
 
 发布和部署优先使用仓库里的 `Package` workflow（`.github/workflows/package.yml`），不要手动在本机跑构建脚本作为正式产物来源。
